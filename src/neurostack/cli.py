@@ -431,19 +431,52 @@ def cmd_watch(args):
     )
 
 
-def cmd_init(args):
-    """Initialize a new NeuroStack vault and config."""
+def _prompt(label, default="", choices=None):
+    """Interactive prompt with optional default and choices."""
+    if choices:
+        print(f"\n  \033[1m{label}\033[0m")
+        for i, (value, desc) in enumerate(choices, 1):
+            marker = "\033[36m>\033[0m" if value == default else " "
+            print(f"  {marker} {i}) {desc}")
+        while True:
+            raw = input(f"\n  Choice [1-{len(choices)}] (default: {default}): ").strip()
+            if not raw:
+                return default
+            try:
+                idx = int(raw) - 1
+                if 0 <= idx < len(choices):
+                    return choices[idx][0]
+            except ValueError:
+                # Allow typing the value directly
+                for value, _ in choices:
+                    if raw.lower() == value.lower():
+                        return value
+            print(f"  \033[31mInvalid choice.\033[0m Enter 1-{len(choices)}.")
+    else:
+        raw = input(f"  {label} [{default}]: ").strip()
+        return raw if raw else default
+
+
+def _confirm(label, default=True):
+    """Yes/no prompt."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    raw = input(f"  {label} {suffix}: ").strip().lower()
+    if not raw:
+        return default
+    return raw in ("y", "yes")
+
+
+def _do_init(vault_root, cfg, profession_name=None, run_index=False):
+    """Core init logic — creates vault, config, applies profession."""
     import shutil
 
     from .config import CONFIG_PATH
     from .professions import apply_profession, get_profession
 
-    cfg = get_config()
-    vault_root = Path(args.path) if args.path else cfg.vault_root
+    vault_root = Path(vault_root)
 
     # Create vault directory structure
     dirs = ["research", "literature", "calendar", "inbox", "templates", "archive", "meta"]
-    # Add context dirs
     context_dirs = ["home/projects", "home/resources", "work"]
     created = []
     for d in dirs + context_dirs:
@@ -455,14 +488,12 @@ def cmd_init(args):
     # Copy base templates from vault-template/
     base_template = Path(__file__).resolve().parent.parent.parent / "vault-template"
     if base_template.exists():
-        # Copy CLAUDE.md
         src_claude = base_template / "CLAUDE.md"
         dst_claude = vault_root / "CLAUDE.md"
         if src_claude.exists() and not dst_claude.exists():
             shutil.copy2(src_claude, dst_claude)
             created.append("CLAUDE.md")
 
-        # Copy base templates
         src_templates = base_template / "templates"
         dst_templates = vault_root / "templates"
         if src_templates.exists():
@@ -471,7 +502,6 @@ def cmd_init(args):
                 if not dst.exists():
                     shutil.copy2(tmpl, dst)
 
-        # Copy base research seed notes
         src_research = base_template / "research"
         if src_research.exists():
             for note in sorted(src_research.glob("*.md")):
@@ -479,56 +509,133 @@ def cmd_init(args):
                 if not dst.exists():
                     shutil.copy2(note, dst)
 
-    # Create index.md files for any dirs that don't have one
+    # Create index.md files
     for d in dirs + context_dirs:
         idx = vault_root / d / "index.md"
         if not idx.exists():
             label = d.split("/")[-1].replace("-", " ").title()
             idx.write_text(f"# {label}\n\n")
 
-    # Create config if missing
-    if not CONFIG_PATH.exists():
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG_PATH.write_text(
-            f'vault_root = "{vault_root}"\n'
-            f'embed_url = "{cfg.embed_url}"\n'
-            f'llm_url = "{cfg.llm_url}"\n'
-            f'llm_model = "{cfg.llm_model}"\n'
-        )
-        print(f"Config written to {CONFIG_PATH}")
+    # Write config
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(
+        f'vault_root = "{vault_root}"\n'
+        f'embed_url = "{cfg.embed_url}"\n'
+        f'llm_url = "{cfg.llm_url}"\n'
+        f'llm_model = "{cfg.llm_model}"\n'
+    )
 
     # Create DB directory
     cfg.db_dir.mkdir(parents=True, exist_ok=True)
 
     if created:
-        print(f"Created vault at {vault_root}")
-        print(f"  Directories: {', '.join(created)}")
+        print(f"\n  \033[32m✓\033[0m Created vault at {vault_root}")
+        print(f"    Directories: {', '.join(created)}")
     else:
-        print(f"Vault already exists at {vault_root}")
+        print(f"\n  \033[32m✓\033[0m Vault already exists at {vault_root}")
 
-    # Apply profession pack if specified
-    if args.profession:
-        profession = get_profession(args.profession)
-        if not profession:
-            from .professions import list_professions
+    print(f"  \033[32m✓\033[0m Config: {CONFIG_PATH}")
 
-            names = ", ".join(p.name for p in list_professions())
-            print(f"\nUnknown profession: {args.profession}")
-            print(f"Available: {names}")
-            sys.exit(1)
+    # Apply profession pack
+    if profession_name and profession_name != "none":
+        profession = get_profession(profession_name)
+        if profession:
+            print(f"  \033[32m✓\033[0m Applying '{profession.name}' profession pack...")
+            actions = apply_profession(vault_root, profession)
+            for action in actions:
+                print(f"  {action}")
 
-        print(f"\nApplying '{profession.name}' profession pack...")
-        actions = apply_profession(vault_root, profession)
-        for action in actions:
-            print(action)
-        if actions:
-            print(f"  {len(actions)} items added")
+    print(f"  \033[32m✓\033[0m Database: {cfg.db_path}")
 
-    print(f"\nDatabase: {cfg.db_path}")
-    print("\nNext steps:")
-    print("  neurostack index          # Index your vault")
-    print("  neurostack search 'query' # Search")
-    print("  neurostack doctor         # Check health")
+    # Run index if requested
+    if run_index:
+        print("\n  Indexing vault...")
+        from .indexer import index_vault
+        from .schema import get_db
+
+        db = get_db(cfg.db_path)
+        indexed = index_vault(db, vault_root, cfg)
+        print(f"  \033[32m✓\033[0m Indexed {indexed} notes")
+
+
+def cmd_init(args):
+    """Initialize a new NeuroStack vault and config."""
+    from .professions import list_professions
+
+    cfg = get_config()
+
+    # Non-interactive mode: use flags directly (backwards compatible)
+    if args.path or args.profession or not sys.stdin.isatty():
+        vault_root = Path(args.path) if args.path else cfg.vault_root
+        _do_init(vault_root, cfg, profession_name=args.profession)
+        print("\nNext steps:")
+        print("  neurostack index          # Index your vault")
+        print("  neurostack search 'query' # Search")
+        print("  neurostack doctor         # Check health")
+        return
+
+    # ── Interactive setup wizard ──
+    print("\n  \033[1m━━━ NeuroStack Setup ━━━\033[0m\n")
+
+    # 1. Vault path
+    vault_root = Path(_prompt(
+        "\033[1mVault path\033[0m",
+        default=str(cfg.vault_root),
+    )).expanduser()
+
+    # 2. Profession pack
+    professions = list_professions()
+    prof_choices = [("none", "None — start with base structure")]
+    for p in professions:
+        prof_choices.append((p.name, f"{p.name.title()} — {p.description}"))
+    profession = _prompt("Profession pack", default="none", choices=prof_choices)
+
+    # 3. LLM configuration
+    print("\n  \033[1mOllama Configuration\033[0m")
+    print("  NeuroStack uses Ollama for embeddings and summaries.\n")
+
+    embed_url = _prompt("Embedding endpoint", default=cfg.embed_url)
+    llm_url = _prompt("LLM endpoint", default=cfg.llm_url)
+
+    model_choices = [
+        ("phi3.5", "phi3.5 — MIT licensed, fast, 3.8B params"),
+        ("qwen3:8b", "qwen3:8b — Apache 2.0, strong reasoning"),
+        ("llama3.1:8b", "llama3.1:8b — Meta community license, popular"),
+        ("mistral:7b", "mistral:7b — Apache 2.0, efficient"),
+    ]
+    llm_model = _prompt("LLM model for summaries", default=cfg.llm_model, choices=model_choices)
+
+    # 4. Index after init?
+    run_index = _confirm("Index vault after setup?", default=False)
+
+    # Show summary
+    print("\n  \033[1m━━━ Summary ━━━\033[0m\n")
+    print(f"  Vault:      {vault_root}")
+    print(f"  Profession: {profession}")
+    print(f"  Embed URL:  {embed_url}")
+    print(f"  LLM URL:    {llm_url}")
+    print(f"  LLM model:  {llm_model}")
+    print(f"  Index now:  {'yes' if run_index else 'no'}")
+
+    if not _confirm("\n  Proceed?", default=True):
+        print("\n  Cancelled.")
+        return
+
+    # Apply settings to config
+    cfg.vault_root = vault_root
+    cfg.embed_url = embed_url
+    cfg.llm_url = llm_url
+    cfg.llm_model = llm_model
+
+    _do_init(vault_root, cfg, profession_name=profession, run_index=run_index)
+
+    print("\n  \033[1mNext steps:\033[0m")
+    if not run_index:
+        print("    neurostack index          # Index your vault")
+    print("    neurostack search 'query' # Search")
+    print("    neurostack doctor         # Check health")
+    print("    neurostack serve          # Start MCP server")
+    print()
 
 
 def cmd_scaffold(args):
