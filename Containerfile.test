@@ -1,0 +1,2 @@
+FROM registry.fedoraproject.org/fedora:41
+RUN dnf install -y python3 python3-pip git gcc python3-devel && dnf clean all
