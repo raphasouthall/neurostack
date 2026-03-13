@@ -15,6 +15,18 @@ function which(cmd) {
   } catch { return null; }
 }
 
+// Handle `neurostack uninstall` before anything else
+if (process.argv[2] === "uninstall") {
+  const preuninstall = path.join(__dirname, "..", "preuninstall.js");
+  if (fs.existsSync(preuninstall)) {
+    require(preuninstall);
+    console.log("  To finish removal, run: npm uninstall -g neurostack");
+  } else {
+    console.log("  Run: npm uninstall -g neurostack");
+  }
+  process.exit(0);
+}
+
 // Resolve uv — check PATH first, then common install location
 const uv = which("uv") || (fs.existsSync(UV_BIN) ? UV_BIN : null);
 
