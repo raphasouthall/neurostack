@@ -15,14 +15,17 @@ function which(cmd) {
   } catch { return null; }
 }
 
-// Handle `neurostack uninstall` before anything else
+// Handle `neurostack uninstall` — clean up data then remove the npm package
 if (process.argv[2] === "uninstall") {
   const preuninstall = path.join(__dirname, "..", "preuninstall.js");
   if (fs.existsSync(preuninstall)) {
     require(preuninstall);
-    console.log("  To finish removal, run: npm uninstall -g neurostack");
-  } else {
-    console.log("  Run: npm uninstall -g neurostack");
+  }
+  console.log("  \x1b[36m▸\x1b[0m Removing npm package...\n");
+  try {
+    execSync("npm uninstall -g neurostack", { stdio: "inherit" });
+  } catch {
+    console.error("  \x1b[33m▸\x1b[0m npm uninstall failed — run manually: npm uninstall -g neurostack");
   }
   process.exit(0);
 }
