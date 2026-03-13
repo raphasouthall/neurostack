@@ -12,8 +12,8 @@ from .config import CONFIG_PATH, get_config
 
 
 def cmd_index(args):
-    from .watcher import full_index
     from .schema import DB_PATH, get_db
+    from .watcher import full_index
     full_index(
         vault_root=Path(args.vault),
         embed_url=args.embed_url,
