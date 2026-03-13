@@ -1,20 +1,23 @@
 [project]
 name = "neurostack"
 version = "0.1.0"
-description = "AI-provider-agnostic, neuroscience-grounded knowledge management for Linux"
+description = "Find the notes that went stale before they mislead your AI. Local-first knowledge graph for Markdown vaults."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
     { name = "Raphael Southall" },
 ]
-keywords = ["knowledge-management", "obsidian", "mcp", "neuroscience", "pkm", "zettelkasten"]
+keywords = ["knowledge-management", "obsidian", "mcp", "neuroscience", "pkm", "zettelkasten", "rag", "local-first", "knowledge-graph", "semantic-search", "ai-memory", "second-brain"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
