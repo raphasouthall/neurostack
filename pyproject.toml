@@ -70,5 +70,12 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+[tool.ruff.lint.per-file-ignores]
+"src/neurostack/community.py" = ["E402"]
+"src/neurostack/community_search.py" = ["E402"]
+"src/neurostack/search.py" = ["E402"]
+"src/neurostack/server.py" = ["E402"]
+"src/neurostack/watcher.py" = ["E402"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -8,7 +8,9 @@ _cfg = get_config()
 DEFAULT_SUMMARIZE_URL = _cfg.llm_url
 SUMMARIZE_MODEL = _cfg.llm_model
 
-SUMMARY_PROMPT = """Summarize this note in 2-3 concise sentences. Focus on the key purpose, decisions, and actionable information. Do not use filler phrases like "This note discusses". Be direct.
+SUMMARY_PROMPT = """Summarize this note in 2-3 concise sentences. \
+Focus on the key purpose, decisions, and actionable information. \
+Do not use filler phrases like "This note discusses". Be direct.
 
 Note title: {title}
 ---
@@ -56,8 +58,12 @@ def summarize_note(
     return summary
 
 
-FOLDER_SUMMARY_PROMPT = """You are summarizing the contents of a folder in a personal knowledge vault.
-Below are summaries of the notes it contains. Write 2-3 sentences describing what topics, projects, or knowledge this folder covers. Be specific and factual — name actual topics, technologies, or projects present.
+FOLDER_SUMMARY_PROMPT = """You are summarizing the contents of a \
+folder in a personal knowledge vault.
+Below are summaries of the notes it contains. Write 2-3 sentences \
+describing what topics, projects, or knowledge this folder covers. \
+Be specific and factual — name actual topics, technologies, or \
+projects present.
 
 Folder: {folder_path}
 Note summaries:

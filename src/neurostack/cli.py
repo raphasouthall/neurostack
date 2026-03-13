@@ -183,7 +183,10 @@ def cmd_communities(args):
         print(f"\nCommunities used: {result['communities_used']}")
         print("\nTop communities:")
         for hit in result["community_hits"][:5]:
-            print(f"  [{hit['score']:.3f}] L{hit['level']} {hit['title']} ({hit['entity_count']} entities)")
+            print(
+                f"  [{hit['score']:.3f}] L{hit['level']}"
+                f" {hit['title']} ({hit['entity_count']} entities)"
+            )
         if result["answer"]:
             print(f"\n{'='*60}\n{result['answer']}")
     elif args.communities_cmd == "list":
@@ -202,7 +205,11 @@ def cmd_communities(args):
         else:
             for row in rows:
                 title = row["title"] or "(unsummarized)"
-                print(f"  [L{row['level']}] #{row['community_id']} {title} — {row['entity_count']} entities, {row['member_notes']} notes")
+                print(
+                    f"  [L{row['level']}] #{row['community_id']}"
+                    f" {title} — {row['entity_count']} entities,"
+                    f" {row['member_notes']} notes"
+                )
     else:
         print("Usage: cli.py communities {build|query|list}")
 
@@ -216,7 +223,6 @@ def cmd_folder_summaries(args):
     from .summarizer import summarize_folder
 
     conn = get_db(DB_PATH)
-    vault_root = Path(args.vault)
 
     # Collect all unique folder paths that have indexed notes with summaries
     rows = conn.execute(
@@ -286,18 +292,35 @@ def cmd_stats(args):
     conn = get_db(DB_PATH)
     notes = conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"]
     chunks = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
-    embedded = conn.execute("SELECT COUNT(*) as c FROM chunks WHERE embedding IS NOT NULL").fetchone()["c"]
-    summaries = conn.execute("SELECT COUNT(*) as c FROM summaries").fetchone()["c"]
-    edges = conn.execute("SELECT COUNT(*) as c FROM graph_edges").fetchone()["c"]
-    total_triples = conn.execute("SELECT COUNT(*) as c FROM triples").fetchone()["c"]
-    notes_with_triples = conn.execute("SELECT COUNT(DISTINCT note_path) as c FROM triples").fetchone()["c"]
+    embedded = conn.execute(
+        "SELECT COUNT(*) as c FROM chunks"
+        " WHERE embedding IS NOT NULL"
+    ).fetchone()["c"]
+    summaries = conn.execute(
+        "SELECT COUNT(*) as c FROM summaries"
+    ).fetchone()["c"]
+    edges = conn.execute(
+        "SELECT COUNT(*) as c FROM graph_edges"
+    ).fetchone()["c"]
+    total_triples = conn.execute(
+        "SELECT COUNT(*) as c FROM triples"
+    ).fetchone()["c"]
+    notes_with_triples = conn.execute(
+        "SELECT COUNT(DISTINCT note_path) as c FROM triples"
+    ).fetchone()["c"]
 
     print(f"Notes:       {notes}")
     print(f"Chunks:      {chunks}")
-    print(f"Embedded:    {embedded} ({embedded*100//max(chunks,1)}%)")
-    print(f"Summarized:  {summaries} ({summaries*100//max(notes,1)}%)")
+    embed_pct = embedded * 100 // max(chunks, 1)
+    print(f"Embedded:    {embedded} ({embed_pct}%)")
+    sum_pct = summaries * 100 // max(notes, 1)
+    print(f"Summarized:  {summaries} ({sum_pct}%)")
     print(f"Graph edges: {edges}")
-    print(f"Triples:     {total_triples} from {notes_with_triples} notes ({notes_with_triples*100//max(notes,1)}%)")
+    triple_pct = notes_with_triples * 100 // max(notes, 1)
+    print(
+        f"Triples:     {total_triples} from"
+        f" {notes_with_triples} notes ({triple_pct}%)"
+    )
 
 
 def cmd_prediction_errors(args):
@@ -306,10 +329,12 @@ def cmd_prediction_errors(args):
 
     if args.resolve:
         paths = args.resolve
+        placeholders = ",".join("?" * len(paths))
         conn.execute(
-            "UPDATE prediction_errors SET resolved_at = datetime('now') WHERE note_path IN ({}) AND resolved_at IS NULL".format(
-                ",".join("?" * len(paths))
-            ),
+            "UPDATE prediction_errors"
+            " SET resolved_at = datetime('now')"
+            f" WHERE note_path IN ({placeholders})"
+            " AND resolved_at IS NULL",
             paths,
         )
         conn.commit()
@@ -360,8 +385,13 @@ def cmd_prediction_errors(args):
         for e in entries:
             ctx = f" [{e['context']}]" if e["context"] else ""
             print(f"  {e['note_path']}{ctx}")
-            print(f"    distance={e['avg_distance']:.3f}  hits={e['occurrences']}  last={e['last_seen'][:10]}")
-            print(f"    query: \"{e['sample_query'][:80]}\"")
+            print(
+                f"    distance={e['avg_distance']:.3f}"
+                f"  hits={e['occurrences']}"
+                f"  last={e['last_seen'][:10]}"
+            )
+            sample = e['sample_query'][:80]
+            print(f"    query: \"{sample}\"")
         print()
 
     print("Resolve a note: cli.py prediction-errors --resolve <note_path>")
@@ -474,14 +504,32 @@ def cmd_doctor(args):
             models = [m["name"] for m in r.json().get("models", [])]
             has_embed = any(cfg.embed_model in m for m in models)
             status = "OK" if has_embed else "WARN"
-            detail = f"{cfg.embed_url} ({', '.join(models[:3])})" if models else f"{cfg.embed_url} (no models)"
+            if models:
+                detail = (
+                    f"{cfg.embed_url}"
+                    f" ({', '.join(models[:3])})"
+                )
+            else:
+                detail = f"{cfg.embed_url} (no models)"
             if not has_embed:
-                detail += f"\n         {cfg.embed_model} not found. Pull: ollama pull {cfg.embed_model}"
+                detail += (
+                    f"\n         {cfg.embed_model}"
+                    " not found. Pull:"
+                    f" ollama pull {cfg.embed_model}"
+                )
             checks.append(("Embeddings", status, detail))
         else:
-            checks.append(("Embeddings", "WARN", f"{cfg.embed_url} returned {r.status_code} (lite mode still works)"))
+            checks.append((
+                "Embeddings", "WARN",
+                f"{cfg.embed_url} returned"
+                f" {r.status_code} (lite mode still works)",
+            ))
     except Exception:
-        checks.append(("Embeddings", "WARN", f"{cfg.embed_url} unreachable (lite mode still works)"))
+        checks.append((
+            "Embeddings", "WARN",
+            f"{cfg.embed_url} unreachable"
+            " (lite mode still works)",
+        ))
 
     # Check Ollama LLM endpoint
     try:
@@ -491,33 +539,62 @@ def cmd_doctor(args):
             models = [m["name"] for m in r.json().get("models", [])]
             has_llm = any(cfg.llm_model in m for m in models)
             status = "OK" if has_llm else "WARN"
-            detail = f"{cfg.llm_url} ({', '.join(models[:3])})"
+            detail = (
+                f"{cfg.llm_url}"
+                f" ({', '.join(models[:3])})"
+            )
             if not has_llm:
-                detail += f"\n         {cfg.llm_model} not found. Pull: ollama pull {cfg.llm_model}"
+                detail += (
+                    f"\n         {cfg.llm_model}"
+                    " not found. Pull:"
+                    f" ollama pull {cfg.llm_model}"
+                )
             checks.append(("LLM", status, detail))
         else:
-            checks.append(("LLM", "WARN", f"{cfg.llm_url} returned {r.status_code}"))
+            checks.append((
+                "LLM", "WARN",
+                f"{cfg.llm_url} returned {r.status_code}",
+            ))
     except Exception:
-        checks.append(("LLM", "WARN", f"{cfg.llm_url} unreachable (search still works, summaries disabled)"))
+        checks.append((
+            "LLM", "WARN",
+            f"{cfg.llm_url} unreachable"
+            " (search still works, summaries disabled)",
+        ))
 
     # Check optional deps
     try:
         import numpy
         checks.append(("numpy", "OK", numpy.__version__))
     except ImportError:
-        checks.append(("numpy", "SKIP", "Not installed (install with: pip install neurostack[full])"))
+        checks.append((
+            "numpy", "SKIP",
+            "Not installed (install with:"
+            " pip install neurostack[full])",
+        ))
 
     try:
         import sentence_transformers
-        checks.append(("sentence-transformers", "OK", sentence_transformers.__version__))
+        checks.append((
+            "sentence-transformers", "OK",
+            sentence_transformers.__version__,
+        ))
     except ImportError:
-        checks.append(("sentence-transformers", "SKIP", "Not installed (install with: pip install neurostack[full])"))
+        checks.append((
+            "sentence-transformers", "SKIP",
+            "Not installed (install with:"
+            " pip install neurostack[full])",
+        ))
 
     try:
         import leidenalg
         checks.append(("leidenalg", "OK", leidenalg.__version__))
     except ImportError:
-        checks.append(("leidenalg", "SKIP", "Not installed (install with: pip install neurostack[community])"))
+        checks.append((
+            "leidenalg", "SKIP",
+            "Not installed (install with:"
+            " pip install neurostack[community])",
+        ))
 
     # Print results
     print("\nNeuroStack Doctor\n" + "=" * 40)
@@ -712,7 +789,10 @@ def cmd_status(args):
         conn.row_factory = sqlite3.Row
         notes = conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"]
         chunks = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
-        embedded = conn.execute("SELECT COUNT(*) as c FROM chunks WHERE embedding IS NOT NULL").fetchone()["c"]
+        embedded = conn.execute(
+            "SELECT COUNT(*) as c FROM chunks"
+            " WHERE embedding IS NOT NULL"
+        ).fetchone()["c"]
         conn.close()
 
         mode = "full" if embedded > 0 else "lite"
@@ -757,7 +837,10 @@ def main():
 
     # sessions
     p = sub.add_parser("sessions", help="Search session transcripts")
-    p.add_argument("session_args", nargs=argparse.REMAINDER, help="Arguments passed to session-index")
+    p.add_argument(
+        "session_args", nargs=argparse.REMAINDER,
+        help="Arguments passed to session-index",
+    )
     p.set_defaults(func=cmd_sessions)
 
     # index
@@ -771,8 +854,14 @@ def main():
     p.add_argument("query", help="Search query")
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--mode", choices=["hybrid", "semantic", "keyword"], default="hybrid")
-    p.add_argument("--context", "-c", default=None, help="Project/domain context for result boosting")
-    p.add_argument("--rerank", action="store_true", default=False, help="Apply cross-encoder reranking")
+    p.add_argument(
+        "--context", "-c", default=None,
+        help="Project/domain context for result boosting",
+    )
+    p.add_argument(
+        "--rerank", action="store_true", default=False,
+        help="Apply cross-encoder reranking",
+    )
     p.set_defaults(func=cmd_search)
 
     # summary
@@ -799,12 +888,22 @@ def main():
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--depth", choices=["triples", "summaries", "full", "auto"], default="auto")
     p.add_argument("--mode", choices=["hybrid", "semantic", "keyword"], default="hybrid")
-    p.add_argument("--context", "-c", default=None, help="Project/domain context for result boosting")
-    p.add_argument("--rerank", action="store_true", default=False, help="Apply cross-encoder reranking")
+    p.add_argument(
+        "--context", "-c", default=None,
+        help="Project/domain context for result boosting",
+    )
+    p.add_argument(
+        "--rerank", action="store_true", default=False,
+        help="Apply cross-encoder reranking",
+    )
     p.set_defaults(func=cmd_tiered)
 
     # reembed-chunks
-    p = sub.add_parser("reembed-chunks", help="Re-embed all chunks with contextual text (title+tags+summary+chunk)")
+    p = sub.add_parser(
+        "reembed-chunks",
+        help="Re-embed all chunks with contextual text"
+        " (title+tags+summary+chunk)",
+    )
     p.set_defaults(func=cmd_reembed_chunks)
 
     # backfill
@@ -824,7 +923,10 @@ def main():
     p_q.add_argument("query", help="Natural language question")
     p_q.add_argument("--top-k", type=int, default=6)
     p_q.add_argument("--level", type=int, default=0, help="Community level (0=coarse, 1=fine)")
-    p_q.add_argument("--no-map-reduce", action="store_true", help="Return raw community hits without LLM synthesis")
+    p_q.add_argument(
+        "--no-map-reduce", action="store_true",
+        help="Return raw community hits without LLM synthesis",
+    )
 
     # communities list
     p_l = comm_sub.add_parser("list", help="List detected communities")
@@ -837,12 +939,20 @@ def main():
     p.set_defaults(func=cmd_brief)
 
     # folder-summaries
-    p = sub.add_parser("folder-summaries", help="Build folder-level summaries for semantic context= boosting")
+    p = sub.add_parser(
+        "folder-summaries",
+        help="Build folder-level summaries for semantic"
+        " context boosting",
+    )
     p.add_argument("--force", action="store_true", help="Regenerate all even if up-to-date")
     p.set_defaults(func=cmd_folder_summaries)
 
     # prediction-errors
-    p = sub.add_parser("prediction-errors", help="Show notes flagged as prediction errors (poor retrieval fit)")
+    p = sub.add_parser(
+        "prediction-errors",
+        help="Show notes flagged as prediction errors"
+        " (poor retrieval fit)",
+    )
     p.add_argument("--type", choices=["low_overlap", "contextual_mismatch"], default=None,
                    help="Filter by error type")
     p.add_argument("--limit", type=int, default=30, help="Max results to show")

@@ -18,14 +18,19 @@ _cfg = get_config()
 DEFAULT_SUMMARIZE_URL = _cfg.llm_url
 TRIPLE_MODEL = _cfg.llm_model
 
-TRIPLE_PROMPT = """Extract knowledge graph triples from this note. Each triple is a (subject, predicate, object) fact.
+TRIPLE_PROMPT = """Extract knowledge graph triples from this note. \
+Each triple is a (subject, predicate, object) fact.
 
 Rules:
 - Extract 3-15 triples depending on note length and density
-- Subject and object should be specific named entities, concepts, or tools (not pronouns)
-- Predicate should be a short verb phrase (e.g. "uses", "runs on", "depends on", "configures", "streams to")
-- Normalize entity names: use canonical names, not abbreviations (e.g. "Sunshine" not "sunshine.conf")
-- Include relationships about: configurations, dependencies, connections, purposes, locations, states
+- Subject and object should be specific named entities, \
+concepts, or tools (not pronouns)
+- Predicate should be a short verb phrase \
+(e.g. "uses", "runs on", "depends on", "configures")
+- Normalize entity names: use canonical names, \
+not abbreviations (e.g. "Sunshine" not "sunshine.conf")
+- Include relationships about: configurations, dependencies, \
+connections, purposes, locations, states
 - Skip trivial or redundant triples
 - Return ONLY valid JSON array, no other text
 
