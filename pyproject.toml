@@ -51,7 +51,8 @@ dev = [
 neurostack = "neurostack.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/raphasouthall/neurostack"
+Homepage = "https://neurostack.sh"
+Documentation = "https://neurostack.sh"
 Repository = "https://github.com/raphasouthall/neurostack"
 Issues = "https://github.com/raphasouthall/neurostack/issues"
 
