@@ -4,9 +4,27 @@
 
 NeuroStack turns your Markdown vault into a searchable knowledge graph with semantic search, community detection, and prediction error tracking — all running locally with zero cloud dependencies.
 
-<p align="center">
-  <img src="neurostack-demo.svg" alt="NeuroStack demo" width="860">
-</p>
+## How it works
+
+**Index** your vault once — FTS5, embeddings, and wiki-link graph built automatically.
+
+<img src="docs/screenshots/01-index.png" alt="neurostack index" width="720">
+
+**Search** by meaning, not just keywords — hybrid FTS5 + semantic scoring.
+
+<img src="docs/screenshots/02-search.png" alt="neurostack search" width="720">
+
+**Graph** any note — PageRank, in/out links, and neighborhood at a glance.
+
+<img src="docs/screenshots/03-graph.png" alt="neurostack graph" width="720">
+
+**Stats** — full picture of your indexed vault in one command.
+
+<img src="docs/screenshots/04-stats.png" alt="neurostack stats" width="720">
+
+**Doctor** — health check across vault, database, embeddings, and optional deps.
+
+<img src="docs/screenshots/05-doctor.png" alt="neurostack doctor" width="720">
 
 ## Why NeuroStack?
 
