@@ -1,0 +1,73 @@
+[project]
+name = "neurostack"
+version = "0.1.0"
+description = "AI-provider-agnostic, neuroscience-grounded knowledge management for Linux"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    { name = "Raphael Southall", email = "raphasouthall@gmail.com" },
+]
+keywords = ["knowledge-management", "obsidian", "mcp", "neuroscience", "pkm", "zettelkasten"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Text Processing :: Indexing",
+]
+
+# Core dependencies — lite mode (FTS5 only, no ML)
+dependencies = [
+    "pyyaml>=6.0",
+    "watchdog>=4.0",
+    "mcp[cli]>=1.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Full mode — CPU ML (embeddings, summaries, reranking)
+full = [
+    "numpy>=1.26",
+    "sentence-transformers>=3.0",
+]
+# Community detection — GPL-3.0 isolated
+community = [
+    "leidenalg>=0.10",
+    "python-igraph>=0.11",
+]
+# Development
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+neurostack = "neurostack.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/raphasouthall/neurostack"
+Repository = "https://github.com/raphasouthall/neurostack"
+Issues = "https://github.com/raphasouthall/neurostack/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/neurostack"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
