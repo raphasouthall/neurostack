@@ -1,7 +1,7 @@
 [project]
 name = "neurostack"
 version = "0.1.0"
-description = "Find the notes that went stale before they mislead your AI. Local-first knowledge graph for Markdown vaults."
+description = "Build, maintain, and search your knowledge vault. CLI + MCP server with stale note detection, semantic search, and neuroscience-grounded memory."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"

@@ -407,6 +407,21 @@ def cmd_prediction_errors(args):
     print("Resolve a note: cli.py prediction-errors --resolve <note_path>")
 
 
+def cmd_record_usage(args):
+    """Record that specific notes were used, driving hotness scoring."""
+    from .schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    conn.executemany(
+        "INSERT INTO note_usage (note_path) VALUES (?)",
+        [(p,) for p in args.note_paths],
+    )
+    conn.commit()
+    print(f"Recorded usage for {len(args.note_paths)} note(s).")
+    for p in args.note_paths:
+        print(f"  {p}")
+
+
 def cmd_watch(args):
     from .watcher import run_watcher
     run_watcher(
@@ -973,6 +988,15 @@ def main():
     # stats
     p = sub.add_parser("stats", help="Show index stats")
     p.set_defaults(func=cmd_stats)
+
+    # record-usage
+    p = sub.add_parser(
+        "record-usage", help="Record note usage for hotness scoring"
+    )
+    p.add_argument(
+        "note_paths", nargs="+", help="Note paths to mark as used"
+    )
+    p.set_defaults(func=cmd_record_usage)
 
     # watch
     p = sub.add_parser("watch", help="Watch vault for changes")

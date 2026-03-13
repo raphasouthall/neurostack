@@ -7,7 +7,7 @@
 
 **Build, maintain, and search your knowledge vault with AI.**
 
-NeuroStack is a local-first MCP server that helps you build a structured knowledge vault from scratch, keeps it healthy as it grows, and gives your AI tools long-term memory from it. Everything runs on your machine — your notes never leave home.
+NeuroStack is a CLI tool that helps you build a structured knowledge vault from scratch, keeps it healthy as it grows, and makes it searchable by meaning — not just keywords. It also runs as an MCP server, giving Claude Code, Cursor, and other AI tools long-term memory from your vault. Everything runs on your machine — your notes never leave home.
 
 ## What it does
 
@@ -121,9 +121,47 @@ Compared to naive RAG (dumping full document chunks at ~750 tokens each), NeuroS
 | Cross-encoder reranking | — | Yes |
 | Topic clustering (Leiden) | — | +community |
 
-## Works with your AI tools
+## CLI
 
-NeuroStack is an [MCP](https://modelcontextprotocol.io) server — add it to Claude Code, Cursor, or Windsurf and your AI assistant can search your vault in any conversation.
+NeuroStack is a command-line tool. Every feature is available from your terminal:
+
+```
+neurostack init [path]              # Set up your vault with templates
+neurostack index                    # Build the knowledge graph
+neurostack search "query"           # Search by meaning or keywords
+neurostack graph "note.md"          # See a note's connections
+neurostack prediction-errors        # Find stale or misleading notes
+neurostack communities query "topic"  # Explore topic clusters
+neurostack brief                    # Morning briefing — what needs attention
+neurostack record-usage note.md     # Mark notes as used (drives hotness scoring)
+neurostack stats                    # Index health overview
+neurostack doctor                   # Validate all subsystems
+neurostack watch                    # Watch vault for changes, re-index automatically
+neurostack serve                    # Start as MCP server for AI tools
+```
+
+<details>
+<summary><strong>More commands</strong></summary>
+
+```
+neurostack tiered "query"           # Tiered search: triples → summaries → full
+neurostack triples "query"          # Search structured knowledge triples
+neurostack summary "note.md"        # Get a note's AI-generated summary
+neurostack communities build        # Run Leiden detection + generate summaries
+neurostack communities list         # List detected topic clusters
+neurostack backfill [summaries|triples|all]  # Fill gaps in AI-generated data
+neurostack reembed-chunks           # Re-embed all chunks
+neurostack folder-summaries         # Build folder-level context summaries
+neurostack sessions search "query"  # Search session transcripts
+neurostack demo                     # Interactive demo with sample vault
+neurostack status                   # Overview of your vault and config
+```
+
+</details>
+
+## MCP server
+
+NeuroStack also runs as an [MCP](https://modelcontextprotocol.io) server — add it to Claude Code, Cursor, or Windsurf and your AI assistant can search your vault in any conversation.
 
 ```json
 {
@@ -151,24 +189,6 @@ NeuroStack is an [MCP](https://modelcontextprotocol.io) server — add it to Cla
 | `vault_record_usage` | Track which notes are "hot" (recently accessed) |
 | `vault_prediction_errors` | Surface notes that need review |
 | `session_brief` | Get a compact briefing when starting a new session |
-
-</details>
-
-<details>
-<summary><strong>CLI reference</strong></summary>
-
-```
-neurostack init [path]          # Set up your vault
-neurostack index                # Build the knowledge graph
-neurostack search "query"       # Search by meaning or keywords
-neurostack graph "note.md"      # See a note's connections
-neurostack prediction-errors    # Find stale or misleading notes
-neurostack communities "topic"  # Explore topic clusters
-neurostack brief                # Morning briefing — what needs attention
-neurostack status               # Vault overview
-neurostack doctor               # Health check
-neurostack serve                # Start the MCP server
-```
 
 </details>
 
