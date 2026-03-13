@@ -13,6 +13,7 @@ NeuroStack is a CLI tool that helps you build a structured knowledge vault from 
 
 ### Build
 - **Scaffolds your vault** — profession-ready templates and folder structures to get started fast, whether you're a researcher, developer, or just someone with too many notes.
+- **Onboards existing notes** — point it at any folder of Markdown files and it adds frontmatter, generates indexes, and sets up the vault structure. No manual migration.
 - **Works with what you have** — connects to any Markdown vault. Use [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
 
 ### Maintain
@@ -156,6 +157,8 @@ NeuroStack is a command-line tool. Every feature is available from your terminal
 ```
 neurostack init [path]              # Set up your vault with templates
 neurostack init [path] -p researcher  # Set up with a profession pack
+neurostack onboard ~/my-notes       # Onboard an existing folder of notes
+neurostack onboard ~/my-notes -n    # Dry run — preview changes first
 neurostack scaffold researcher      # Apply a profession pack to existing vault
 neurostack scaffold --list          # List available profession packs
 neurostack index                    # Build the knowledge graph

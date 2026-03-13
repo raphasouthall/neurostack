@@ -572,6 +572,216 @@ def cmd_scaffold(args):
         print("Pack already applied (no new items)")
 
 
+def cmd_onboard(args):
+    """Onboard an existing directory of notes into a NeuroStack vault."""
+    import shutil
+    from datetime import date
+
+    from .chunker import parse_frontmatter
+    from .config import CONFIG_PATH
+
+    cfg = get_config()
+    target = Path(args.path).resolve()
+
+    if not target.exists():
+        print(f"Directory not found: {target}")
+        sys.exit(1)
+    if not target.is_dir():
+        print(f"Not a directory: {target}")
+        sys.exit(1)
+
+    dry_run = args.dry_run
+    prefix = "[dry-run] " if dry_run else ""
+
+    # Stats
+    notes_found = 0
+    frontmatter_added = 0
+    indexes_created = 0
+    dirs_created = 0
+
+    # 1. Scan for all markdown files
+    md_files = sorted(target.rglob("*.md"))
+    notes_found = len(md_files)
+
+    print(f"Scanning {target}...")
+    print(f"  Found {notes_found} markdown files\n")
+
+    # 2. Add missing frontmatter
+    today = date.today().isoformat()
+    # Files to skip — NeuroStack scaffolding, not user notes
+    skip_names = {"index.md", "CLAUDE.md"}
+    skip_dirs = {"templates", ".obsidian", ".claude"}
+
+    for md in md_files:
+        if md.name in skip_names:
+            continue
+        rel = md.relative_to(target)
+        if any(part in skip_dirs for part in rel.parts):
+            continue
+        content = md.read_text(encoding="utf-8", errors="replace")
+        fm, _ = parse_frontmatter(content)
+        if not fm:
+            # Derive tags from parent dir name
+            parent_tag = rel.parent.name if rel.parent.name else ""
+            tags = f"[{parent_tag}]" if parent_tag else "[]"
+
+            # Guess note type from location
+            parent_lower = rel.parent.name.lower() if rel.parent.name else ""
+            if parent_lower in ("literature", "sources", "references"):
+                note_type = "literature"
+            elif parent_lower in (
+                "projects", "work", "home",
+            ):
+                note_type = "project"
+            elif parent_lower in ("calendar", "daily", "journal"):
+                note_type = "daily"
+            else:
+                note_type = "permanent"
+
+            new_fm = (
+                f"---\ndate: {today}\ntags: {tags}\n"
+                f"type: {note_type}\nstatus: active\n---\n\n"
+            )
+            if not dry_run:
+                md.write_text(
+                    new_fm + content, encoding="utf-8",
+                )
+            print(f"  {prefix}+ frontmatter → {rel}")
+            frontmatter_added += 1
+
+    # 3. Generate index.md for directories that have .md files
+    dirs_with_notes: dict[Path, list[Path]] = {}
+    for md in md_files:
+        if md.name in skip_names:
+            continue
+        rel_check = md.relative_to(target)
+        if any(part in skip_dirs for part in rel_check.parts):
+            continue
+        parent = md.parent
+        if parent not in dirs_with_notes:
+            dirs_with_notes[parent] = []
+        dirs_with_notes[parent].append(md)
+
+    for dir_path, notes in sorted(dirs_with_notes.items()):
+        idx = dir_path / "index.md"
+        if idx.exists():
+            continue
+        rel_dir = dir_path.relative_to(target)
+        label = dir_path.name.replace("-", " ").replace("_", " ").title()
+        lines = [f"# {label}\n"]
+        for note in sorted(notes, key=lambda p: p.stem):
+            # Try to extract title from first heading
+            desc = _extract_first_heading(note)
+            if desc:
+                lines.append(f"- [[{note.stem}]] — {desc}")
+            else:
+                display = note.stem.replace("-", " ").replace(
+                    "_", " ",
+                ).title()
+                lines.append(f"- [[{note.stem}]] — {display}")
+        content = "\n".join(lines) + "\n"
+        if not dry_run:
+            idx.write_text(content, encoding="utf-8")
+        print(f"  {prefix}+ index.md → {rel_dir}/ ({len(notes)} entries)")
+        indexes_created += 1
+
+    # 4. Add missing NeuroStack structural dirs
+    structural = [
+        "templates", "meta", "inbox", "archive", "calendar",
+    ]
+    for d in structural:
+        p = target / d
+        if not p.exists():
+            if not dry_run:
+                p.mkdir(parents=True)
+                idx = p / "index.md"
+                label = d.replace("-", " ").title()
+                idx.write_text(f"# {label}\n\n")
+            print(f"  {prefix}+ {d}/")
+            dirs_created += 1
+
+    # 5. Copy CLAUDE.md and base templates if missing
+    base_template = (
+        Path(__file__).resolve().parent.parent.parent / "vault-template"
+    )
+    if base_template.exists():
+        src_claude = base_template / "CLAUDE.md"
+        dst_claude = target / "CLAUDE.md"
+        if src_claude.exists() and not dst_claude.exists():
+            if not dry_run:
+                shutil.copy2(src_claude, dst_claude)
+            print(f"  {prefix}+ CLAUDE.md")
+
+        src_templates = base_template / "templates"
+        dst_templates = target / "templates"
+        if src_templates.exists():
+            dst_templates.mkdir(parents=True, exist_ok=True)
+            for tmpl in sorted(src_templates.glob("*.md")):
+                dst = dst_templates / tmpl.name
+                if not dst.exists():
+                    if not dry_run:
+                        shutil.copy2(tmpl, dst)
+                    print(f"  {prefix}+ templates/{tmpl.name}")
+
+    # 6. Create config pointing to this vault
+    if not dry_run and not CONFIG_PATH.exists():
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(
+            f'vault_root = "{target}"\n'
+            f'embed_url = "{cfg.embed_url}"\n'
+            f'llm_url = "{cfg.llm_url}"\n'
+            f'llm_model = "{cfg.llm_model}"\n'
+        )
+        print(f"  Config written to {CONFIG_PATH}")
+
+    # Summary
+    print(f"\n{'[DRY RUN] ' if dry_run else ''}Onboard complete:")
+    print(f"  {notes_found} notes found")
+    print(f"  {frontmatter_added} frontmatter blocks added")
+    print(f"  {indexes_created} index files generated")
+    print(f"  {dirs_created} structural dirs created")
+
+    # 7. Apply profession pack if specified
+    if args.profession and not dry_run:
+        from .professions import apply_profession, get_profession, list_professions
+
+        profession = get_profession(args.profession)
+        if not profession:
+            names = ", ".join(p.name for p in list_professions())
+            print(f"\nUnknown profession: {args.profession}")
+            print(f"Available: {names}")
+        else:
+            print(f"\nApplying '{profession.name}' profession pack...")
+            actions = apply_profession(target, profession)
+            for action in actions:
+                print(action)
+            if actions:
+                print(f"  {len(actions)} items added")
+
+    if not dry_run:
+        print("\nNext steps:")
+        print("  neurostack index          # Index your vault")
+        print("  neurostack search 'query' # Search")
+        print("  neurostack doctor         # Check health")
+    else:
+        print(
+            "\nRun without --dry-run to apply changes.",
+        )
+
+
+def _extract_first_heading(path: Path) -> str:
+    """Extract the first markdown heading from a file, or empty string."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("# ") and not line.startswith("# {"):
+                    return line.lstrip("# ").strip()
+    except OSError:
+        pass
+    return ""
+
+
 def cmd_doctor(args):
     """Validate all NeuroStack subsystems."""
 
@@ -944,6 +1154,22 @@ def main():
     p.add_argument("profession", nargs="?", help="Profession name (e.g., researcher)")
     p.add_argument("--list", "-l", action="store_true", help="List available profession packs")
     p.set_defaults(func=cmd_scaffold)
+
+    # onboard
+    p = sub.add_parser(
+        "onboard",
+        help="Onboard an existing directory of notes into a NeuroStack vault",
+    )
+    p.add_argument("path", help="Path to the directory to onboard")
+    p.add_argument(
+        "--dry-run", "-n", action="store_true",
+        help="Show what would be done without making changes",
+    )
+    p.add_argument(
+        "--profession", "-p",
+        help="Also apply a profession pack after onboarding",
+    )
+    p.set_defaults(func=cmd_onboard)
 
     # demo
     p = sub.add_parser("demo", help="Run interactive demo with sample vault")
