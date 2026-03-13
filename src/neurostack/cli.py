@@ -433,25 +433,58 @@ def cmd_watch(args):
 
 def cmd_init(args):
     """Initialize a new NeuroStack vault and config."""
+    import shutil
+
     from .config import CONFIG_PATH
+    from .professions import apply_profession, get_profession
 
     cfg = get_config()
     vault_root = Path(args.path) if args.path else cfg.vault_root
 
     # Create vault directory structure
     dirs = ["research", "literature", "calendar", "inbox", "templates", "archive", "meta"]
+    # Add context dirs
+    context_dirs = ["home/projects", "home/resources", "work"]
     created = []
-    for d in dirs:
+    for d in dirs + context_dirs:
         p = vault_root / d
         if not p.exists():
             p.mkdir(parents=True)
             created.append(d)
 
-    # Create index.md files
-    for d in dirs:
+    # Copy base templates from vault-template/
+    base_template = Path(__file__).resolve().parent.parent.parent / "vault-template"
+    if base_template.exists():
+        # Copy CLAUDE.md
+        src_claude = base_template / "CLAUDE.md"
+        dst_claude = vault_root / "CLAUDE.md"
+        if src_claude.exists() and not dst_claude.exists():
+            shutil.copy2(src_claude, dst_claude)
+            created.append("CLAUDE.md")
+
+        # Copy base templates
+        src_templates = base_template / "templates"
+        dst_templates = vault_root / "templates"
+        if src_templates.exists():
+            for tmpl in sorted(src_templates.glob("*.md")):
+                dst = dst_templates / tmpl.name
+                if not dst.exists():
+                    shutil.copy2(tmpl, dst)
+
+        # Copy base research seed notes
+        src_research = base_template / "research"
+        if src_research.exists():
+            for note in sorted(src_research.glob("*.md")):
+                dst = vault_root / "research" / note.name
+                if not dst.exists():
+                    shutil.copy2(note, dst)
+
+    # Create index.md files for any dirs that don't have one
+    for d in dirs + context_dirs:
         idx = vault_root / d / "index.md"
         if not idx.exists():
-            idx.write_text(f"# {d.capitalize()}\n\n")
+            label = d.split("/")[-1].replace("-", " ").title()
+            idx.write_text(f"# {label}\n\n")
 
     # Create config if missing
     if not CONFIG_PATH.exists():
@@ -473,11 +506,70 @@ def cmd_init(args):
     else:
         print(f"Vault already exists at {vault_root}")
 
-    print(f"Database: {cfg.db_path}")
+    # Apply profession pack if specified
+    if args.profession:
+        profession = get_profession(args.profession)
+        if not profession:
+            from .professions import list_professions
+
+            names = ", ".join(p.name for p in list_professions())
+            print(f"\nUnknown profession: {args.profession}")
+            print(f"Available: {names}")
+            sys.exit(1)
+
+        print(f"\nApplying '{profession.name}' profession pack...")
+        actions = apply_profession(vault_root, profession)
+        for action in actions:
+            print(action)
+        if actions:
+            print(f"  {len(actions)} items added")
+
+    print(f"\nDatabase: {cfg.db_path}")
     print("\nNext steps:")
     print("  neurostack index          # Index your vault")
     print("  neurostack search 'query' # Search")
     print("  neurostack doctor         # Check health")
+
+
+def cmd_scaffold(args):
+    """Apply a profession pack to an existing vault."""
+    from .professions import apply_profession, get_profession, list_professions
+
+    if args.list:
+        professions = list_professions()
+        print("Available profession packs:\n")
+        for p in professions:
+            print(f"  {p.name:<20} {p.description}")
+        return
+
+    if not args.profession:
+        print("Usage: neurostack scaffold <profession>")
+        print("       neurostack scaffold --list")
+        sys.exit(1)
+
+    profession = get_profession(args.profession)
+    if not profession:
+        names = ", ".join(p.name for p in list_professions())
+        print(f"Unknown profession: {args.profession}")
+        print(f"Available: {names}")
+        sys.exit(1)
+
+    cfg = get_config()
+    vault_root = Path(args.vault) if hasattr(args, "vault") and args.vault else cfg.vault_root
+
+    if not vault_root.exists():
+        print(f"Vault not found at {vault_root}")
+        print("Run 'neurostack init' first, or use --vault to specify the path")
+        sys.exit(1)
+
+    print(f"Applying '{profession.name}' pack to {vault_root}...")
+    actions = apply_profession(vault_root, profession)
+    for action in actions:
+        print(action)
+    if actions:
+        print(f"\n{len(actions)} items added")
+    else:
+        print("Pack already applied (no new items)")
 
 
 def cmd_doctor(args):
@@ -841,7 +933,17 @@ def main():
     # init
     p = sub.add_parser("init", help="Initialize a new vault and config")
     p.add_argument("path", nargs="?", help="Vault path (default: from config)")
+    p.add_argument(
+        "--profession", "-p",
+        help="Apply a profession pack (e.g., researcher). Use 'scaffold --list' to see options",
+    )
     p.set_defaults(func=cmd_init)
+
+    # scaffold
+    p = sub.add_parser("scaffold", help="Apply a profession pack to an existing vault")
+    p.add_argument("profession", nargs="?", help="Profession name (e.g., researcher)")
+    p.add_argument("--list", "-l", action="store_true", help="List available profession packs")
+    p.set_defaults(func=cmd_scaffold)
 
     # demo
     p = sub.add_parser("demo", help="Run interactive demo with sample vault")
