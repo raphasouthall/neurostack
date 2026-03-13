@@ -126,7 +126,7 @@ echo "    neurostack doctor        # Health check"
 echo ""
 if [ "$MODE" = "lite" ]; then
     echo "  Upgrade to full mode:"
-    echo "    NEUROSTACK_MODE=full bash install.sh"
+    echo "    curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | NEUROSTACK_MODE=full bash"
     echo ""
 fi
 

@@ -35,7 +35,10 @@ NeuroStack is a CLI tool that helps you build a structured knowledge vault from 
 ## Quick Start
 
 ```bash
-pip install neurostack
+# Install (pick one)
+pipx install neurostack              # recommended — isolated environment
+pip install neurostack               # or use pip if you're already in a venv
+uv tool install neurostack           # or use uv
 
 neurostack init ~/my-vault
 neurostack init ~/my-vault --profession researcher   # with profession pack
@@ -45,24 +48,19 @@ neurostack search "what do I know about deployment?"
 
 That's it. Works with any Markdown vault — [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
 
+> **Note:** On Ubuntu 23.04+, Debian 12+, and Fedora 38+, bare `pip install` outside a virtual environment is blocked by [PEP 668](https://peps.python.org/pep-0668/). Use `pipx`, `uv tool install`, or create a venv first.
+
 <details>
 <summary><strong>One-line install script</strong></summary>
 
 ```bash
 # Lite mode — FTS5 search only, ~50MB, no GPU needed
 curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | bash
-```
 
-</details>
+# Full mode — ~500MB, requires Ollama
+curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | NEUROSTACK_MODE=full bash
 
-<details>
-<summary><strong>Full mode — local AI (embeddings + summaries)</strong></summary>
-
-```bash
-# ~500MB, requires Ollama
-NEUROSTACK_MODE=full curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | bash
-
-# Pull models
+# Full mode models
 ollama pull nomic-embed-text
 ollama pull qwen2.5:3b
 ```
