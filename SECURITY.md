@@ -10,7 +10,7 @@
 
 **Do not open a public issue for security vulnerabilities.**
 
-Email: security@neurostack-project.dev
+Email: hello@neurostack.sh
 
 Include:
 - Description of the vulnerability
