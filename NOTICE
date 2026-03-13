@@ -1,0 +1,64 @@
+NeuroStack
+Copyright 2024-2026 Raphael Southall
+
+This product includes software developed by third parties.
+
+===============================================================================
+
+httpx - BSD-3-Clause
+Copyright 2019, Encode OSS Ltd.
+https://github.com/encode/httpx
+
+===============================================================================
+
+NumPy - BSD-3-Clause
+Copyright 2005-2025, NumPy Developers.
+https://github.com/numpy/numpy
+
+NumPy bundles the following third-party code:
+- MT19937: Copyright 1997-2002, Makoto Matsumoto and Takuji Nishimura
+- pocketfft: Copyright 2010-2018, Max-Planck-Society
+- LAPACK-lite: Copyright 1992-2013, The University of Tennessee, University of California Berkeley, University of Colorado Denver
+
+===============================================================================
+
+PyTorch - BSD-3-Clause
+Copyright 2016-2025, PyTorch contributors.
+https://github.com/pytorch/pytorch
+
+===============================================================================
+
+scikit-learn - BSD-3-Clause
+Copyright 2007-2025, scikit-learn developers.
+https://github.com/scikit-learn/scikit-learn
+
+===============================================================================
+
+SciPy - BSD-3-Clause
+Copyright 2001-2025, SciPy Developers.
+https://github.com/scipy/scipy
+
+===============================================================================
+
+watchdog - Apache-2.0
+Copyright 2011-2024, Yesudeep Mangalapilly, Mickaël Schoentgen, Thomas Amland, and Google Inc.
+https://github.com/gorakhargosh/watchdog
+
+===============================================================================
+
+MCP Python SDK - MIT
+Copyright 2024, Anthropic, PBC.
+https://github.com/modelcontextprotocol/python-sdk
+
+===============================================================================
+
+PyYAML - MIT
+Copyright 2017-2021, Ingy döt Net.
+Copyright 2006-2016, Kirill Simonov.
+https://github.com/yaml/pyyaml
+
+===============================================================================
+
+sentence-transformers - Apache-2.0
+Copyright 2019-2025, UKP Lab, Technische Universität Darmstadt.
+https://github.com/UKPLab/sentence-transformers
