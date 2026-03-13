@@ -85,7 +85,7 @@ NEUROSTACK_MODE=full curl -fsSL https://raw.githubusercontent.com/raphasouthall/
 
 # Pull models
 ollama pull nomic-embed-text
-ollama pull qwen2.5:3b
+ollama pull phi3.5
 ```
 
 ## Features
@@ -154,7 +154,7 @@ Config lives at `~/.config/neurostack/config.toml`:
 vault_root = "~/brain"
 embed_url = "http://localhost:11435"
 llm_url = "http://localhost:11434"
-llm_model = "qwen2.5:3b"
+llm_model = "phi3.5"
 ```
 
 Every setting has a `NEUROSTACK_*` env var override.
@@ -190,7 +190,7 @@ NeuroStack is **read-only** — it indexes your vault but never modifies your fi
 - Linux · macOS (experimental)
 - Python 3.11+
 - SQLite with FTS5 (standard on most systems)
-- **Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and `qwen2.5:3b`
+- **Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and `phi3.5`
 
 ## Links
 

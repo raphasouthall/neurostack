@@ -12,7 +12,7 @@ class TestConfig:
         cfg = Config()
         assert cfg.embed_model == "nomic-embed-text"
         assert cfg.embed_dim == 768
-        assert cfg.llm_model == "qwen2.5:3b"
+        assert cfg.llm_model == "phi3.5"
         assert isinstance(cfg.vault_root, Path)
         assert isinstance(cfg.db_dir, Path)
 

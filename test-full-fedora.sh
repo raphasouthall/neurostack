@@ -148,7 +148,7 @@ cat > "$HOME/.config/neurostack/config.toml" << TOML
 vault_root = "$VAULT"
 embed_url = "http://localhost:11435"
 llm_url = "http://localhost:11434"
-llm_model = "qwen2.5:3b"
+llm_model = "phi3.5"
 TOML
 
 info "Running neurostack init..."
