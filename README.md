@@ -5,18 +5,25 @@
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**Your notes are lying to you. NeuroStack finds the ones that went stale.**
+**Build, maintain, and search your knowledge vault with AI.**
 
-You have hundreds of notes. Some of them are outdated, some contradict your recent thinking, and your AI assistant treats them all as equally true. NeuroStack watches your vault and tells you which notes can't be trusted anymore — the same way your brain flags memories that no longer match reality.
+NeuroStack is a local-first MCP server that helps you build a structured knowledge vault from scratch, keeps it healthy as it grows, and gives your AI tools long-term memory from it. Everything runs on your machine — your notes never leave home.
 
 ## What it does
 
+### Build
+- **Scaffolds your vault** — profession-ready templates and folder structures to get started fast, whether you're a researcher, developer, or just someone with too many notes.
+- **Works with what you have** — connects to any Markdown vault. Use [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
+
+### Maintain
 - **Finds stale notes** — surfaces notes that keep appearing in searches where they don't belong. The signal to review before they mislead you or your AI.
-- **Searches by meaning** — finds notes by what they say, not just what they're titled. Ask a question, get an answer.
-- **Maps your knowledge** — reveals hidden connections and topic clusters you never planned.
 - **Remembers what matters** — recent, active notes get priority. Old, unused notes fade — just like real memory.
-- **Works with your AI tools** — gives Claude Code, Cursor, and Windsurf long-term memory from your vault.
-- **Stays on your machine** — everything runs locally. Your notes never leave home.
+- **Maps your knowledge** — reveals hidden connections and topic clusters you never planned.
+
+### Search
+- **Searches by meaning** — finds notes by what they say, not just what they're titled. Ask a question, get an answer.
+- **Works with your AI tools** — gives Claude Code, Cursor, and Windsurf long-term memory from your vault via MCP.
+- **Saves tokens** — tiered retrieval sends your AI key facts first, full notes only when needed. 96% fewer tokens per query than naive RAG.
 
 <img src="docs/screenshots/prediction-errors.svg" alt="NeuroStack surfacing stale notes" width="720">
 
