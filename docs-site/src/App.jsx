@@ -208,24 +208,25 @@ function Hero() {
   return (
       <section className="hero">
         <div className="hero-content">
-          <span className="hero-eyebrow animate-in">Neuroscience-grounded &middot; Local-first &middot; Apache-2.0</span>
+          <span className="hero-eyebrow animate-in">Local-first &middot; Any AI provider &middot; Apache-2.0</span>
           <h2 className="animate-in delay-1">
-            Your vault, <em>understood</em>
+            Your second brain, <em>starting today</em>
           </h2>
           <p className="hero-description animate-in delay-2">
-            NeuroStack transforms your Markdown vault into a searchable knowledge graph
-            with semantic search, community detection, and prediction error tracking&mdash;all
-            grounded in memory neuroscience, all running locally.
+            Install one command, answer a few questions, and you have a knowledge vault
+            that gets smarter every day you use it. NeuroStack scaffolds your vault,
+            indexes everything by meaning, surfaces what needs attention, and gives
+            any AI tool long-term memory&mdash;all running locally.
           </p>
           <div className="hero-actions animate-in delay-3">
-            <a href="#install" className="btn-primary">Install</a>
-            <a href="#features" className="btn-ghost">Read the docs</a>
+            <a href="#install" className="btn-primary">Get started</a>
+            <a href="#features" className="btn-ghost">See features</a>
           </div>
           <div className="hero-chips animate-in delay-4">
-            <span className="hero-chip"><strong>Hybrid</strong> FTS5 + Semantic</span>
-            <span className="hero-chip"><strong>~15 tok</strong> per triple</span>
+            <span className="hero-chip"><strong>Zero</strong> prerequisites</span>
+            <span className="hero-chip"><strong>Any</strong> AI provider</span>
             <span className="hero-chip"><strong>9</strong> MCP tools</span>
-            <span className="hero-chip"><strong>Python 3.11+</strong></span>
+            <span className="hero-chip"><strong>~15 tok</strong> per triple</span>
           </div>
         </div>
         <div className="hero-icon-wrap animate-in delay-4">
@@ -254,33 +255,35 @@ function HowItWorks() {
         <div className="how-grid">
           <div className="how-step">
             <span className="how-step-number">1</span>
-            <h3 className="how-step-title">Index</h3>
+            <h3 className="how-step-title">Install &amp; Init</h3>
             <p className="how-step-desc">
-              Point NeuroStack at your Markdown vault. It parses notes, extracts
-              wiki-links, builds FTS5 indexes, and optionally generates semantic
-              embeddings and SPO triples.
+              One command installs everything&mdash;no Python, git, or curl needed.
+              The interactive setup walks you through vault location, model selection,
+              and optional profession packs.
             </p>
-            <code className="how-step-cmd">neurostack index</code>
+            <code className="how-step-cmd">npm install -g neurostack && neurostack init</code>
           </div>
           <div className="how-step">
             <span className="how-step-number">2</span>
-            <h3 className="how-step-title">Connect</h3>
+            <h3 className="how-step-title">Connect any AI</h3>
             <p className="how-step-desc">
-              Start the MCP server. Your AI assistant gains 9 specialized tools
-              for searching, graphing, and reasoning over your knowledge — with
-              tiered retrieval that minimises token cost.
+              Use as an MCP server with{' '}
+              <a href="https://docs.anthropic.com/en/docs/claude-code/cli-usage" target="_blank" rel="noopener noreferrer">Claude Code</a>,{' '}
+              <a href="https://developers.openai.com/codex/mcp/" target="_blank" rel="noopener noreferrer">Codex</a>,{' '}
+              <a href="https://geminicli.com/docs/tools/mcp-server/" target="_blank" rel="noopener noreferrer">Gemini CLI</a>,
+              Cursor, Windsurf&mdash;or pipe CLI output into any LLM workflow.
             </p>
             <code className="how-step-cmd">neurostack serve</code>
           </div>
           <div className="how-step">
             <span className="how-step-number">3</span>
-            <h3 className="how-step-title">Think</h3>
+            <h3 className="how-step-title">It gets better every day</h3>
             <p className="how-step-desc">
               Hot notes surface what matters. Drift detection flags what's stale.
               Community detection reveals hidden themes. Your vault becomes a
-              living knowledge system.
+              living knowledge system that improves the more you use it.
             </p>
-            <code className="how-step-cmd">vault_search("query")</code>
+            <code className="how-step-cmd">neurostack search "query"</code>
           </div>
         </div>
       </section>
@@ -341,7 +344,7 @@ const FEATURES = [
   {
     label: 'Protocol',
     name: 'MCP Server',
-    desc: '9-tool Model Context Protocol server. Integrates with Claude Code, Cursor, Windsurf — any MCP-compatible client.',
+    desc: '9-tool Model Context Protocol server. Works with Claude Code, Codex, Gemini CLI, Cursor, Windsurf — any MCP-compatible client. Provider-agnostic by design.',
     ref: 'Standard transport: stdio or SSE'
   },
 ]
@@ -412,12 +415,13 @@ const CLI_GROUPS = [
   {
     label: 'Core',
     commands: [
-      { cmd: 'neurostack init [path]', desc: 'Scaffold a new vault with config, templates, and directory structure' },
+      { cmd: 'neurostack init', desc: 'Interactive setup wizard — vault path, model, profession packs. Or: neurostack init [path] -p researcher' },
       { cmd: 'neurostack index', desc: 'Full re-index of vault — parses notes, extracts chunks, builds FTS5 and embeddings' },
       { cmd: 'neurostack watch', desc: 'Watch vault for changes and live-index on save' },
       { cmd: 'neurostack status', desc: 'Overview of index health and configuration' },
       { cmd: 'neurostack doctor', desc: 'Validate all subsystems — SQLite, Ollama, models, schema version' },
       { cmd: 'neurostack stats', desc: 'Index statistics: notes, chunks, embeddings, summaries, triples, communities' },
+      { cmd: 'neurostack uninstall', desc: 'Complete removal — data, venv, database, and npm package' },
     ]
   },
   {
@@ -603,7 +607,11 @@ function MCPTools() {
         <SectionHeader number="05" title="MCP Server Tools" />
         <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '60ch' }}>
           NeuroStack exposes a Model Context Protocol server with 9 tools.
-          Add to your MCP config and use with any compatible client.
+          Works with{' '}
+          <a href="https://docs.anthropic.com/en/docs/claude-code/cli-usage" target="_blank" rel="noopener noreferrer">Claude Code</a>,{' '}
+          <a href="https://developers.openai.com/codex/mcp/" target="_blank" rel="noopener noreferrer">Codex</a>,{' '}
+          <a href="https://geminicli.com/docs/tools/mcp-server/" target="_blank" rel="noopener noreferrer">Gemini CLI</a>,
+          Cursor, Windsurf, and any MCP-compatible client.
         </p>
         {MCP_TOOLS.map((tool) => (
           <McpTool key={tool.name} tool={tool} />
@@ -689,61 +697,63 @@ function Install() {
   return (
     <Reveal>
       <section className="section" id="install">
-        <SectionHeader number="06" title="Installation" />
+        <SectionHeader number="06" title="Get Started" />
+        <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '60ch' }}>
+          One command. No Python, git, or curl required&mdash;the installer handles
+          all dependencies automatically. Just Node.js.
+        </p>
         <div className="install-grid">
           <div className="install-card">
             <div className="install-card-header">
               <h3 className="install-card-title">Lite Mode</h3>
-              <span className="install-card-badge">~50MB</span>
+              <span className="install-card-badge">~130MB</span>
             </div>
             <div className="install-card-body">
               <p className="install-desc">
-                FTS5 keyword search only. No GPU needed, no external dependencies
-                beyond Python and SQLite.
+                FTS5 keyword search, wiki-link graph, stale note detection,
+                and MCP server. No GPU needed.
               </p>
               <div className="install-code">
-                <span className="comment"># Quick install</span>{'\n'}
-                curl -fsSL https://raw.githubusercontent.com/{'\n'}
-                {'  '}raphasouthall/neurostack/main/install.sh | bash{'\n'}
-                {'\n'}
-                <span className="comment"># Or via pip</span>{'\n'}
-                pip install neurostack{'\n'}
-                {'\n'}
-                <span className="comment"># Initialise vault</span>{'\n'}
-                neurostack init ~/my-vault{'\n'}
-                neurostack index
+                <span className="comment"># Install + interactive setup</span>{'\n'}
+                npm install -g neurostack{'\n'}
+                neurostack init
               </div>
               <ul className="install-features">
                 <li>FTS5 full-text search</li>
                 <li>Wiki-link graph + PageRank</li>
+                <li>Stale note detection</li>
                 <li>File watching + live indexing</li>
                 <li>MCP server (stdio/SSE)</li>
-                <li>CLI with all core commands</li>
+                <li>Interactive setup wizard</li>
+              </ul>
+              <h4 className="install-detail-heading">What gets installed</h4>
+              <ul className="install-details">
+                <li><strong>uv</strong> ~30MB &mdash; Python package manager (auto-installed)</li>
+                <li><strong>Python 3.12</strong> ~50MB &mdash; standalone, managed by uv</li>
+                <li><strong>NeuroStack + deps</strong> ~50MB &mdash; pyyaml, watchdog, mcp, httpx</li>
+                <li><strong>Config</strong> &mdash; ~/.config/neurostack/config.toml</li>
+                <li><strong>Database</strong> &mdash; ~/.local/share/neurostack/neurostack.db</li>
               </ul>
             </div>
           </div>
           <div className="install-card">
             <div className="install-card-header">
               <h3 className="install-card-title">Full Mode</h3>
-              <span className="install-card-badge">~500MB</span>
+              <span className="install-card-badge">~560MB</span>
             </div>
             <div className="install-card-body">
               <p className="install-desc">
                 Adds semantic embeddings, LLM summaries, triple extraction,
-                and cross-encoder reranking via Ollama.
+                and cross-encoder reranking. Requires Ollama.
               </p>
               <div className="install-code">
                 <span className="comment"># Install with ML extras</span>{'\n'}
-                NEUROSTACK_MODE=full \{'\n'}
-                {'  '}curl -fsSL https://raw.githubusercontent.com/{'\n'}
-                {'  '}raphasouthall/neurostack/main/install.sh | bash{'\n'}
+                NEUROSTACK_MODE=full npm install -g neurostack{'\n'}
+                neurostack init{'\n'}
                 {'\n'}
-                <span className="comment"># Pull required models</span>{'\n'}
+                <span className="comment"># Pull Ollama models</span>{'\n'}
                 ollama pull nomic-embed-text{'\n'}
-                ollama pull phi3.5{'\n'}
-                {'\n'}
-                <span className="comment"># Optional: community detection (GPL-3.0)</span>{'\n'}
-                pip install neurostack[community]
+                ollama pull phi3.5
               </div>
               <ul className="install-features">
                 <li>Everything in Lite, plus:</li>
@@ -751,12 +761,26 @@ function Install() {
                 <li>LLM-generated note summaries</li>
                 <li>SPO triple extraction</li>
                 <li>Cross-encoder reranking</li>
-                <li>Leiden community detection</li>
-                <li>GraphRAG global queries</li>
-                <li>Prediction error tracking</li>
+              </ul>
+              <h4 className="install-detail-heading">Additional installs</h4>
+              <ul className="install-details">
+                <li><strong>numpy</strong> ~30MB &mdash; numerical computing</li>
+                <li><strong>sentence-transformers</strong> ~100MB &mdash; embeddings &amp; reranking</li>
+                <li><strong>PyTorch CPU</strong> ~300MB &mdash; ML runtime</li>
+                <li><strong>Ollama</strong> ~1GB+ &mdash; <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer">install separately</a></li>
               </ul>
             </div>
           </div>
+        </div>
+        <div style={{ marginTop: 'var(--space-lg)', color: 'var(--ink-light)', fontSize: 'var(--text-sm)' }}>
+          <p>
+            <strong>Community mode:</strong> Add topic cluster detection with{' '}
+            <code>NEUROSTACK_MODE=community</code> (+15MB, leidenalg GPL-3.0).
+          </p>
+          <p style={{ marginTop: 'var(--space-sm)' }}>
+            <strong>Uninstall:</strong> <code>neurostack uninstall</code> removes everything.
+            Config is preserved so reinstall picks up where you left off.
+          </p>
         </div>
       </section>
     </Reveal>
