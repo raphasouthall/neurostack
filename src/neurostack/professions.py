@@ -32,7 +32,10 @@ class Profession:
 PROFESSIONS: dict[str, Profession] = {
     "researcher": Profession(
         name="researcher",
-        description="Academic or independent researcher — literature reviews, experiments, thesis work",
+        description=(
+            "Academic or independent researcher"
+            " — literature reviews, experiments, thesis work"
+        ),
         extra_dirs=[
             "research/methods",
             "literature/sources",
@@ -128,7 +131,7 @@ def apply_profession(vault_root: Path, profession: Profession) -> list[str]:
             seed_entries = seed_index.read_text()
             # Extract just the entries (skip the heading)
             lines = seed_entries.strip().split("\n")
-            entries = [l for l in lines if l.startswith("- ")]
+            entries = [line for line in lines if line.startswith("- ")]
             if entries:
                 # Check which entries are already present
                 new_entries = [e for e in entries if e not in existing]
