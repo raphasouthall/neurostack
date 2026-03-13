@@ -31,6 +31,26 @@ NeuroStack is a local-first MCP server that turns your Markdown vault into a sea
 
 <img src="docs/screenshots/05-doctor.png" alt="neurostack doctor" width="720">
 
+**Prediction errors** — surfaces notes that keep appearing in contexts where they don't fit. The signal to review and update before they mislead your AI assistant.
+
+<img src="docs/screenshots/prediction-errors.svg" alt="neurostack prediction-errors" width="720">
+
+**Graph** — PageRank-scored neighborhood for any note. See what's central, what links where.
+
+<img src="docs/screenshots/graph.svg" alt="neurostack graph" width="720">
+
+**Tiered retrieval** — escalates from triples (~15 tok) → summaries → full content. Pay only for the depth the query needs.
+
+<img src="docs/screenshots/tiered.svg" alt="neurostack tiered" width="720">
+
+**Communities** — Leiden clustering across the wiki-link graph. Global queries synthesised from cluster summaries, not individual notes.
+
+<img src="docs/screenshots/communities.svg" alt="neurostack communities" width="720">
+
+**Brief** — session-start summary: hot notes, drift flags, vault health in one command.
+
+<img src="docs/screenshots/brief.svg" alt="neurostack brief" width="720">
+
 ## Why NeuroStack?
 
 Your notes are interconnected, but your tools don't know that. NeuroStack indexes your Markdown vault into a knowledge graph with:
