@@ -2,6 +2,10 @@
 
 Thanks for your interest in contributing!
 
+## Contributor License Agreement
+
+Before your first contribution can be merged, you must agree to our [Contributor License Agreement](CLA.md). By opening a pull request, you indicate your agreement to the CLA terms. This enables us to offer NeuroStack under multiple licenses while keeping the core open source.
+
 ## Getting Started
 
 1. Fork the repository
