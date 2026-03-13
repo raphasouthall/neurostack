@@ -6,7 +6,8 @@ import json
 import sys
 from pathlib import Path
 
-from .config import get_config
+from . import __version__
+from .config import get_config, CONFIG_PATH
 
 
 def cmd_index(args):
@@ -374,6 +375,204 @@ def cmd_watch(args):
     )
 
 
+def cmd_init(args):
+    """Initialize a new NeuroStack vault and config."""
+    from .config import get_config, CONFIG_PATH
+
+    cfg = get_config()
+    vault_root = Path(args.path) if args.path else cfg.vault_root
+
+    # Create vault directory structure
+    dirs = ["research", "literature", "calendar", "inbox", "templates", "archive", "meta"]
+    created = []
+    for d in dirs:
+        p = vault_root / d
+        if not p.exists():
+            p.mkdir(parents=True)
+            created.append(d)
+
+    # Create index.md files
+    for d in dirs:
+        idx = vault_root / d / "index.md"
+        if not idx.exists():
+            idx.write_text(f"# {d.capitalize()}\n\n")
+
+    # Create config if missing
+    if not CONFIG_PATH.exists():
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(
+            f'vault_root = "{vault_root}"\n'
+            f'embed_url = "{cfg.embed_url}"\n'
+            f'llm_url = "{cfg.llm_url}"\n'
+            f'llm_model = "{cfg.llm_model}"\n'
+        )
+        print(f"Config written to {CONFIG_PATH}")
+
+    # Create DB directory
+    cfg.db_dir.mkdir(parents=True, exist_ok=True)
+
+    if created:
+        print(f"Created vault at {vault_root}")
+        print(f"  Directories: {', '.join(created)}")
+    else:
+        print(f"Vault already exists at {vault_root}")
+
+    print(f"Database: {cfg.db_path}")
+    print(f"\nNext steps:")
+    print(f"  neurostack index          # Index your vault")
+    print(f"  neurostack search 'query' # Search")
+    print(f"  neurostack doctor         # Check health")
+
+
+def cmd_doctor(args):
+    """Validate all NeuroStack subsystems."""
+    from .config import get_config
+    import shutil
+
+    cfg = get_config()
+    checks = []
+
+    # Check vault exists
+    if cfg.vault_root.exists():
+        note_count = len(list(cfg.vault_root.rglob("*.md")))
+        checks.append(("Vault", "OK", f"{cfg.vault_root} ({note_count} .md files)"))
+    else:
+        checks.append(("Vault", "MISSING", f"{cfg.vault_root} not found. Run: neurostack init"))
+
+    # Check database
+    if cfg.db_path.exists():
+        import sqlite3
+        try:
+            conn = sqlite3.connect(str(cfg.db_path))
+            notes = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+            conn.close()
+            checks.append(("Database", "OK", f"{cfg.db_path} ({notes} indexed notes)"))
+        except Exception as e:
+            checks.append(("Database", "ERROR", str(e)))
+    else:
+        checks.append(("Database", "MISSING", "Run: neurostack index"))
+
+    # Check Python version
+    import platform
+    py_ver = platform.python_version()
+    checks.append(("Python", "OK", py_ver))
+
+    # Check FTS5
+    import sqlite3
+    try:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE VIRTUAL TABLE test_fts USING fts5(content)")
+        conn.close()
+        checks.append(("FTS5", "OK", "Available"))
+    except Exception:
+        checks.append(("FTS5", "ERROR", "SQLite compiled without FTS5 support"))
+
+    # Check Ollama embedding endpoint
+    try:
+        import httpx
+        r = httpx.get(f"{cfg.embed_url}/api/tags", timeout=3)
+        if r.status_code == 200:
+            models = [m["name"] for m in r.json().get("models", [])]
+            has_embed = any(cfg.embed_model in m for m in models)
+            status = "OK" if has_embed else "WARN"
+            detail = f"{cfg.embed_url} ({', '.join(models[:3])})" if models else f"{cfg.embed_url} (no models)"
+            if not has_embed:
+                detail += f"\n         {cfg.embed_model} not found. Pull: ollama pull {cfg.embed_model}"
+            checks.append(("Embeddings", status, detail))
+        else:
+            checks.append(("Embeddings", "WARN", f"{cfg.embed_url} returned {r.status_code} (lite mode still works)"))
+    except Exception:
+        checks.append(("Embeddings", "WARN", f"{cfg.embed_url} unreachable (lite mode still works)"))
+
+    # Check Ollama LLM endpoint
+    try:
+        import httpx
+        r = httpx.get(f"{cfg.llm_url}/api/tags", timeout=3)
+        if r.status_code == 200:
+            models = [m["name"] for m in r.json().get("models", [])]
+            checks.append(("LLM", "OK", f"{cfg.llm_url} ({', '.join(models[:3])})"))
+        else:
+            checks.append(("LLM", "WARN", f"{cfg.llm_url} returned {r.status_code}"))
+    except Exception:
+        checks.append(("LLM", "WARN", f"{cfg.llm_url} unreachable (search still works, summaries disabled)"))
+
+    # Check optional deps
+    try:
+        import numpy
+        checks.append(("numpy", "OK", numpy.__version__))
+    except ImportError:
+        checks.append(("numpy", "SKIP", "Not installed (install with: pip install neurostack[full])"))
+
+    try:
+        import sentence_transformers
+        checks.append(("sentence-transformers", "OK", sentence_transformers.__version__))
+    except ImportError:
+        checks.append(("sentence-transformers", "SKIP", "Not installed (install with: pip install neurostack[full])"))
+
+    try:
+        import leidenalg
+        checks.append(("leidenalg", "OK", leidenalg.__version__))
+    except ImportError:
+        checks.append(("leidenalg", "SKIP", "Not installed (install with: pip install neurostack[community])"))
+
+    # Print results
+    print("\nNeuroStack Doctor\n" + "=" * 40)
+    for name, status, detail in checks:
+        icon = {"OK": "+", "WARN": "!", "ERROR": "X", "SKIP": "-", "MISSING": "X"}[status]
+        print(f"  [{icon}] {name}: {detail}")
+
+    errors = sum(1 for _, s, _ in checks if s in ("ERROR", "MISSING"))
+    warns = sum(1 for _, s, _ in checks if s == "WARN")
+    if errors:
+        print(f"\n{errors} error(s) found. Fix them before proceeding.")
+        sys.exit(1)
+    elif warns:
+        print(f"\n{warns} warning(s). Lite mode works. Install optional deps for full features.")
+    else:
+        print("\nAll systems operational.")
+
+
+def cmd_serve(args):
+    """Start the NeuroStack MCP server."""
+    from .server import mcp
+    mcp.run(transport=args.transport)
+
+
+def cmd_sessions(args):
+    """Search session transcripts."""
+    from .session_index import main as session_main
+    # Forward remaining args to session_index
+    sys.argv = ["neurostack-sessions"] + args.session_args
+    session_main()
+
+
+def cmd_status(args):
+    """Show NeuroStack status overview."""
+    from .config import get_config
+    cfg = get_config()
+
+    print(f"NeuroStack v{__version__}")
+    print(f"  Vault:    {cfg.vault_root}")
+    print(f"  Database: {cfg.db_path}")
+    print(f"  Config:   {CONFIG_PATH}")
+
+    if cfg.db_path.exists():
+        import sqlite3
+        conn = sqlite3.connect(str(cfg.db_path))
+        conn.row_factory = sqlite3.Row
+        notes = conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"]
+        chunks = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
+        embedded = conn.execute("SELECT COUNT(*) as c FROM chunks WHERE embedding IS NOT NULL").fetchone()["c"]
+        conn.close()
+
+        mode = "full" if embedded > 0 else "lite"
+        print(f"  Mode:     {mode}")
+        print(f"  Notes:    {notes}")
+        print(f"  Chunks:   {chunks} ({embedded} embedded)")
+    else:
+        print(f"  Status:   Not initialized. Run: neurostack init")
+
+
 def main():
     from .config import get_config
     cfg = get_config()
@@ -384,6 +583,29 @@ def main():
     parser.add_argument("--summarize-url", default=cfg.llm_url, help="Ollama summarize URL")
 
     sub = parser.add_subparsers(dest="command")
+
+    # init
+    p = sub.add_parser("init", help="Initialize a new vault and config")
+    p.add_argument("path", nargs="?", help="Vault path (default: from config)")
+    p.set_defaults(func=cmd_init)
+
+    # status
+    p = sub.add_parser("status", help="Show NeuroStack status")
+    p.set_defaults(func=cmd_status)
+
+    # doctor
+    p = sub.add_parser("doctor", help="Validate all subsystems")
+    p.set_defaults(func=cmd_doctor)
+
+    # serve
+    p = sub.add_parser("serve", help="Start MCP server")
+    p.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+    p.set_defaults(func=cmd_serve)
+
+    # sessions
+    p = sub.add_parser("sessions", help="Search session transcripts")
+    p.add_argument("session_args", nargs=argparse.REMAINDER, help="Arguments passed to session-index")
+    p.set_defaults(func=cmd_sessions)
 
     # index
     p = sub.add_parser("index", help="Full re-index of vault")
