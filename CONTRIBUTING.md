@@ -28,7 +28,7 @@ Thanks for your interest in contributing!
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/raphasouthall/neurostack/issues) with:
+Use [GitHub Issues](https://github.com/neurostack-project/neurostack/issues) with:
 - Steps to reproduce
 - Expected vs actual behavior
 - OS, Python version, install mode (lite/full)

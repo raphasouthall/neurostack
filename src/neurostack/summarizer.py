@@ -1,0 +1,124 @@
+"""Ollama summary client."""
+
+import httpx
+
+from .config import get_config
+
+_cfg = get_config()
+DEFAULT_SUMMARIZE_URL = _cfg.llm_url
+SUMMARIZE_MODEL = _cfg.llm_model
+
+SUMMARY_PROMPT = """Summarize this note in 2-3 concise sentences. Focus on the key purpose, decisions, and actionable information. Do not use filler phrases like "This note discusses". Be direct.
+
+Note title: {title}
+---
+{content}
+---
+
+Summary:"""
+
+
+def summarize_note(
+    title: str,
+    content: str,
+    base_url: str = DEFAULT_SUMMARIZE_URL,
+    model: str = SUMMARIZE_MODEL,
+) -> str:
+    """Generate a 2-3 sentence summary of a note using Ollama."""
+    # Truncate content to ~3000 chars to keep prompt reasonable
+    if len(content) > 3000:
+        content = content[:3000] + "\n[... truncated]"
+
+    prompt = SUMMARY_PROMPT.format(title=title, content=content)
+
+    resp = httpx.post(
+        f"{base_url}/api/generate",
+        json={
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 200,
+            },
+            "think": False,
+        },
+        timeout=120.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    summary = data.get("response", "").strip()
+
+    # Strip /think tags if the model includes them
+    import re
+    summary = re.sub(r"<think>.*?</think>", "", summary, flags=re.DOTALL).strip()
+
+    return summary
+
+
+FOLDER_SUMMARY_PROMPT = """You are summarizing the contents of a folder in a personal knowledge vault.
+Below are summaries of the notes it contains. Write 2-3 sentences describing what topics, projects, or knowledge this folder covers. Be specific and factual — name actual topics, technologies, or projects present.
+
+Folder: {folder_path}
+Note summaries:
+{child_summaries}
+
+Folder summary:"""
+
+
+def summarize_folder(
+    folder_path: str,
+    child_summaries: list[dict],
+    base_url: str = DEFAULT_SUMMARIZE_URL,
+    model: str = SUMMARIZE_MODEL,
+) -> str:
+    """Generate a 2-3 sentence summary of a vault folder from its child note summaries.
+
+    Args:
+        folder_path: Relative folder path (e.g. "work/my-project")
+        child_summaries: List of dicts with keys "title" and "summary"
+        base_url: Ollama base URL
+        model: Ollama model name
+
+    Returns:
+        Summary string.
+    """
+    if not child_summaries:
+        return ""
+
+    # Format child summaries, truncate per note to keep prompt reasonable
+    lines = []
+    for item in child_summaries[:20]:  # cap at 20 notes
+        title = item.get("title", "Untitled")
+        summary = (item.get("summary") or "").strip()
+        if summary:
+            lines.append(f"- {title}: {summary[:200]}")
+
+    if not lines:
+        return ""
+
+    child_text = "\n".join(lines)
+    prompt = FOLDER_SUMMARY_PROMPT.format(folder_path=folder_path, child_summaries=child_text)
+
+    resp = httpx.post(
+        f"{base_url}/api/generate",
+        json={
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 200,
+            },
+            "think": False,
+        },
+        timeout=120.0,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    summary = data.get("response", "").strip()
+
+    import re
+    summary = re.sub(r"<think>.*?</think>", "", summary, flags=re.DOTALL).strip()
+
+    return summary
