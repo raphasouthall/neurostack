@@ -10,7 +10,7 @@
 
 **Do not open a public issue for security vulnerabilities.**
 
-Email: raphasouthall@gmail.com
+Email: security@neurostack-project.dev
 
 Include:
 - Description of the vulnerability
