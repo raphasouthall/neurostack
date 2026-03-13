@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Hybrid FTS5 + cosine similarity search with tiered retrieval."""
 
 from __future__ import annotations
@@ -244,8 +246,9 @@ def _get_context_notes(
 def hotness_score(conn: sqlite3.Connection, note_path: str, half_life_days: float = 30.0) -> float:
     """Compute hotness score blending usage frequency and recency.
 
-    Formula (from OpenViking memory_lifecycle):
-        hotness = sigmoid(log1p(active_count)) * exp(-log(2)/half_life * age_days)
+    Blends frequency and recency using sigmoid-compressed usage count
+    with exponential half-life decay:
+        hotness = sigmoid(log1p(active_count)) * exp(-ln2/half_life * age_days)
 
     Returns a value in [0, 1]. Returns 0.0 if never used.
     """

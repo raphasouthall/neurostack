@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Generate LLM summaries and embeddings for Leiden communities.
 
 For each unsummarized community:

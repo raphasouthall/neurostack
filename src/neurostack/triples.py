@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Knowledge graph triple extraction using Ollama.
 
 Extracts Subject-Predicate-Object triples from vault notes for

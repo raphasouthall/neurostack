@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Leiden community detection on the note-note shared-entity graph.
 
 Builds a note graph where:

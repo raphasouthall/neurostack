@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Cross-encoder reranking for NeuroStack search results."""
 from __future__ import annotations
 

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Watchdog-based file watcher with debounce for vault indexing."""
 
 import hashlib

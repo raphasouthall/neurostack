@@ -206,7 +206,13 @@ NeuroStack is **read-only** — it indexes your vault but never modifies your fi
 
 ## License
 
-Apache-2.0. Community detection (`neurostack[community]`) uses GPL-3.0 dependencies — isolated as an optional extra.
+Apache-2.0 — see [LICENSE](LICENSE).
+
+### Community detection extra
+
+The optional `neurostack[community]` extra installs [leidenalg](https://github.com/vtraag/leidenalg) (GPL-3.0) and [python-igraph](https://github.com/igraph/python-igraph) (GPL-2.0+). These are **not** installed by default and are isolated behind a runtime import guard.
+
+If you install `neurostack[community]`, you are responsible for complying with GPL terms when redistributing. The core NeuroStack package remains Apache-2.0 and contains no GPL code.
 
 ## Contributing
 

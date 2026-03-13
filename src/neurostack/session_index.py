@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """neurostack.session_index: FTS5 search over Claude Code session transcripts.
 
 Ported from session-index (~/tools/session-index/session_index.py).

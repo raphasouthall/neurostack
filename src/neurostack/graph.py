@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Wiki-link graph: parsing, PageRank, neighborhood retrieval."""
 
 import sqlite3
