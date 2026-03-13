@@ -1,8 +1,13 @@
 # NeuroStack
 
-**AI-powered knowledge management, grounded in memory neuroscience. Runs entirely on your machine.**
+[![PyPI](https://img.shields.io/pypi/v/neurostack)](https://pypi.org/project/neurostack/)
+[![Python](https://img.shields.io/pypi/pyversions/neurostack)](https://pypi.org/project/neurostack/)
+[![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-NeuroStack turns your Markdown vault into a searchable knowledge graph with semantic search, community detection, and prediction error tracking — all running locally with zero cloud dependencies.
+**Give Claude Code and Cursor long-term memory from your Markdown vault.**
+
+NeuroStack is a local-first MCP server that turns your Markdown vault into a searchable knowledge graph — semantic search, neuroscience-grounded memory, and prediction error tracking, all running on your machine with zero cloud dependencies.
 
 ## How it works
 
@@ -162,7 +167,7 @@ NeuroStack is **read-only** — it indexes your vault but never modifies your fi
 
 ## Requirements
 
-- Linux (macOS experimental)
+- Linux · macOS (experimental)
 - Python 3.11+
 - SQLite with FTS5 (standard on most systems)
 - **Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and `qwen2.5:3b`
