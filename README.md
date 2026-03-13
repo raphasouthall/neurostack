@@ -6,48 +6,18 @@
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**Build, maintain, and search your knowledge vault with AI.**
+**Your second brain, starting today.** Install one command, answer a few questions, and you have a knowledge vault that gets smarter every day you use it.
 
-NeuroStack is a CLI tool that helps you build a structured knowledge vault from scratch, keeps it healthy as it grows, and makes it searchable by meaning — not just keywords. It also runs as an MCP server, giving Claude Code, Cursor, and other AI tools long-term memory from your vault. Everything runs on your machine — your notes never leave home.
+NeuroStack helps you start and grow a personal knowledge base — whether you have thousands of notes or none at all. It scaffolds a vault, indexes everything by meaning, surfaces what needs attention, and gives your AI tools long-term memory. Everything runs locally. Your notes never leave your machine.
 
-## What it does
-
-### Build
-- **Scaffolds your vault** — profession-ready templates and folder structures to get started fast, whether you're a researcher, developer, or just someone with too many notes.
-- **Onboards existing notes** — point it at any folder of Markdown files and it adds frontmatter, generates indexes, and sets up the vault structure. No manual migration.
-- **Works with what you have** — connects to any Markdown vault. Use [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
-
-### Maintain
-- **Finds stale notes** — surfaces notes that keep appearing in searches where they don't belong. The signal to review before they mislead you or your AI.
-- **Remembers what matters** — recent, active notes get priority. Old, unused notes fade — just like real memory.
-- **Maps your knowledge** — reveals hidden connections and topic clusters you never planned.
-
-### Search
-- **Searches by meaning** — finds notes by what they say, not just what they're titled. Ask a question, get an answer.
-- **Works with your AI tools** — gives Claude Code, Cursor, and Windsurf long-term memory from your vault via MCP.
-- **Saves tokens** — tiered retrieval sends your AI key facts first, full notes only when needed. 96% fewer tokens per query than naive RAG.
-
-<img src="docs/screenshots/prediction-errors.svg" alt="NeuroStack surfacing stale notes" width="720">
-
-<img src="docs/screenshots/07-search.svg" alt="NeuroStack search" width="720">
-
-<img src="docs/screenshots/brief.svg" alt="NeuroStack daily brief" width="720">
-
-## Quick Start
+## Get started in 30 seconds
 
 ```bash
-npx neurostack init ~/my-vault
-npx neurostack index
-npx neurostack search "what do I know about deployment?"
+npm install -g neurostack
+neurostack init
 ```
 
-That's it. Works with any Markdown vault — [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
-
-### Install globally
-
-```bash
-npm install -g neurostack            # recommended — handles everything
-```
+The interactive setup walks you through everything — vault location, LLM model, and optional profession packs. No prior config needed. No Python, git, or curl required — the installer handles all dependencies automatically.
 
 <details>
 <summary><strong>Alternative install methods</strong></summary>
@@ -70,6 +40,37 @@ ollama pull qwen2.5:3b
 > **Note:** On Ubuntu 23.04+, Debian 12+, and Fedora 38+, bare `pip install` outside a virtual environment is blocked by [PEP 668](https://peps.python.org/pep-0668/). Use `npm`, `pipx`, `uv tool install`, or create a venv first.
 
 </details>
+
+To uninstall:
+
+```bash
+neurostack uninstall
+```
+
+## What it does
+
+### Build — start your second brain in minutes
+- **Interactive setup** — `neurostack init` walks you through vault location, model selection, and profession packs. No docs to read first.
+- **Scaffolds your vault** — profession-ready templates and folder structures so you're not staring at an empty folder.
+- **Onboards existing notes** — point it at any folder of Markdown files and it adds frontmatter, generates indexes, and sets up the vault structure. No manual migration.
+- **Works with what you have** — connects to any Markdown vault. Use [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
+
+### Maintain — your vault gets better every day
+- **Finds stale notes** — surfaces notes that keep appearing in searches where they don't belong. The signal to review before they mislead you or your AI.
+- **Remembers what matters** — recent, active notes get priority. Old, unused notes fade — just like real memory.
+- **Maps your knowledge** — reveals hidden connections and topic clusters you never planned.
+- **Watches for changes** — auto-indexes new and updated notes so your vault is always current.
+
+### Search — find anything by meaning, not just keywords
+- **Searches by meaning** — finds notes by what they say, not just what they're titled. Ask a question, get an answer.
+- **Works with your AI tools** — gives Claude Code, Cursor, and Windsurf long-term memory from your vault via MCP.
+- **Saves tokens** — tiered retrieval sends your AI key facts first, full notes only when needed. 96% fewer tokens per query than naive RAG.
+
+<img src="docs/screenshots/prediction-errors.svg" alt="NeuroStack surfacing stale notes" width="720">
+
+<img src="docs/screenshots/07-search.svg" alt="NeuroStack search" width="720">
+
+<img src="docs/screenshots/brief.svg" alt="NeuroStack daily brief" width="720">
 
 ## How it works
 
@@ -103,8 +104,8 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 NeuroStack ships with profession-specific starter packs — domain templates, seed notes, and workflow guidance so you're not starting from a blank vault.
 
 ```bash
-# Apply during init
-neurostack init ~/my-vault --profession researcher
+# The interactive setup offers profession packs automatically
+neurostack init
 
 # Or apply to an existing vault
 neurostack scaffold researcher
@@ -155,8 +156,8 @@ Compared to naive RAG (dumping full document chunks at ~750 tokens each), NeuroS
 NeuroStack is a command-line tool. Every feature is available from your terminal:
 
 ```
-neurostack init [path]              # Set up your vault with templates
-neurostack init [path] -p researcher  # Set up with a profession pack
+neurostack init                     # Interactive setup wizard
+neurostack init [path] -p researcher  # Non-interactive with profession pack
 neurostack onboard ~/my-notes       # Onboard an existing folder of notes
 neurostack onboard ~/my-notes -n    # Dry run — preview changes first
 neurostack scaffold researcher      # Apply a profession pack to existing vault
@@ -172,6 +173,7 @@ neurostack stats                    # Index health overview
 neurostack doctor                   # Validate all subsystems
 neurostack watch                    # Watch vault for changes, re-index automatically
 neurostack serve                    # Start as MCP server for AI tools
+neurostack uninstall                # Complete removal — data, deps, and npm package
 ```
 
 <details>
@@ -257,8 +259,8 @@ NeuroStack is **read-only** — it indexes your vault but never modifies your fi
 ## Requirements
 
 - Linux or macOS
-- Python 3.11+
-- **Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and `qwen2.5:3b`
+- **npm install**: Just Node.js — everything else is installed automatically
+- **Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and a summary model (e.g., `phi3.5`)
 
 ## Links
 
