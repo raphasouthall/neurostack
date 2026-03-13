@@ -490,7 +490,12 @@ def cmd_doctor(args):
         r = httpx.get(f"{cfg.llm_url}/api/tags", timeout=3)
         if r.status_code == 200:
             models = [m["name"] for m in r.json().get("models", [])]
-            checks.append(("LLM", "OK", f"{cfg.llm_url} ({', '.join(models[:3])})"))
+            has_llm = any(cfg.llm_model in m for m in models)
+            status = "OK" if has_llm else "WARN"
+            detail = f"{cfg.llm_url} ({', '.join(models[:3])})"
+            if not has_llm:
+                detail += f"\n         {cfg.llm_model} not found. Pull: ollama pull {cfg.llm_model}"
+            checks.append(("LLM", status, detail))
         else:
             checks.append(("LLM", "WARN", f"{cfg.llm_url} returned {r.status_code}"))
     except Exception:
