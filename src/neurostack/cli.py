@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from .config import CONFIG_PATH, get_config
 
 def cmd_index(args):
     from .watcher import full_index
+    from .schema import DB_PATH, get_db
     full_index(
         vault_root=Path(args.vault),
         embed_url=args.embed_url,
@@ -19,6 +21,12 @@ def cmd_index(args):
         skip_summary=args.skip_summary,
         skip_triples=args.skip_triples,
     )
+    db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", DB_PATH))
+    conn = get_db(db_path)
+    notes = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+    chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    edges = conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
+    print(f"Indexed {notes} notes, {chunks} chunks, {edges} graph edges.")
 
 
 def cmd_search(args):
