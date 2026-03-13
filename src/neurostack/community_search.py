@@ -42,7 +42,8 @@ Be concise — 1-3 sentences max.
 
 Relevant points:"""
 
-_REDUCE_PROMPT = """You are synthesizing findings from across a personal knowledge vault to answer a global question.
+_REDUCE_PROMPT = """You are synthesizing findings from across a \
+personal knowledge vault to answer a global question.
 
 Question: {query}
 

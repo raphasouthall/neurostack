@@ -56,7 +56,14 @@ def chunk_by_headings(content: str) -> list[Chunk]:
         nonlocal position
         text = "\n".join(current_lines).strip()
         if text:
-            path = " > ".join(f"{'#' * lvl} {name}" for lvl, name in heading_stack) if heading_stack else "(intro)"
+            path = (
+                " > ".join(
+                    f"{'#' * lvl} {name}"
+                    for lvl, name in heading_stack
+                )
+                if heading_stack
+                else "(intro)"
+            )
             # Split oversized chunks
             if len(text) > MAX_CHUNK_CHARS:
                 for i in range(0, len(text), MAX_CHUNK_CHARS):

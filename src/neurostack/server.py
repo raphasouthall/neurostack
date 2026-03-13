@@ -33,7 +33,7 @@ def vault_search(
             - "summaries": ~50-100 tokens/note. Pre-computed note summaries.
             - "full": ~200-500 tokens/result. Snippets + summaries.
             - "auto": Start with triples, escalate to full if coverage is low. Default.
-        context: Optional project/domain context for result boosting (e.g., "neuroscience", "devops")
+        context: Optional project/domain context for boosting
 
     Use "triples" for quick factual lookups, "summaries" for overview,
     "full" when you need actual content, "auto" to let the system decide.
@@ -41,15 +41,19 @@ def vault_search(
     if depth in ("triples", "summaries", "auto"):
         from .search import tiered_search
 
-        return json.dumps(
-            tiered_search(query, top_k=top_k, depth=depth, mode=mode, embed_url=EMBED_URL, context=context, rerank=True),
-            indent=2,
+        result = tiered_search(
+            query, top_k=top_k, depth=depth, mode=mode,
+            embed_url=EMBED_URL, context=context, rerank=True,
         )
+        return json.dumps(result, indent=2)
 
     # Default: full depth (original behavior)
     from .search import hybrid_search
 
-    results = hybrid_search(query, top_k=top_k, mode=mode, embed_url=EMBED_URL, context=context, rerank=True)
+    results = hybrid_search(
+        query, top_k=top_k, mode=mode,
+        embed_url=EMBED_URL, context=context, rerank=True,
+    )
 
     output = []
     for r in results:
@@ -210,7 +214,7 @@ def vault_communities(
         query: Natural language question about vault themes/topics
         top_k: Number of communities to retrieve (default 6)
         level: Community hierarchy level — 0=coarse themes (default), 1=fine sub-themes
-        map_reduce: Use LLM map-reduce synthesis (True, default) or return raw community hits (False)
+        map_reduce: Use LLM map-reduce synthesis (True) or raw hits (False)
     """
     from .community_search import global_query
 
@@ -268,9 +272,18 @@ def vault_stats() -> str:
         "notes_with_triples": notes_with_triples,
         "triple_coverage": f"{notes_with_triples * 100 // max(notes, 1)}%",
         "triple_embedding_coverage": f"{embedded_triples * 100 // max(total_triples, 1)}%",
-        "communities_coarse": conn.execute("SELECT COUNT(*) as c FROM communities WHERE level = 0").fetchone()["c"],
-        "communities_fine": conn.execute("SELECT COUNT(*) as c FROM communities WHERE level = 1").fetchone()["c"],
-        "communities_summarized": conn.execute("SELECT COUNT(*) as c FROM communities WHERE summary IS NOT NULL").fetchone()["c"],
+        "communities_coarse": conn.execute(
+            "SELECT COUNT(*) as c FROM communities"
+            " WHERE level = 0"
+        ).fetchone()["c"],
+        "communities_fine": conn.execute(
+            "SELECT COUNT(*) as c FROM communities"
+            " WHERE level = 1"
+        ).fetchone()["c"],
+        "communities_summarized": conn.execute(
+            "SELECT COUNT(*) as c FROM communities"
+            " WHERE summary IS NOT NULL"
+        ).fetchone()["c"],
     }
     return json.dumps(result, indent=2)
 

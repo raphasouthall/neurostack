@@ -197,8 +197,12 @@ def index_session(conn: sqlite3.Connection, jsonl_path: Path) -> int:
                 last_ts = ts
 
     conn.execute(
-        "INSERT INTO sessions (session_id, project, slug, version, cwd, first_ts, last_ts, file_mtime) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (session_id, project, slug, version, cwd, first_ts, last_ts, file_mtime),
+        "INSERT INTO sessions"
+        " (session_id, project, slug, version,"
+        " cwd, first_ts, last_ts, file_mtime)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (session_id, project, slug, version,
+         cwd, first_ts, last_ts, file_mtime),
     )
 
     with open(jsonl_path, "r", errors="replace") as f:
@@ -218,8 +222,12 @@ def index_session(conn: sqlite3.Connection, jsonl_path: Path) -> int:
                     continue
                 uuid = entry.get("uuid", "")
                 conn.execute(
-                    "INSERT OR IGNORE INTO messages (session_id, uuid, role, content, timestamp, file_paths) VALUES (?, ?, ?, ?, ?, ?)",
-                    (session_id, uuid, "user", text, ts, extract_file_paths(text)),
+                    "INSERT OR IGNORE INTO messages"
+                    " (session_id, uuid, role, content,"
+                    " timestamp, file_paths)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (session_id, uuid, "user", text,
+                     ts, extract_file_paths(text)),
                 )
                 count += 1
 
@@ -231,8 +239,12 @@ def index_session(conn: sqlite3.Connection, jsonl_path: Path) -> int:
                 uuid = entry.get("uuid", "")
                 tools = extract_tool_names(msg)
                 conn.execute(
-                    "INSERT OR IGNORE INTO messages (session_id, uuid, role, content, timestamp, tool_name, file_paths) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (session_id, uuid, "assistant", text, ts, tools, extract_file_paths(text)),
+                    "INSERT OR IGNORE INTO messages"
+                    " (session_id, uuid, role, content,"
+                    " timestamp, tool_name, file_paths)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (session_id, uuid, "assistant", text,
+                     ts, tools, extract_file_paths(text)),
                 )
                 count += 1
 
@@ -243,7 +255,10 @@ def index_session(conn: sqlite3.Connection, jsonl_path: Path) -> int:
                     continue
                 uuid = entry.get("uuid", "")
                 conn.execute(
-                    "INSERT OR IGNORE INTO messages (session_id, uuid, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO messages"
+                    " (session_id, uuid, role, content,"
+                    " timestamp)"
+                    " VALUES (?, ?, ?, ?, ?)",
                     (session_id, uuid, "system", text, ts),
                 )
                 count += 1
@@ -389,7 +404,9 @@ def cmd_context(args):
     ).fetchone()
     print(f"\033[1mSession:\033[0m {session_id} ({sess['slug'] or '?'})")
     print(f"\033[1mCwd:\033[0m {sess['cwd'] or '?'}")
-    print(f"\033[1mTime:\033[0m {sess['first_ts'][:16] if sess['first_ts'] else '?'} → {sess['last_ts'][:16] if sess['last_ts'] else '?'}")
+    first = sess['first_ts'][:16] if sess['first_ts'] else '?'
+    last = sess['last_ts'][:16] if sess['last_ts'] else '?'
+    print(f"\033[1mTime:\033[0m {first} → {last}")
     print("─" * 80)
 
     for i in range(start, end):
@@ -464,7 +481,12 @@ def cmd_sessions(args):
     for r in rows:
         date = r["first_ts"][:16] if r["first_ts"] else "?"
         slug = r["slug"] or ""
-        print(f"\033[36m{date}\033[0m  {r['session_id'][:8]}  \033[33m{slug:30s}\033[0m  {r['msg_count']:4d} msgs")
+        sid = r['session_id'][:8]
+        mc = r['msg_count']
+        print(
+            f"\033[36m{date}\033[0m  {sid}"
+            f"  \033[33m{slug:30s}\033[0m  {mc:4d} msgs"
+        )
 
 
 def main():
@@ -488,7 +510,10 @@ def main():
                           help="Only show results newer than AGE (e.g. 2d, 3h, 1w, 30m)")
 
     # context
-    p_ctx = sub.add_parser("context", aliases=["ctx"], help="Show conversation context around a match")
+    p_ctx = sub.add_parser(
+        "context", aliases=["ctx"],
+        help="Show conversation context around a match",
+    )
     p_ctx.add_argument("query", nargs="+", help="FTS5 search query")
     p_ctx.add_argument("-n", "--window", type=int, default=5, help="Messages before/after")
 

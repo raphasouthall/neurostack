@@ -128,9 +128,12 @@ def index_single_note(
         try:
             summary = summarize_note(parsed.title, full_content, base_url=summarize_url)
             conn.execute(
-                """INSERT OR REPLACE INTO summaries (note_path, summary_text, content_hash, updated_at)
-                   VALUES (?, ?, ?, ?)""",
-                (parsed.path, summary, parsed.content_hash, now),
+                "INSERT OR REPLACE INTO summaries"
+                " (note_path, summary_text,"
+                " content_hash, updated_at)"
+                " VALUES (?, ?, ?, ?)",
+                (parsed.path, summary,
+                 parsed.content_hash, now),
             )
         except Exception as e:
             log.warning(f"Summary failed for {parsed.path}: {e}")
@@ -160,8 +163,10 @@ def index_single_note(
         for i, chunk in enumerate(parsed.chunks):
             emb_blob = embedding_to_blob(embeddings[i]) if embeddings[i] is not None else None
             conn.execute(
-                """INSERT INTO chunks (note_path, heading_path, content, content_hash, position, embedding)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                "INSERT INTO chunks"
+                " (note_path, heading_path, content,"
+                " content_hash, position, embedding)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     parsed.path,
                     chunk.heading_path,
@@ -216,9 +221,11 @@ def _index_triples_for_note(
     for i, t in enumerate(triples):
         emb_blob = embedding_to_blob(embeddings[i]) if embeddings[i] is not None else None
         conn.execute(
-            """INSERT INTO triples
-               (note_path, subject, predicate, object, triple_text, embedding, content_hash, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            "INSERT INTO triples"
+            " (note_path, subject, predicate, object,"
+            " triple_text, embedding,"
+            " content_hash, updated_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 note_path, t["s"], t["p"], t["o"],
                 triple_texts[i], emb_blob, content_hash, now,
@@ -331,8 +338,10 @@ def backfill_summaries(
                     "SELECT content_hash FROM notes WHERE path = ?", (note_path,)
                 ).fetchone()["content_hash"]
                 conn.execute(
-                    """INSERT OR REPLACE INTO summaries (note_path, summary_text, content_hash, updated_at)
-                       VALUES (?, ?, ?, ?)""",
+                    "INSERT OR REPLACE INTO summaries"
+                    " (note_path, summary_text,"
+                    " content_hash, updated_at)"
+                    " VALUES (?, ?, ?, ?)",
                     (note_path, summary, content_hash, now),
                 )
                 success += 1
@@ -384,13 +393,17 @@ def backfill_stale_summaries(
             if summary:
                 now = datetime.now(timezone.utc).isoformat()
                 conn.execute(
-                    """INSERT OR REPLACE INTO summaries (note_path, summary_text, content_hash, updated_at)
-                       VALUES (?, ?, ?, ?)""",
+                    "INSERT OR REPLACE INTO summaries"
+                    " (note_path, summary_text,"
+                    " content_hash, updated_at)"
+                    " VALUES (?, ?, ?, ?)",
                     (note_path, summary, content_hash, now),
                 )
                 success += 1
         except Exception as e:
-            log.warning(f"Summary refresh failed for {note_path}: {e}")
+            log.warning(
+                f"Summary refresh failed for {note_path}: {e}"
+            )
 
         if (i + 1) % 10 == 0 or i + 1 == total:
             conn.commit()

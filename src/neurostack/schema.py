@@ -109,12 +109,15 @@ CREATE TRIGGER IF NOT EXISTS triples_ai AFTER INSERT ON triples BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS triples_ad AFTER DELETE ON triples BEGIN
-    INSERT INTO triples_fts(triples_fts, rowid, triple_text) VALUES('delete', old.triple_id, old.triple_text);
+    INSERT INTO triples_fts(triples_fts, rowid, triple_text)
+        VALUES('delete', old.triple_id, old.triple_text);
 END;
 
 CREATE TRIGGER IF NOT EXISTS triples_au AFTER UPDATE ON triples BEGIN
-    INSERT INTO triples_fts(triples_fts, rowid, triple_text) VALUES('delete', old.triple_id, old.triple_text);
-    INSERT INTO triples_fts(rowid, triple_text) VALUES (new.triple_id, new.triple_text);
+    INSERT INTO triples_fts(triples_fts, rowid, triple_text)
+        VALUES('delete', old.triple_id, old.triple_text);
+    INSERT INTO triples_fts(rowid, triple_text)
+        VALUES (new.triple_id, new.triple_text);
 END;
 
 -- GraphRAG community tables (Phase 3: Leiden community detection)
@@ -174,7 +177,8 @@ CREATE TABLE IF NOT EXISTS prediction_errors (
 
 CREATE INDEX IF NOT EXISTS idx_pred_errors_note ON prediction_errors(note_path);
 CREATE INDEX IF NOT EXISTS idx_pred_errors_type ON prediction_errors(error_type);
-CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved ON prediction_errors(resolved_at) WHERE resolved_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved
+    ON prediction_errors(resolved_at) WHERE resolved_at IS NULL;
 """
 
 # Migration from v1 to v2: add triples tables
@@ -206,12 +210,15 @@ CREATE TRIGGER IF NOT EXISTS triples_ai AFTER INSERT ON triples BEGIN
 END;
 
 CREATE TRIGGER IF NOT EXISTS triples_ad AFTER DELETE ON triples BEGIN
-    INSERT INTO triples_fts(triples_fts, rowid, triple_text) VALUES('delete', old.triple_id, old.triple_text);
+    INSERT INTO triples_fts(triples_fts, rowid, triple_text)
+        VALUES('delete', old.triple_id, old.triple_text);
 END;
 
 CREATE TRIGGER IF NOT EXISTS triples_au AFTER UPDATE ON triples BEGIN
-    INSERT INTO triples_fts(triples_fts, rowid, triple_text) VALUES('delete', old.triple_id, old.triple_text);
-    INSERT INTO triples_fts(rowid, triple_text) VALUES (new.triple_id, new.triple_text);
+    INSERT INTO triples_fts(triples_fts, rowid, triple_text)
+        VALUES('delete', old.triple_id, old.triple_text);
+    INSERT INTO triples_fts(rowid, triple_text)
+        VALUES (new.triple_id, new.triple_text);
 END;
 """
 
@@ -277,7 +284,8 @@ CREATE TABLE IF NOT EXISTS prediction_errors (
 
 CREATE INDEX IF NOT EXISTS idx_pred_errors_note ON prediction_errors(note_path);
 CREATE INDEX IF NOT EXISTS idx_pred_errors_type ON prediction_errors(error_type);
-CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved ON prediction_errors(resolved_at) WHERE resolved_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved
+    ON prediction_errors(resolved_at) WHERE resolved_at IS NULL;
 """
 
 

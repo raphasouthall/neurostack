@@ -127,7 +127,9 @@ def _store_communities(
 
     for note_paths in community_notes.values():
         cursor = conn.execute(
-            "INSERT INTO communities (level, entity_count, member_notes, updated_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO communities"
+            " (level, entity_count, member_notes,"
+            " updated_at) VALUES (?, ?, ?, ?)",
             (level, len(note_paths), len(note_paths), now),
         )
         db_id = cursor.lastrowid

@@ -42,7 +42,7 @@ def get_git_recent(vault_root: Path, limit: int = 5) -> list[str]:
             timeout=5,
         )
         if result.returncode == 0:
-            return [l.strip() for l in result.stdout.strip().split("\n") if l.strip()]
+            return [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return []
