@@ -151,6 +151,60 @@ Compared to naive RAG (dumping full document chunks at ~750 tokens each), NeuroS
 | Cross-encoder reranking | — | Yes |
 | Topic clustering (Leiden) | — | +community |
 
+## What gets installed
+
+`npm install -g neurostack` installs everything automatically. Here's exactly what ends up on your machine:
+
+### Lite mode (default)
+
+Installed with `npm install -g neurostack` or `NEUROSTACK_MODE=lite npm install -g neurostack`.
+
+| Component | Location | Size | What it is |
+|-----------|----------|------|------------|
+| npm wrapper | `$(npm root -g)/neurostack/` | ~20 KB | Node.js bin + install scripts |
+| uv | `~/.local/bin/uv` | ~30 MB | Python package manager (auto-installed) |
+| Python 3.12 | `~/.local/share/uv/python/` | ~50 MB | Standalone Python managed by uv (not your system Python) |
+| NeuroStack source | `~/.local/share/neurostack/repo/` | ~2 MB | Python source + vault templates |
+| Python venv + deps | `~/.local/share/neurostack/repo/.venv/` | ~50 MB | pyyaml, watchdog, mcp, httpx |
+| Config | `~/.config/neurostack/config.toml` | ~200 B | Vault path, Ollama endpoints, model name |
+| Database | `~/.local/share/neurostack/neurostack.db` | Grows with vault | SQLite + FTS5 knowledge graph |
+
+**Total: ~130 MB.** No GPU needed. Keyword search, wiki-link graph, stale note detection, and MCP server all work in lite mode.
+
+### Full mode
+
+Installed with `NEUROSTACK_MODE=full npm install -g neurostack`. Adds ML dependencies on top of lite.
+
+| Component | Location | Size | What it is |
+|-----------|----------|------|------------|
+| Everything from lite | (see above) | ~130 MB | |
+| numpy | in `.venv/` | ~30 MB | Numerical computing |
+| sentence-transformers | in `.venv/` | ~100 MB | Embedding and reranking models |
+| PyTorch (CPU) | in `.venv/` | ~300 MB | ML runtime (CPU-only, pulled by sentence-transformers) |
+| Ollama (external) | User-installed | ~1 GB+ | Required for embeddings and summaries — [install separately](https://ollama.ai) |
+
+**Total: ~560 MB** + Ollama. Adds semantic search, AI-generated summaries/triples, and cross-encoder reranking.
+
+### Community mode
+
+Installed with `NEUROSTACK_MODE=community npm install -g neurostack`. Adds community detection on top of full.
+
+| Component | Location | Size | What it is |
+|-----------|----------|------|------------|
+| Everything from full | (see above) | ~560 MB | |
+| leidenalg | in `.venv/` | ~5 MB | Leiden community detection (GPL-3.0) |
+| python-igraph | in `.venv/` | ~10 MB | Graph analysis library (GPL-2.0+) |
+
+**Total: ~575 MB** + Ollama. Adds topic cluster detection across your vault.
+
+### Clean removal
+
+```bash
+neurostack uninstall    # Removes source, venv, database — preserves config
+```
+
+Config at `~/.config/neurostack/` is kept so a reinstall picks up where you left off. To remove everything: `rm -rf ~/.config/neurostack`.
+
 ## CLI
 
 NeuroStack is a command-line tool. Every feature is available from your terminal:
