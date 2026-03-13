@@ -740,7 +740,7 @@ function Install() {
                 {'\n'}
                 <span className="comment"># Pull required models</span>{'\n'}
                 ollama pull nomic-embed-text{'\n'}
-                ollama pull qwen2.5:3b{'\n'}
+                ollama pull phi3.5{'\n'}
                 {'\n'}
                 <span className="comment"># Optional: community detection (GPL-3.0)</span>{'\n'}
                 pip install neurostack[community]
@@ -847,7 +847,7 @@ function Config() {
               <span className="key">embed_dim</span> = <span className="val">768</span>{'\n'}
               {'\n'}
               <span className="key">llm_url</span> = <span className="val">"http://localhost:11434"</span>{'\n'}
-              <span className="key">llm_model</span> = <span className="val">"qwen2.5:3b"</span>{'\n'}
+              <span className="key">llm_model</span> = <span className="val">"phi3.5"</span>{'\n'}
               {'\n'}
               <span className="comment"># Session transcripts</span>{'\n'}
               <span className="key">session_dir</span> = <span className="val">"~/.claude/projects"</span>

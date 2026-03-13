@@ -23,7 +23,9 @@ class Config:
     embed_model: str = "nomic-embed-text"
     embed_dim: int = 768
     llm_url: str = "http://localhost:11434"
-    llm_model: str = "qwen2.5:3b"
+    # NOTE: Verify the license of any model you configure here.
+    # phi3.5 is MIT licensed.
+    llm_model: str = "phi3.5"
     session_dir: Path = field(default_factory=lambda: Path.home() / ".claude" / "projects")
 
     @property
