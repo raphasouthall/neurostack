@@ -1,0 +1,126 @@
+/* ═══════════════════════════════════════════════════════════════
+   NeuroStack Documentation — Editorial/Scientific Aesthetic
+   Typography: Crimson Pro (serif) + JetBrains Mono
+   Palette: Warm parchment OKLCH tones
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Warm parchment palette — OKLCH */
+  --paper: oklch(0.97 0.008 75);
+  --paper-deep: oklch(0.94 0.012 75);
+  --ink: oklch(0.25 0.03 55);
+  --ink-light: oklch(0.45 0.025 55);
+  --ink-faint: oklch(0.62 0.02 60);
+  --rule: oklch(0.85 0.015 70);
+  --rule-strong: oklch(0.72 0.02 65);
+  --accent: oklch(0.55 0.12 35);
+  --accent-light: oklch(0.92 0.03 35);
+  --accent-vivid: oklch(0.48 0.15 30);
+  --code-bg: oklch(0.95 0.01 80);
+  --code-border: oklch(0.88 0.015 75);
+  --sidebar-bg: oklch(0.96 0.01 75);
+  --highlight: oklch(0.93 0.04 85);
+
+  /* Type */
+  --serif: 'Crimson Pro', 'Georgia', serif;
+  --mono: 'JetBrains Mono', 'Consolas', monospace;
+
+  /* Fluid scale */
+  --text-xs: clamp(0.7rem, 0.65rem + 0.25vw, 0.8rem);
+  --text-sm: clamp(0.8rem, 0.75rem + 0.25vw, 0.9rem);
+  --text-base: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  --text-lg: clamp(1.15rem, 1.05rem + 0.5vw, 1.35rem);
+  --text-xl: clamp(1.4rem, 1.2rem + 1vw, 1.8rem);
+  --text-2xl: clamp(1.8rem, 1.4rem + 2vw, 2.6rem);
+  --text-3xl: clamp(2.2rem, 1.6rem + 3vw, 3.6rem);
+  --text-4xl: clamp(2.8rem, 1.8rem + 5vw, 5rem);
+
+  /* Spacing */
+  --space-xs: clamp(0.25rem, 0.2rem + 0.25vw, 0.5rem);
+  --space-sm: clamp(0.5rem, 0.4rem + 0.5vw, 0.75rem);
+  --space-md: clamp(1rem, 0.8rem + 1vw, 1.5rem);
+  --space-lg: clamp(1.5rem, 1rem + 2.5vw, 3rem);
+  --space-xl: clamp(2.5rem, 1.5rem + 5vw, 5rem);
+  --space-2xl: clamp(4rem, 2.5rem + 7.5vw, 8rem);
+
+  font-family: var(--serif);
+  font-size: var(--text-base);
+  line-height: 1.65;
+  color: var(--ink);
+  background: var(--paper);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100svh;
+}
+
+/* ── Selection ──────────────────────────────────── */
+::selection {
+  background: var(--accent-light);
+  color: var(--ink);
+}
+
+/* ── Global typography ──────────────────────────── */
+h1, h2, h3, h4 {
+  font-family: var(--serif);
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+  color: var(--ink-light);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+a:hover {
+  color: var(--accent-vivid);
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  color: var(--ink);
+  font-weight: 400;
+}
+
+/* ── Scrollbar ─────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--paper);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--rule-strong);
+}
