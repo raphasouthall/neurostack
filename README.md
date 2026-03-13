@@ -13,23 +13,23 @@ NeuroStack is a local-first MCP server that turns your Markdown vault into a sea
 
 **Index** your vault once — FTS5, embeddings, and wiki-link graph built automatically.
 
-<img src="docs/screenshots/01-index.png" alt="neurostack index" width="720">
+<img src="docs/screenshots/06-index.svg" alt="neurostack index" width="720">
 
 **Search** by meaning, not just keywords — hybrid FTS5 + semantic scoring.
 
-<img src="docs/screenshots/02-search.png" alt="neurostack search" width="720">
+<img src="docs/screenshots/07-search.svg" alt="neurostack search" width="720">
 
 **Graph** any note — PageRank, in/out links, and neighborhood at a glance.
 
-<img src="docs/screenshots/03-graph.png" alt="neurostack graph" width="720">
+<img src="docs/screenshots/graph.svg" alt="neurostack graph" width="720">
 
 **Stats** — full picture of your indexed vault in one command.
 
-<img src="docs/screenshots/04-stats.png" alt="neurostack stats" width="720">
+<img src="docs/screenshots/08-stats.svg" alt="neurostack stats" width="720">
 
 **Doctor** — health check across vault, database, embeddings, and optional deps.
 
-<img src="docs/screenshots/05-doctor.png" alt="neurostack doctor" width="720">
+<img src="docs/screenshots/09-doctor.svg" alt="neurostack doctor" width="720">
 
 **Prediction errors** — surfaces notes that keep appearing in contexts where they don't fit. The signal to review and update before they mislead your AI assistant.
 
