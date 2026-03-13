@@ -2,8 +2,14 @@
 from __future__ import annotations
 
 import logging
+import os
+
+# Suppress noisy HuggingFace Hub warnings and progress bars
+os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
 logger = logging.getLogger(__name__)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 _MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 _model = None  # None = not loaded yet; False = load attempted but unavailable
@@ -13,6 +19,8 @@ def _load_model():
     global _model
     if _model is None:
         try:
+            import transformers
+            transformers.logging.set_verbosity_error()
             from sentence_transformers.cross_encoder import CrossEncoder
             _model = CrossEncoder(_MODEL_NAME)
             logger.info("Loaded cross-encoder: %s", _MODEL_NAME)

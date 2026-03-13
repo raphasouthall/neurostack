@@ -188,19 +188,19 @@ pass "Test vault created (4 notes + index)"
 
 # --- Configure ---
 mkdir -p "$HOME/.config/neurostack"
-# Detect available LLM model (prefer qwen2.5:3b, fall back to what's available)
+# Detect available LLM model (prefer phi3.5, fall back to what's available)
 LLM_MODEL=$(python3 -c "
 import urllib.request, json
 req = urllib.request.Request('http://localhost:11434/api/tags')
 resp = urllib.request.urlopen(req, timeout=5)
 data = json.loads(resp.read())
 models = [m['name'] for m in data.get('models', [])]
-for pref in ['qwen2.5:3b', 'qwen3:14b', 'llama3.1:8b']:
+for pref in ['phi3.5', 'qwen3:14b', 'llama3.1:8b']:
     if pref in models:
         print(pref)
         break
 else:
-    print(models[0] if models else 'qwen2.5:3b')
+    print(models[0] if models else 'phi3.5')
 ")
 info "Using LLM model: $LLM_MODEL"
 
