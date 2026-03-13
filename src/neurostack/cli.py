@@ -758,7 +758,36 @@ def cmd_onboard(args):
             if actions:
                 print(f"  {len(actions)} items added")
 
-    if not dry_run:
+    # 8. Index the vault unless skipped or dry run
+    if not dry_run and not args.no_index:
+        print("\nIndexing vault...")
+        from .schema import DB_PATH, get_db
+        from .watcher import full_index
+
+        full_index(
+            vault_root=target,
+            embed_url=cfg.embed_url,
+            summarize_url=cfg.llm_url,
+            skip_summary=False,
+            skip_triples=False,
+        )
+        db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", DB_PATH))
+        conn = get_db(db_path)
+        notes = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+        chunks = conn.execute(
+            "SELECT COUNT(*) FROM chunks",
+        ).fetchone()[0]
+        edges = conn.execute(
+            "SELECT COUNT(*) FROM graph_edges",
+        ).fetchone()[0]
+        print(
+            f"Indexed {notes} notes, {chunks} chunks, {edges} graph edges.",
+        )
+
+        print("\nNext steps:")
+        print("  neurostack search 'query' # Search")
+        print("  neurostack doctor         # Check health")
+    elif not dry_run:
         print("\nNext steps:")
         print("  neurostack index          # Index your vault")
         print("  neurostack search 'query' # Search")
@@ -1168,6 +1197,10 @@ def main():
     p.add_argument(
         "--profession", "-p",
         help="Also apply a profession pack after onboarding",
+    )
+    p.add_argument(
+        "--no-index", action="store_true",
+        help="Skip indexing after onboarding",
     )
     p.set_defaults(func=cmd_onboard)
 
