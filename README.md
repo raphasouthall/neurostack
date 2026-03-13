@@ -1,5 +1,6 @@
 # NeuroStack
 
+[![npm](https://img.shields.io/npm/v/neurostack)](https://www.npmjs.com/package/neurostack)
 [![PyPI](https://img.shields.io/pypi/v/neurostack)](https://pypi.org/project/neurostack/)
 [![Python](https://img.shields.io/pypi/pyversions/neurostack)](https://pypi.org/project/neurostack/)
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
@@ -35,37 +36,38 @@ NeuroStack is a CLI tool that helps you build a structured knowledge vault from 
 ## Quick Start
 
 ```bash
-# Install (pick one)
-pipx install neurostack              # recommended — isolated environment
-pip install neurostack               # or use pip if you're already in a venv
-uv tool install neurostack           # or use uv
-
-neurostack init ~/my-vault
-neurostack init ~/my-vault --profession researcher   # with profession pack
-neurostack index
-neurostack search "what do I know about deployment?"
+npx neurostack init ~/my-vault
+npx neurostack index
+npx neurostack search "what do I know about deployment?"
 ```
 
 That's it. Works with any Markdown vault — [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
 
-> **Note:** On Ubuntu 23.04+, Debian 12+, and Fedora 38+, bare `pip install` outside a virtual environment is blocked by [PEP 668](https://peps.python.org/pep-0668/). Use `pipx`, `uv tool install`, or create a venv first.
-
-<details>
-<summary><strong>One-line install script</strong></summary>
+### Install globally
 
 ```bash
-# Lite mode — FTS5 search only, ~50MB, no GPU needed
+npm install -g neurostack            # recommended — handles everything
+```
+
+<details>
+<summary><strong>Alternative install methods</strong></summary>
+
+```bash
+# PyPI
+pipx install neurostack              # isolated environment
+pip install neurostack               # inside a venv
+uv tool install neurostack           # uv users
+
+# One-line script (lite mode — FTS5 search only, ~50MB, no GPU needed)
 curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | bash
 
-# Full mode — ~500MB, requires Ollama
+# One-line script (full mode — ~500MB, requires Ollama)
 curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | NEUROSTACK_MODE=full bash
-
-# Full mode models
 ollama pull nomic-embed-text
 ollama pull qwen2.5:3b
 ```
 
-Full mode adds semantic search (find by meaning, not just keywords), AI-generated summaries, and structured knowledge triples — all running locally on your machine.
+> **Note:** On Ubuntu 23.04+, Debian 12+, and Fedora 38+, bare `pip install` outside a virtual environment is blocked by [PEP 668](https://peps.python.org/pep-0668/). Use `npm`, `pipx`, `uv tool install`, or create a venv first.
 
 </details>
 

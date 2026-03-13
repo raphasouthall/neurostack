@@ -1,0 +1,44 @@
+{
+  "name": "neurostack",
+  "version": "0.1.0",
+  "description": "Build, maintain, and search your knowledge vault with AI",
+  "bin": {
+    "neurostack": "bin/neurostack.js"
+  },
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  },
+  "keywords": [
+    "knowledge-management",
+    "obsidian",
+    "mcp",
+    "ai",
+    "rag",
+    "sqlite",
+    "fts5",
+    "semantic-search",
+    "knowledge-graph",
+    "neuroscience",
+    "cli"
+  ],
+  "author": "Raphael Southall <hello@neurostack.sh>",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/raphasouthall/neurostack.git"
+  },
+  "homepage": "https://neurostack.sh",
+  "bugs": {
+    "url": "https://github.com/raphasouthall/neurostack/issues"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "os": ["linux", "darwin"],
+  "files": [
+    "bin/",
+    "postinstall.js",
+    "README.md",
+    "LICENSE"
+  ]
+}
