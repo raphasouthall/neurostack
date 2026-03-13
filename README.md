@@ -4,6 +4,10 @@
 
 NeuroStack turns your Markdown vault into a searchable knowledge graph with semantic search, community detection, and prediction error tracking — all running locally with zero cloud dependencies.
 
+<p align="center">
+  <img src="neurostack-demo.svg" alt="NeuroStack demo" width="860">
+</p>
+
 ## Why NeuroStack?
 
 Your notes are interconnected, but your tools don't know that. NeuroStack indexes your Markdown vault into a knowledge graph with:
