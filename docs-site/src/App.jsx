@@ -5,6 +5,131 @@ import './App.css'
    NeuroStack Documentation — Editorial/Scientific Design
    ═══════════════════════════════════════════════════════════════ */
 
+// ── NeuroStack Icon ──────────────────────────────
+function NeuroIcon({ size = 24, className = '' }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 128.85 129.11"
+      width={size}
+      height={size}
+      className={className}
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M71.64,4.52v29.03c0,4.02,4.85,6.03,7.7,3.2l20.73-20.6c1.78-1.77,4.65-1.75,6.41.04l4.81,4.9c1.73,1.76,1.72,4.57,0,6.33l-19.71,20.06s-2.8,3.42-8.5,3.42h-22.35s-9.94.15-10.41,12.49v21.26c0,.33-.03.66-.11.98-.23,1.02-.81,3.33-1.64,4.43s-14.85,15-21.3,21.39c-1.77,1.75-4.63,1.74-6.38-.03l-4.78-4.83c-1.74-1.76-1.74-4.59,0-6.35l20.59-20.89c2.81-2.85.79-7.69-3.22-7.69H4.52c-2.49,0-4.52-2.02-4.52-4.52v-6.83c0-2.5,2.03-4.53,4.53-4.52l28.83.1c4.02.01,6.05-4.84,3.22-7.69l-20.54-20.74c-1.78-1.8-1.74-4.72.1-6.46l4.99-4.73c1.79-1.69,4.6-1.64,6.32.11l20.41,20.72c2.82,2.86,7.69.89,7.73-3.12l.3-29.51c.03-2.48,2.04-4.47,4.52-4.47h6.69c2.49,0,4.52,2.02,4.52,4.52Z"/>
+      <path d="M128.85,60.88v7.41c0,2.48-2.01,4.5-4.5,4.5h-38.11c-.74,0-1.1.89-.58,1.41l26.89,26.89c1.74,1.74,1.76,4.57.03,6.33l-4.62,4.71c-1.74,1.77-4.59,1.8-6.36.06l-27.72-27.19c-.49-.48-1.32-.13-1.31.56l.71,38.97c.05,2.52-1.98,4.58-4.5,4.58h-7.37c-2.48,0-4.5-2.01-4.5-4.5v-60.46s-.77-7.04,6.01-7.19c5.64-.13,47.43-.47,61.4-.58,2.5-.02,4.53,2,4.53,4.5Z"/>
+    </svg>
+  )
+}
+
+// ── PixelIcon — canvas pixelation reveal animation ──
+const SVG_PATHS = [
+  'M71.64,4.52v29.03c0,4.02,4.85,6.03,7.7,3.2l20.73-20.6c1.78-1.77,4.65-1.75,6.41.04l4.81,4.9c1.73,1.76,1.72,4.57,0,6.33l-19.71,20.06s-2.8,3.42-8.5,3.42h-22.35s-9.94.15-10.41,12.49v21.26c0,.33-.03.66-.11.98-.23,1.02-.81,3.33-1.64,4.43s-14.85,15-21.3,21.39c-1.77,1.75-4.63,1.74-6.38-.03l-4.78-4.83c-1.74-1.76-1.74-4.59,0-6.35l20.59-20.89c2.81-2.85.79-7.69-3.22-7.69H4.52c-2.49,0-4.52-2.02-4.52-4.52v-6.83c0-2.5,2.03-4.53,4.53-4.52l28.83.1c4.02.01,6.05-4.84,3.22-7.69l-20.54-20.74c-1.78-1.8-1.74-4.72.1-6.46l4.99-4.73c1.79-1.69,4.6-1.64,6.32.11l20.41,20.72c2.82,2.86,7.69.89,7.73-3.12l.3-29.51c.03-2.48,2.04-4.47,4.52-4.47h6.69c2.49,0,4.52,2.02,4.52,4.52Z',
+  'M128.85,60.88v7.41c0,2.48-2.01,4.5-4.5,4.5h-38.11c-.74,0-1.1.89-.58,1.41l26.89,26.89c1.74,1.74,1.76,4.57.03,6.33l-4.62,4.71c-1.74,1.77-4.59,1.8-6.36.06l-27.72-27.19c-.49-.48-1.32-.13-1.31.56l.71,38.97c.05,2.52-1.98,4.58-4.5,4.58h-7.37c-2.48,0-4.5-2.01-4.5-4.5v-60.46s-.77-7.04,6.01-7.19c5.64-.13,47.43-.47,61.4-.58,2.5-.02,4.53,2,4.53,4.5Z',
+]
+const SVG_VIEWBOX = { w: 128.85, h: 129.11 }
+
+function PixelIcon({ size = 280, className = '' }) {
+  const canvasRef = useRef(null)
+  const rafRef = useRef(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    const dpr = window.devicePixelRatio || 1
+    const logicalSize = size
+    // Set buffer dimensions at device resolution; let CSS control display size
+    canvas.width = logicalSize * dpr
+    canvas.height = logicalSize * dpr
+    ctx.scale(dpr, dpr)
+
+    // Resolve --accent color from CSS
+    const accentRaw = getComputedStyle(document.documentElement)
+      .getPropertyValue('--accent')
+      .trim()
+
+    // Render SVG paths to an offscreen canvas at full logical resolution
+    const offscreen = document.createElement('canvas')
+    offscreen.width = logicalSize
+    offscreen.height = logicalSize
+    const octx = offscreen.getContext('2d')
+
+    const scaleX = logicalSize / SVG_VIEWBOX.w
+    const scaleY = logicalSize / SVG_VIEWBOX.h
+    octx.scale(scaleX, scaleY)
+    octx.fillStyle = accentRaw || '#5c6bc0'
+    for (const d of SVG_PATHS) {
+      const p = new Path2D(d)
+      octx.fill(p)
+    }
+
+    // Animation parameters
+    const DURATION = 1500          // ms
+    const MAX_PIXEL = 32           // starting block size
+    const TARGET_OPACITY = 0.12
+    let startTime = null
+
+    // Easing: exponential ease-out  (t -> 1 fast, settles)
+    function easeOut(t) {
+      return 1 - Math.pow(1 - t, 3)
+    }
+
+    function frame(ts) {
+      if (!startTime) startTime = ts
+      const elapsed = ts - startTime
+      const raw = Math.min(elapsed / DURATION, 1)
+      const progress = easeOut(raw)
+
+      // Pixel size shrinks from MAX_PIXEL → 1
+      const pixelSize = Math.max(1, Math.round(MAX_PIXEL - progress * (MAX_PIXEL - 1)))
+
+      // Draw: offscreen → tiny → back to display at pixelated scale
+      ctx.clearRect(0, 0, logicalSize, logicalSize)
+      ctx.globalAlpha = TARGET_OPACITY
+
+      if (pixelSize <= 1) {
+        // Fully resolved — draw directly
+        ctx.imageSmoothingEnabled = true
+        ctx.drawImage(offscreen, 0, 0, logicalSize, logicalSize)
+      } else {
+        const tinyW = Math.ceil(logicalSize / pixelSize)
+        const tinyH = Math.ceil(logicalSize / pixelSize)
+        const tiny = document.createElement('canvas')
+        tiny.width = tinyW
+        tiny.height = tinyH
+        const tctx = tiny.getContext('2d')
+        tctx.imageSmoothingEnabled = false
+        tctx.drawImage(offscreen, 0, 0, tinyW, tinyH)
+
+        ctx.imageSmoothingEnabled = false
+        ctx.drawImage(tiny, 0, 0, logicalSize, logicalSize)
+      }
+
+      if (raw < 1) {
+        rafRef.current = requestAnimationFrame(frame)
+      }
+    }
+
+    rafRef.current = requestAnimationFrame(frame)
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [size])
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className={className}
+      aria-hidden="true"
+      style={{ display: 'block' }}
+    />
+  )
+}
+
 // Scroll reveal hook
 function useReveal() {
   const ref = useRef(null)
@@ -34,26 +159,33 @@ function Reveal({ children, className = '' }) {
 // ── Navigation ──────────────────────────────────
 function Nav() {
   const [scrolled, setScrolled] = useState(false)
+  const [stars, setStars] = useState(null)
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20)
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
+  useEffect(() => {
+    fetch('https://api.github.com/repos/raphasouthall/neurostack')
+      .then(r => r.json())
+      .then(d => { if (d.stargazers_count != null) setStars(d.stargazers_count) })
+      .catch(() => {})
+  }, [])
 
   return (
     <nav className="nav" style={{ borderBottomColor: scrolled ? undefined : 'transparent' }}>
       <div className="nav-brand">
+        <NeuroIcon size={24} className="nav-icon" />
         <h1>NeuroStack</h1>
         <span className="nav-version">v0.1.0-alpha</span>
       </div>
       <ul className="nav-links">
         <li><a href="#features">Features</a></li>
-        <li><a href="#cli">CLI</a></li>
-        <li><a href="#mcp">MCP Tools</a></li>
         <li><a href="#neuroscience">Science</a></li>
+        <li><a href="#cli">CLI</a></li>
+        <li><a href="#mcp">MCP</a></li>
         <li><a href="#install">Install</a></li>
         <li><a href="#comparison">Compare</a></li>
-        <li><a href="#config">Config</a></li>
       </ul>
       <a
         href="https://github.com/raphasouthall/neurostack"
@@ -61,7 +193,11 @@ function Nav() {
         rel="noopener noreferrer"
         className="nav-github"
       >
-        GitHub &rarr;
+        <svg viewBox="0 0 19 19" width="16" height="16" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M9.356 1.85C5.05 1.85 1.57 5.356 1.57 9.694a7.84 7.84 0 0 0 5.324 7.44c.387.079.528-.168.528-.376 0-.182-.013-.805-.013-1.454-2.165.467-2.616-.935-2.616-.935-.349-.91-.864-1.143-.864-1.143-.71-.48.051-.48.051-.48.787.051 1.2.805 1.2.805.695 1.194 1.817.857 2.268.649.064-.507.27-.857.49-1.052-1.728-.182-3.545-.857-3.545-3.87 0-.857.31-1.558.8-2.104-.078-.195-.349-1 .077-2.078 0 0 .657-.208 2.14.805a7.5 7.5 0 0 1 1.946-.26c.657 0 1.328.092 1.946.26 1.483-1.013 2.14-.805 2.14-.805.426 1.078.155 1.883.078 2.078.502.546.799 1.247.799 2.104 0 3.013-1.818 3.675-3.558 3.87.284.247.528.714.528 1.454 0 1.052-.012 1.896-.012 2.156 0 .208.142.455.528.377a7.84 7.84 0 0 0 5.324-7.441c.013-4.338-3.48-7.844-7.773-7.844" clipRule="evenodd"/>
+        </svg>
+        Stars
+        {stars != null && <span className="nav-star-count">{stars}</span>}
       </a>
     </nav>
   )
@@ -70,41 +206,32 @@ function Nav() {
 // ── Hero ────────────────────────────────────────
 function Hero() {
   return (
-    <section className="hero">
-      <div className="hero-content">
-        <span className="hero-eyebrow animate-in">Local-first &middot; Zero cloud &middot; Apache-2.0</span>
-        <h2 className="animate-in delay-1">
-          Your vault, <em>understood</em>
-        </h2>
-        <p className="hero-description animate-in delay-2">
-          NeuroStack transforms your Markdown vault into a searchable knowledge graph
-          with semantic search, community detection, and prediction error tracking&mdash;all
-          grounded in memory neuroscience, all running locally.
-        </p>
-        <div className="hero-actions animate-in delay-3">
-          <a href="#install" className="btn-primary">Install</a>
-          <a href="#features" className="btn-ghost">Read the docs</a>
+      <section className="hero">
+        <div className="hero-content">
+          <span className="hero-eyebrow animate-in">Neuroscience-grounded &middot; Local-first &middot; Apache-2.0</span>
+          <h2 className="animate-in delay-1">
+            Your vault, <em>understood</em>
+          </h2>
+          <p className="hero-description animate-in delay-2">
+            NeuroStack transforms your Markdown vault into a searchable knowledge graph
+            with semantic search, community detection, and prediction error tracking&mdash;all
+            grounded in memory neuroscience, all running locally.
+          </p>
+          <div className="hero-actions animate-in delay-3">
+            <a href="#install" className="btn-primary">Install</a>
+            <a href="#features" className="btn-ghost">Read the docs</a>
+          </div>
+          <div className="hero-chips animate-in delay-4">
+            <span className="hero-chip"><strong>Hybrid</strong> FTS5 + Semantic</span>
+            <span className="hero-chip"><strong>~15 tok</strong> per triple</span>
+            <span className="hero-chip"><strong>9</strong> MCP tools</span>
+            <span className="hero-chip"><strong>Python 3.11+</strong></span>
+          </div>
         </div>
-      </div>
-      <aside className="hero-aside animate-in delay-4">
-        <div className="hero-stat">
-          <span className="hero-stat-label">Search</span>
-          <span className="hero-stat-value">Hybrid FTS5 + Semantic</span>
+        <div className="hero-icon-wrap animate-in delay-4">
+          <PixelIcon size={280} className="hero-icon" />
         </div>
-        <div className="hero-stat">
-          <span className="hero-stat-label">Token cost</span>
-          <span className="hero-stat-value">~15 tok/triple</span>
-        </div>
-        <div className="hero-stat">
-          <span className="hero-stat-label">MCP Tools</span>
-          <span className="hero-stat-value">9 endpoints</span>
-        </div>
-        <div className="hero-stat">
-          <span className="hero-stat-label">Requirements</span>
-          <span className="hero-stat-value">Python 3.11+, SQLite</span>
-        </div>
-      </aside>
-    </section>
+      </section>
   )
 }
 
@@ -115,6 +242,49 @@ function SectionHeader({ number, title, id }) {
       <span className="section-number">{number}</span>
       <h2 className="section-title">{title}</h2>
     </div>
+  )
+}
+
+// ── How It Works ────────────────────────────────
+function HowItWorks() {
+  return (
+    <Reveal>
+      <section className="section how-it-works" id="how">
+        <SectionHeader number="01" title="How It Works" />
+        <div className="how-grid">
+          <div className="how-step">
+            <span className="how-step-number">1</span>
+            <h3 className="how-step-title">Index</h3>
+            <p className="how-step-desc">
+              Point NeuroStack at your Markdown vault. It parses notes, extracts
+              wiki-links, builds FTS5 indexes, and optionally generates semantic
+              embeddings and SPO triples.
+            </p>
+            <code className="how-step-cmd">neurostack index</code>
+          </div>
+          <div className="how-step">
+            <span className="how-step-number">2</span>
+            <h3 className="how-step-title">Connect</h3>
+            <p className="how-step-desc">
+              Start the MCP server. Your AI assistant gains 9 specialized tools
+              for searching, graphing, and reasoning over your knowledge — with
+              tiered retrieval that minimises token cost.
+            </p>
+            <code className="how-step-cmd">neurostack serve</code>
+          </div>
+          <div className="how-step">
+            <span className="how-step-number">3</span>
+            <h3 className="how-step-title">Think</h3>
+            <p className="how-step-desc">
+              Hot notes surface what matters. Drift detection flags what's stale.
+              Community detection reveals hidden themes. Your vault becomes a
+              living knowledge system.
+            </p>
+            <code className="how-step-cmd">vault_search("query")</code>
+          </div>
+        </div>
+      </section>
+    </Reveal>
   )
 }
 
@@ -180,7 +350,7 @@ function Features() {
   return (
     <Reveal>
       <section className="section" id="features">
-        <SectionHeader number="01" title="Features" />
+        <SectionHeader number="02" title="Features" />
         <div className="features-grid">
           {FEATURES.map((f) => (
             <div className="feature-cell" key={f.name}>
@@ -190,6 +360,47 @@ function Features() {
               <span className="feature-ref">{f.ref}</span>
             </div>
           ))}
+        </div>
+      </section>
+    </Reveal>
+  )
+}
+
+// ── CLI Showcase ────────────────────────────────
+function CLIShowcase() {
+  const [active, setActive] = useState(0)
+  const screens = [
+    { label: 'Search', file: '07-search.svg' },
+    { label: 'Index', file: '06-index.svg' },
+    { label: 'Graph', file: 'graph.svg' },
+    { label: 'Communities', file: 'communities.svg' },
+    { label: 'Tiered', file: 'tiered.svg' },
+    { label: 'Stats', file: '08-stats.svg' },
+    { label: 'Brief', file: 'brief.svg' },
+    { label: 'Doctor', file: '09-doctor.svg' },
+  ]
+
+  return (
+    <Reveal>
+      <section className="section" id="showcase">
+        <div className="showcase-label">See it in action</div>
+        <div className="showcase-tabs">
+          {screens.map((s, i) => (
+            <button
+              key={s.label}
+              className={`showcase-tab ${i === active ? 'active' : ''}`}
+              onClick={() => setActive(i)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <div className="showcase-frame">
+          <img
+            src={`/screenshots/${screens[active].file}`}
+            alt={`NeuroStack ${screens[active].label}`}
+            className="showcase-img"
+          />
         </div>
       </section>
     </Reveal>
@@ -250,7 +461,7 @@ function CLI() {
   return (
     <Reveal>
       <section className="section" id="cli">
-        <SectionHeader number="02" title="CLI Reference" />
+        <SectionHeader number="04" title="CLI Reference" />
         <div className="cli-grid">
           {CLI_GROUPS.map((group) => (
             <div key={group.label} className="cli-row" style={{ display: 'contents' }}>
@@ -389,7 +600,7 @@ function MCPTools() {
   return (
     <Reveal>
       <section className="section" id="mcp">
-        <SectionHeader number="03" title="MCP Server Tools" />
+        <SectionHeader number="05" title="MCP Server Tools" />
         <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '60ch' }}>
           NeuroStack exposes a Model Context Protocol server with 9 tools.
           Add to your MCP config and use with any compatible client.
@@ -440,7 +651,7 @@ function Neuroscience() {
   return (
     <Reveal>
       <section className="section" id="neuroscience">
-        <SectionHeader number="04" title="Neuroscience Grounding" />
+        <SectionHeader number="03" title="Neuroscience Grounding" />
         <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '65ch' }}>
           Every core feature maps to established memory neuroscience research.
           This is not metaphor &mdash; the algorithms are direct computational
@@ -478,7 +689,7 @@ function Install() {
   return (
     <Reveal>
       <section className="section" id="install">
-        <SectionHeader number="05" title="Installation" />
+        <SectionHeader number="06" title="Installation" />
         <div className="install-grid">
           <div className="install-card">
             <div className="install-card-header">
@@ -581,7 +792,7 @@ function Comparison() {
   return (
     <Reveal>
       <section className="section" id="comparison">
-        <SectionHeader number="06" title="Comparison" />
+        <SectionHeader number="07" title="Comparison" />
         <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '55ch' }}>
           NeuroStack complements Obsidian as your editor &mdash; it adds the
           AI search engine layer that Obsidian lacks.
@@ -622,7 +833,7 @@ function Config() {
   return (
     <Reveal>
       <section className="section" id="config">
-        <SectionHeader number="07" title="Configuration" />
+        <SectionHeader number="08" title="Configuration" />
         <div className="config-block">
           <div className="config-file">
             <span className="config-file-label">~/.config/neurostack/config.toml</span>
@@ -687,18 +898,14 @@ function Footer() {
   return (
     <footer className="footer">
       <div className="footer-left">
+        <NeuroIcon size={20} className="footer-icon" />
         <span className="footer-title">NeuroStack</span>
         <span className="footer-sub">Apache-2.0 &middot; Built by Raphael Southall</span>
       </div>
       <div className="footer-right">
         <a href="mailto:hello@neurostack.sh" className="footer-link">hello@neurostack.sh</a>
-        <a
-          href="https://github.com/raphasouthall/neurostack"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="footer-link"
-        >
-          GitHub
+        <a href="https://github.com/raphasouthall/neurostack" target="_blank" rel="noopener noreferrer" className="footer-link">
+          <svg width="16" height="16" viewBox="0 0 19 19"><use href="/icons.svg#github-icon" /></svg>
         </a>
         <a href="#install" className="footer-link">Install</a>
         <a href="#features" className="footer-link">Docs</a>
@@ -714,13 +921,17 @@ export default function App() {
       <Nav />
       <Hero />
       <hr className="section-rule" />
+      <HowItWorks />
+      <hr className="section-rule" />
       <Features />
+      <hr className="section-rule" />
+      <Neuroscience />
       <hr className="section-rule" />
       <CLI />
       <hr className="section-rule" />
-      <MCPTools />
+      <CLIShowcase />
       <hr className="section-rule" />
-      <Neuroscience />
+      <MCPTools />
       <hr className="section-rule" />
       <Install />
       <hr className="section-rule" />
