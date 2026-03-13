@@ -1,4 +1,4 @@
-# NeuroStack
+<a href="https://neurostack.sh"><img src="docs/logo.svg" alt="NeuroStack" height="48"></a>
 
 [![npm](https://img.shields.io/npm/v/neurostack)](https://www.npmjs.com/package/neurostack)
 [![PyPI](https://img.shields.io/pypi/v/neurostack)](https://pypi.org/project/neurostack/)
