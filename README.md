@@ -37,6 +37,7 @@ NeuroStack is a CLI tool that helps you build a structured knowledge vault from 
 pip install neurostack
 
 neurostack init ~/my-vault
+neurostack init ~/my-vault --profession researcher   # with profession pack
 neurostack index
 neurostack search "what do I know about deployment?"
 ```
@@ -96,6 +97,33 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 </details>
 
+## Profession packs
+
+NeuroStack ships with profession-specific starter packs — domain templates, seed notes, and workflow guidance so you're not starting from a blank vault.
+
+```bash
+# Apply during init
+neurostack init ~/my-vault --profession researcher
+
+# Or apply to an existing vault
+neurostack scaffold researcher
+
+# See what's available
+neurostack scaffold --list
+```
+
+Each pack adds:
+- **Templates** — domain-specific note formats (e.g., experiment logs, synthesis notes)
+- **Seed research notes** — interconnected examples showing the vault in action
+- **Extra directories** — folder structure tailored to the workflow
+- **CLAUDE.md guidance** — workflow instructions for your AI assistant
+
+| Pack | Templates | Seed Notes | Extra Dirs |
+|------|-----------|------------|------------|
+| **researcher** | synthesis-note, experiment-log, method-note, paper-project | systematic reviews, reproducibility, effect sizes, citation networks, scoping reviews, data management | `research/methods/`, `literature/sources/`, `experiments/logs/` |
+
+More packs coming — contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Token economy
 
 NeuroStack's tiered retrieval sends your AI only what it needs:
@@ -127,6 +155,9 @@ NeuroStack is a command-line tool. Every feature is available from your terminal
 
 ```
 neurostack init [path]              # Set up your vault with templates
+neurostack init [path] -p researcher  # Set up with a profession pack
+neurostack scaffold researcher      # Apply a profession pack to existing vault
+neurostack scaffold --list          # List available profession packs
 neurostack index                    # Build the knowledge graph
 neurostack search "query"           # Search by meaning or keywords
 neurostack graph "note.md"          # See a note's connections
