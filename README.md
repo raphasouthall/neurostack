@@ -63,7 +63,7 @@ neurostack uninstall
 
 ### Search — find anything by meaning, not just keywords
 - **Searches by meaning** — finds notes by what they say, not just what they're titled. Ask a question, get an answer.
-- **Works with any AI tool** — use as an MCP server with [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-usage), Cursor, Windsurf, or any MCP-compatible client. Or pipe CLI output into ChatGPT, Gemini, local models — whatever you use.
+- **Works with any AI tool** — use as an MCP server with [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-usage), [Codex](https://developers.openai.com/codex/mcp/), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), Cursor, Windsurf, or any MCP-compatible client. Or pipe CLI output into any LLM workflow.
 - **Saves tokens** — tiered retrieval sends your AI key facts first, full notes only when needed. 96% fewer tokens per query than naive RAG.
 
 <img src="docs/screenshots/prediction-errors.svg" alt="NeuroStack surfacing stale notes" width="720">
@@ -199,9 +199,13 @@ neurostack status                   # Overview of your vault and config
 
 NeuroStack is provider-agnostic. Your vault is a local SQLite database with a CLI and MCP interface — use it however fits your workflow.
 
-### MCP server (Claude Code, Cursor, Windsurf, etc.)
+### MCP server (Claude Code, Codex, Gemini CLI, Cursor, Windsurf, etc.)
 
-Add to your MCP config and your AI assistant gets long-term memory from your vault. Works with any [MCP-compatible client](https://modelcontextprotocol.io).
+Add to your MCP config and your AI assistant gets long-term memory from your vault. Works with any [MCP-compatible client](https://modelcontextprotocol.io):
+
+- [Claude Code MCP setup](https://docs.anthropic.com/en/docs/claude-code/cli-usage)
+- [Codex MCP setup](https://developers.openai.com/codex/mcp/)
+- [Gemini CLI MCP setup](https://geminicli.com/docs/tools/mcp-server/)
 
 ```json
 {
