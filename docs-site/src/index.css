@@ -5,7 +5,9 @@
    ═══════════════════════════════════════════════════════════════ */
 
 :root {
-  /* Warm parchment palette — OKLCH */
+  color-scheme: light dark;
+
+  /* Warm parchment palette — OKLCH (light) */
   --paper: oklch(0.97 0.008 75);
   --paper-deep: oklch(0.94 0.012 75);
   --ink: oklch(0.25 0.03 55);
@@ -20,6 +22,11 @@
   --code-border: oklch(0.88 0.015 75);
   --sidebar-bg: oklch(0.96 0.01 75);
   --highlight: oklch(0.93 0.04 85);
+  --code-block-bg: oklch(0.25 0.03 55);
+  --code-block-text: oklch(0.92 0.008 75);
+  --code-block-comment: oklch(0.6 0 0);
+  --code-block-key: oklch(0.75 0.1 35);
+  --code-block-val: oklch(0.75 0.08 160);
 
   /* Type */
   --serif: 'Crimson Pro', 'Georgia', serif;
@@ -52,6 +59,31 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Dark mode — warm charcoal palette ─────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: oklch(0.18 0.012 55);
+    --paper-deep: oklch(0.15 0.015 55);
+    --ink: oklch(0.88 0.01 70);
+    --ink-light: oklch(0.72 0.015 65);
+    --ink-faint: oklch(0.55 0.012 60);
+    --rule: oklch(0.28 0.015 55);
+    --rule-strong: oklch(0.38 0.018 60);
+    --accent: oklch(0.68 0.12 40);
+    --accent-light: oklch(0.25 0.03 40);
+    --accent-vivid: oklch(0.75 0.14 38);
+    --code-bg: oklch(0.22 0.012 55);
+    --code-border: oklch(0.3 0.015 55);
+    --sidebar-bg: oklch(0.2 0.012 55);
+    --highlight: oklch(0.23 0.02 55);
+    --code-block-bg: oklch(0.13 0.01 55);
+    --code-block-text: oklch(0.82 0.01 70);
+    --code-block-comment: oklch(0.48 0 0);
+    --code-block-key: oklch(0.72 0.1 40);
+    --code-block-val: oklch(0.72 0.08 160);
+  }
 }
 
 *,
