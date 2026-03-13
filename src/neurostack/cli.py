@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .config import get_config, CONFIG_PATH
+from .config import CONFIG_PATH, get_config
 
 
 def cmd_index(args):
@@ -42,7 +42,7 @@ def cmd_search(args):
 
 
 def cmd_summary(args):
-    from .schema import get_db, DB_PATH
+    from .schema import DB_PATH, get_db
     conn = get_db(DB_PATH)
 
     # Try as path first
@@ -140,7 +140,7 @@ def cmd_reembed_chunks(args):
 
 
 def cmd_backfill(args):
-    from .watcher import backfill_summaries, backfill_stale_summaries, backfill_triples
+    from .watcher import backfill_stale_summaries, backfill_summaries, backfill_triples
     if args.target in ("summaries", "all"):
         backfill_summaries(
             vault_root=Path(args.vault),
@@ -160,8 +160,8 @@ def cmd_backfill(args):
 
 def cmd_communities(args):
     if args.communities_cmd == "build":
-        from .leiden import detect_communities
         from .community import summarize_all_communities
+        from .leiden import detect_communities
         n_coarse, n_fine = detect_communities()
         print(f"Detected {n_coarse} coarse communities, {n_fine} fine communities.")
         print("Generating LLM summaries (this may take a few minutes)...")
@@ -181,13 +181,13 @@ def cmd_communities(args):
             summarize_url=args.summarize_url,
         )
         print(f"\nCommunities used: {result['communities_used']}")
-        print(f"\nTop communities:")
+        print("\nTop communities:")
         for hit in result["community_hits"][:5]:
             print(f"  [{hit['score']:.3f}] L{hit['level']} {hit['title']} ({hit['entity_count']} entities)")
         if result["answer"]:
             print(f"\n{'='*60}\n{result['answer']}")
     elif args.communities_cmd == "list":
-        from .schema import get_db, DB_PATH
+        from .schema import DB_PATH, get_db
         conn = get_db(DB_PATH)
         level_filter = args.level if hasattr(args, "level") and args.level is not None else None
         q = "SELECT community_id, level, title, entity_count, member_notes FROM communities"
@@ -210,9 +210,10 @@ def cmd_communities(args):
 def cmd_folder_summaries(args):
     """Build or rebuild folder-level summaries for semantic context= boosting."""
     import numpy as np
-    from .schema import get_db, DB_PATH
-    from .summarizer import summarize_folder
+
     from .embedder import get_embedding
+    from .schema import DB_PATH, get_db
+    from .summarizer import summarize_folder
 
     conn = get_db(DB_PATH)
     vault_root = Path(args.vault)
@@ -281,7 +282,7 @@ def cmd_folder_summaries(args):
 
 
 def cmd_stats(args):
-    from .schema import get_db, DB_PATH
+    from .schema import DB_PATH, get_db
     conn = get_db(DB_PATH)
     notes = conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"]
     chunks = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
@@ -300,7 +301,7 @@ def cmd_stats(args):
 
 
 def cmd_prediction_errors(args):
-    from .schema import get_db, DB_PATH
+    from .schema import DB_PATH, get_db
     conn = get_db(DB_PATH)
 
     if args.resolve:
@@ -363,7 +364,7 @@ def cmd_prediction_errors(args):
             print(f"    query: \"{e['sample_query'][:80]}\"")
         print()
 
-    print(f"Resolve a note: cli.py prediction-errors --resolve <note_path>")
+    print("Resolve a note: cli.py prediction-errors --resolve <note_path>")
 
 
 def cmd_watch(args):
@@ -377,7 +378,7 @@ def cmd_watch(args):
 
 def cmd_init(args):
     """Initialize a new NeuroStack vault and config."""
-    from .config import get_config, CONFIG_PATH
+    from .config import CONFIG_PATH
 
     cfg = get_config()
     vault_root = Path(args.path) if args.path else cfg.vault_root
@@ -418,16 +419,14 @@ def cmd_init(args):
         print(f"Vault already exists at {vault_root}")
 
     print(f"Database: {cfg.db_path}")
-    print(f"\nNext steps:")
-    print(f"  neurostack index          # Index your vault")
-    print(f"  neurostack search 'query' # Search")
-    print(f"  neurostack doctor         # Check health")
+    print("\nNext steps:")
+    print("  neurostack index          # Index your vault")
+    print("  neurostack search 'query' # Search")
+    print("  neurostack doctor         # Check health")
 
 
 def cmd_doctor(args):
     """Validate all NeuroStack subsystems."""
-    from .config import get_config
-    import shutil
 
     cfg = get_config()
     checks = []
@@ -537,6 +536,153 @@ def cmd_doctor(args):
         print("\nAll systems operational.")
 
 
+def cmd_demo(args):
+    """Run an interactive demo with the sample vault."""
+    import shutil
+    import tempfile
+
+    from .chunker import parse_note
+    from .graph import build_graph, compute_pagerank, get_neighborhood
+    from .schema import SCHEMA_SQL, SCHEMA_VERSION
+    from .search import fts_search
+
+    # Copy sample vault to a temp directory
+    sample_src = Path(__file__).parent.parent.parent / "vault-template"
+    if not sample_src.exists():
+        print("Error: vault-template not found. "
+              "Demo requires the full repo checkout.")
+        sys.exit(1)
+
+    tmpdir = Path(tempfile.mkdtemp(prefix="neurostack-demo-"))
+    vault = tmpdir / "demo-vault"
+    shutil.copytree(sample_src, vault)
+    db_path = tmpdir / "demo.db"
+
+    print("=" * 60)
+    print("  NeuroStack Demo")
+    print("=" * 60)
+    print()
+    print(f"  Sample vault: {vault}")
+    print(f"  Database: {db_path}")
+    print()
+
+    try:
+        # Create DB directly (bypass module-level singletons)
+        import hashlib
+        import sqlite3
+        from datetime import datetime, timezone
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.row_factory = sqlite3.Row
+        conn.executescript(SCHEMA_SQL)
+        conn.execute(
+            "INSERT INTO schema_version VALUES (?)",
+            (SCHEMA_VERSION,),
+        )
+        conn.commit()
+
+        # Step 1: Index
+        print("--- Step 1: Indexing sample vault (FTS5 lite mode) ---")
+        print()
+
+        md_files = sorted(vault.rglob("*.md"))
+        md_files = [
+            f for f in md_files
+            if ".git" not in f.parts
+            and f.name != "CLAUDE.md"
+        ]
+
+        now = datetime.now(timezone.utc).isoformat()
+        for path in md_files:
+            parsed = parse_note(path, vault)
+            fm_json = json.dumps(parsed.frontmatter, default=str)
+            conn.execute(
+                "INSERT OR REPLACE INTO notes "
+                "(path, title, frontmatter, content_hash, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (parsed.path, parsed.title, fm_json,
+                 parsed.content_hash, now),
+            )
+            for chunk in parsed.chunks:
+                conn.execute(
+                    "INSERT INTO chunks (note_path, heading_path, "
+                    "content, content_hash, position) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (parsed.path, chunk.heading_path, chunk.content,
+                     hashlib.sha256(
+                         chunk.content.encode()
+                     ).hexdigest()[:16],
+                     chunk.position),
+                )
+        conn.commit()
+
+        notes = conn.execute(
+            "SELECT COUNT(*) as c FROM notes"
+        ).fetchone()["c"]
+        chunks = conn.execute(
+            "SELECT COUNT(*) as c FROM chunks"
+        ).fetchone()["c"]
+        print(f"  Indexed {notes} notes, {chunks} chunks")
+
+        # Step 2: Search
+        print()
+        print("--- Step 2: FTS5 search for 'prediction errors' ---")
+        print()
+        results = fts_search(conn, "prediction errors", limit=3)
+        for r in results:
+            snippet = r["content"][:120].replace("\n", " ")
+            print(f"  {r['note_path']}")
+            print(f"    {snippet}...")
+            print()
+
+        # Step 3: Graph
+        print(
+            "--- Step 3: Wiki-link graph for "
+            "'memory-consolidation' ---"
+        )
+        print()
+        build_graph(conn, vault)
+        compute_pagerank(conn)
+        result = get_neighborhood(
+            "research/memory-consolidation.md", depth=1, conn=conn
+        )
+        if result:
+            print(f"  Center: {result.center.title} "
+                  f"(PageRank: {result.center.pagerank:.4f})")
+            print(f"  Neighbors ({len(result.neighbors)}):")
+            for n in result.neighbors:
+                print(f"    - {n.title} "
+                      f"(PageRank: {n.pagerank:.4f})")
+
+        # Step 4: Stats
+        print()
+        print("--- Step 4: Index stats ---")
+        print()
+        edges = conn.execute(
+            "SELECT COUNT(*) as c FROM graph_edges"
+        ).fetchone()["c"]
+        print(f"  Notes: {notes}")
+        print(f"  Chunks: {chunks}")
+        print(f"  Wiki-link edges: {edges}")
+
+        conn.close()
+
+        print()
+        print("=" * 60)
+        print("  Demo complete!")
+        print()
+        print("  To use with your own vault:")
+        print("    neurostack init ~/my-vault")
+        print("    neurostack index")
+        print("    neurostack search 'your query'")
+        print("=" * 60)
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def cmd_serve(args):
     """Start the NeuroStack MCP server."""
     from .server import mcp
@@ -553,7 +699,6 @@ def cmd_sessions(args):
 
 def cmd_status(args):
     """Show NeuroStack status overview."""
-    from .config import get_config
     cfg = get_config()
 
     print(f"NeuroStack v{__version__}")
@@ -575,11 +720,10 @@ def cmd_status(args):
         print(f"  Notes:    {notes}")
         print(f"  Chunks:   {chunks} ({embedded} embedded)")
     else:
-        print(f"  Status:   Not initialized. Run: neurostack init")
+        print("  Status:   Not initialized. Run: neurostack init")
 
 
 def main():
-    from .config import get_config
     cfg = get_config()
 
     parser = argparse.ArgumentParser(description="neurostack: Local AI context engine")
@@ -593,6 +737,10 @@ def main():
     p = sub.add_parser("init", help="Initialize a new vault and config")
     p.add_argument("path", nargs="?", help="Vault path (default: from config)")
     p.set_defaults(func=cmd_init)
+
+    # demo
+    p = sub.add_parser("demo", help="Run interactive demo with sample vault")
+    p.set_defaults(func=cmd_demo)
 
     # status
     p = sub.add_parser("status", help="Show NeuroStack status")

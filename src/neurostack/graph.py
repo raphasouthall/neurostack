@@ -47,7 +47,7 @@ def resolve_wiki_link(link_target: str, all_paths: list[str]) -> str | None:
 
 def build_graph(conn: sqlite3.Connection, vault_root: Path):
     """Build graph edges from all notes' wiki-links."""
-    from .chunker import parse_note, extract_wiki_links
+    from .chunker import extract_wiki_links
 
     # Get all note paths
     all_paths = [r["path"] for r in conn.execute("SELECT path FROM notes").fetchall()]

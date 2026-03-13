@@ -1,7 +1,6 @@
 """Ollama embedding client."""
 
 import json
-import struct
 from typing import Optional
 
 import httpx

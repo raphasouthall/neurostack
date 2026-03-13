@@ -238,6 +238,28 @@ def full_index(
     """Full re-index of the entire vault."""
     embed_url = embed_url or _cfg.embed_url
     summarize_url = summarize_url or _cfg.llm_url
+
+    # Pre-flight: check Ollama before starting a long indexing run
+    if not skip_summary or not skip_triples:
+        from .preflight import check_ollama, preflight_report
+        result = check_ollama(
+            embed_url=embed_url,
+            embed_model=_cfg.embed_model,
+            llm_url=summarize_url,
+            llm_model=_cfg.llm_model,
+        )
+        report = preflight_report(result)
+        if report:
+            print(report)
+            if not result.embed_ok:
+                print(
+                    "  Continuing with FTS5-only indexing "
+                    "(no embeddings)."
+                )
+            if not result.llm_ok:
+                skip_summary = True
+                skip_triples = True
+
     conn = get_db(DB_PATH)
     md_files = sorted(vault_root.rglob("*.md"))
     # Filter out .git, .obsidian, .trash

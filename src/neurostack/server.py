@@ -2,8 +2,6 @@
 """NeuroStack MCP server — tools for pre-computed vault context."""
 
 import json
-from dataclasses import asdict
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 

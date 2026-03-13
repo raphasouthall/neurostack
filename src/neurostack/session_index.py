@@ -6,14 +6,11 @@ Still works as a standalone script for backward compatibility.
 """
 
 import argparse
-import glob
 import json
 import os
 import re
 import sqlite3
-import sys
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DB_PATH = Path(os.environ.get(

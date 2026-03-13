@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 try:
     import numpy as np
@@ -195,7 +195,7 @@ def _get_context_notes(conn: sqlite3.Connection, context: str, embed_url: str = 
         ).fetchall()
 
         if folder_rows:
-            from .embedder import get_embedding, blob_to_embedding, cosine_similarity_batch
+            from .embedder import blob_to_embedding, cosine_similarity_batch, get_embedding
             ctx_emb = get_embedding(context, base_url=embed_url)
             folder_embeddings = []
             folder_paths = []
@@ -358,6 +358,22 @@ def hybrid_search(
         h = hotness_score(conn, r["note_path"])
         if h > 0.0:
             r["score"] = 0.8 * r["score"] + 0.2 * h
+
+    # Excitability boost: notes with status=active get a 1.15x boost
+    # Mirrors CREB-mediated excitability windows where recently active
+    # neurons are preferentially recruited into new engrams.
+    for r in valid_results:
+        note_row = conn.execute(
+            "SELECT frontmatter FROM notes WHERE path = ?",
+            (r["note_path"],),
+        ).fetchone()
+        if note_row and note_row["frontmatter"]:
+            try:
+                fm = json.loads(note_row["frontmatter"])
+                if fm.get("status") == "active":
+                    r["score"] *= 1.15
+            except (json.JSONDecodeError, TypeError):
+                pass
 
     valid_results.sort(key=lambda x: x["score"], reverse=True)
 

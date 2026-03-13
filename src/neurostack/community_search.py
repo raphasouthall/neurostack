@@ -10,6 +10,7 @@ Implements GraphRAG 'global search':
 import logging
 
 import httpx
+
 try:
     import numpy as np
     HAS_NUMPY = True
