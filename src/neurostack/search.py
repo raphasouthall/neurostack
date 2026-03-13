@@ -1,5 +1,7 @@
 """Hybrid FTS5 + cosine similarity search with tiered retrieval."""
 
+from __future__ import annotations
+
 import json
 import logging
 import sqlite3
