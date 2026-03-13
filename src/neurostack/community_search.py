@@ -10,7 +10,11 @@ Implements GraphRAG 'global search':
 import logging
 
 import httpx
-import numpy as np
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 from .embedder import blob_to_embedding, cosine_similarity_batch, get_embedding
 from .schema import DB_PATH, get_db

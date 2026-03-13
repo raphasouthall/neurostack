@@ -5,7 +5,11 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 
-import numpy as np
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 from .config import get_config
 
