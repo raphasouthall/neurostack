@@ -145,6 +145,11 @@ NeuroStack is **read-only** — it indexes your vault but never modifies your fi
 - SQLite with FTS5 (standard on most systems)
 - **Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and `qwen2.5:3b`
 
+## Links
+
+- **Website**: [neurostack.sh](https://neurostack.sh)
+- **Contact**: [hello@neurostack.sh](mailto:hello@neurostack.sh)
+
 ## License
 
 Apache-2.0. Community detection (`neurostack[community]`) uses GPL-3.0 dependencies — isolated as an optional extra.

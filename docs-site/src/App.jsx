@@ -691,6 +691,7 @@ function Footer() {
         <span className="footer-sub">Apache-2.0 &middot; Built by Raphael Southall</span>
       </div>
       <div className="footer-right">
+        <a href="mailto:hello@neurostack.sh" className="footer-link">hello@neurostack.sh</a>
         <a
           href="https://github.com/raphasouthall/neurostack"
           target="_blank"
