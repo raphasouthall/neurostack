@@ -136,10 +136,24 @@ def get_neighborhood(
     if conn is None:
         conn = get_db(DB_PATH)
 
-    # Get center node
-    note = conn.execute("SELECT title FROM notes WHERE path = ?", (note_path,)).fetchone()
+    # Get center node — try exact match first, then fuzzy (stem, suffix, LIKE)
+    note = conn.execute("SELECT path, title FROM notes WHERE path = ?", (note_path,)).fetchone()
+    if not note:
+        # Try with .md suffix
+        note = conn.execute(
+            "SELECT path, title FROM notes WHERE path = ?", (note_path + ".md",)
+        ).fetchone()
+    if not note:
+        # Try matching just the filename stem anywhere in the path
+        stem = note_path.rsplit("/", 1)[-1].removesuffix(".md")
+        note = conn.execute(
+            "SELECT path, title FROM notes WHERE path LIKE ? LIMIT 1",
+            (f"%{stem}%",),
+        ).fetchone()
     if not note:
         return None
+    # Use the resolved path from DB
+    note_path = note["path"]
 
     stats = conn.execute(
         "SELECT in_degree, out_degree, pagerank FROM graph_stats WHERE note_path = ?",
