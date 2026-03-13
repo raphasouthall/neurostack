@@ -160,7 +160,11 @@ def semantic_search(
     return results
 
 
-def _get_context_notes(conn: sqlite3.Connection, context: str, embed_url: str = None) -> tuple[set[str], set[str]]:
+def _get_context_notes(
+    conn: sqlite3.Connection,
+    context: str,
+    embed_url: str = None,
+) -> tuple[set[str], set[str]]:
     """Get direct context matches and their 1-hop neighbors.
 
     Returns (direct_matches, neighbor_matches) as sets of note_path strings.
@@ -532,7 +536,11 @@ def search_triples(
     try:
         query_embedding = get_embedding(query, base_url=embed_url)
     except (ConnectionError, OSError, Exception) as exc:
-        log.warning("Embedding service unavailable, falling back to FTS5-only triple search: %s", exc)
+        log.warning(
+            "Embedding service unavailable,"
+            " falling back to FTS5-only triple search: %s",
+            exc,
+        )
         fts_results = triple_fts_search(conn, query, limit=top_k)
         return _to_triple_results(conn, fts_results[:top_k])
 
@@ -625,7 +633,10 @@ def tiered_search(
     result = {"triples": [], "summaries": [], "chunks": [], "depth_used": depth}
 
     if depth == "triples":
-        triples = search_triples(query, top_k=top_k * 2, mode=mode, embed_url=embed_url, db_path=db_path)
+        triples = search_triples(
+            query, top_k=top_k * 2, mode=mode,
+            embed_url=embed_url, db_path=db_path,
+        )
         result["triples"] = [
             {"note": t.note_path, "title": t.title,
              "s": t.subject, "p": t.predicate, "o": t.object,
@@ -636,7 +647,11 @@ def tiered_search(
 
     if depth == "summaries":
         # Search via chunks but return only summaries (deduplicated by note)
-        chunk_results = hybrid_search(query, top_k=top_k, mode=mode, embed_url=embed_url, db_path=db_path, context=context, rerank=rerank)
+        chunk_results = hybrid_search(
+            query, top_k=top_k, mode=mode,
+            embed_url=embed_url, db_path=db_path,
+            context=context, rerank=rerank,
+        )
         seen = set()
         for r in chunk_results:
             if r.note_path not in seen and r.summary:
@@ -648,7 +663,11 @@ def tiered_search(
         return result
 
     if depth == "full":
-        chunk_results = hybrid_search(query, top_k=top_k, mode=mode, embed_url=embed_url, db_path=db_path, context=context, rerank=rerank)
+        chunk_results = hybrid_search(
+            query, top_k=top_k, mode=mode,
+            embed_url=embed_url, db_path=db_path,
+            context=context, rerank=rerank,
+        )
         result["chunks"] = [
             {"note": r.note_path, "title": r.title, "section": r.heading_path,
              "snippet": r.snippet, "summary": r.summary, "score": round(r.score, 4)}
@@ -657,7 +676,10 @@ def tiered_search(
         return result
 
     # Auto mode: start cheap, escalate if needed
-    triples = search_triples(query, top_k=top_k * 3, mode=mode, embed_url=embed_url, db_path=db_path)
+    triples = search_triples(
+        query, top_k=top_k * 3, mode=mode,
+        embed_url=embed_url, db_path=db_path,
+    )
     result["triples"] = [
         {"note": t.note_path, "title": t.title,
          "s": t.subject, "p": t.predicate, "o": t.object,
@@ -688,7 +710,11 @@ def tiered_search(
         return result
 
     # Low triple coverage — fall back to full chunk search
-    chunk_results = hybrid_search(query, top_k=top_k, mode=mode, embed_url=embed_url, db_path=db_path, context=context, rerank=rerank)
+    chunk_results = hybrid_search(
+        query, top_k=top_k, mode=mode,
+        embed_url=embed_url, db_path=db_path,
+        context=context, rerank=rerank,
+    )
     result["chunks"] = [
         {"note": r.note_path, "title": r.title, "section": r.heading_path,
          "snippet": r.snippet, "summary": r.summary, "score": round(r.score, 4)}

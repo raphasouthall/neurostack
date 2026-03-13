@@ -67,7 +67,9 @@ def build_graph(conn: sqlite3.Connection, vault_root: Path):
             target = resolve_wiki_link(link, all_paths)
             if target and target != note_path:
                 conn.execute(
-                    "INSERT OR IGNORE INTO graph_edges (source_path, target_path, link_text) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO graph_edges"
+                    " (source_path, target_path, link_text)"
+                    " VALUES (?, ?, ?)",
                     (note_path, target, link),
                 )
 
@@ -119,7 +121,9 @@ def compute_pagerank(conn: sqlite3.Connection, damping: float = 0.85, iterations
     conn.execute("DELETE FROM graph_stats")
     for i, path in enumerate(notes):
         conn.execute(
-            "INSERT INTO graph_stats (note_path, in_degree, out_degree, pagerank) VALUES (?, ?, ?, ?)",
+            "INSERT INTO graph_stats"
+            " (note_path, in_degree, out_degree, pagerank)"
+            " VALUES (?, ?, ?, ?)",
             (path, in_degree[i], out_degree[i], pr[i]),
         )
     conn.commit()

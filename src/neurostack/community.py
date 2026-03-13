@@ -34,24 +34,25 @@ SUMMARIZE_URL = _cfg.llm_url
 EMBED_URL = _cfg.embed_url
 SUMMARIZE_MODEL = _cfg.llm_model
 
-COMMUNITY_PROMPT = """You are summarizing a cluster of thematically related notes from a personal knowledge vault.
-
-Member notes and their summaries:
-{note_summaries}
-
-Top entities/concepts mentioned across these notes:
-{entities}
-
-Sample facts from these notes:
-{triples}
-
-Tasks:
-1. Give this community a short, descriptive title (3-7 words, e.g. "Distributed Systems & Consensus")
-2. Write a 3-5 sentence summary of the shared themes, relationships, and knowledge in this cluster
-3. Note any particularly central concepts or recurring ideas
-
-Return ONLY valid JSON:
-{{"title": "...", "summary": "..."}}"""
+COMMUNITY_PROMPT = (
+    "You are summarizing a cluster of thematically"
+    " related notes from a personal knowledge vault.\n"
+    "\nMember notes and their summaries:\n"
+    "{note_summaries}\n"
+    "\nTop entities/concepts mentioned across these notes:\n"
+    "{entities}\n"
+    "\nSample facts from these notes:\n"
+    "{triples}\n"
+    "\nTasks:\n"
+    '1. Give this community a short, descriptive title'
+    ' (3-7 words, e.g. "Distributed Systems & Consensus")\n'
+    "2. Write a 3-5 sentence summary of the shared themes,"
+    " relationships, and knowledge in this cluster\n"
+    "3. Note any particularly central concepts or"
+    " recurring ideas\n"
+    "\nReturn ONLY valid JSON:\n"
+    '{{"title": "...", "summary": "..."}}'
+)
 
 
 def _collect_community_context(conn, community_id: int) -> dict:
