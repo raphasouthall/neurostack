@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 "use strict";
 
-const { execSync, execFileSync } = require("child_process");
+const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const https = require("https");
+const { createWriteStream } = require("fs");
+const { createGunzip } = require("zlib");
 
 const INSTALL_DIR = path.join(os.homedir(), ".local", "share", "neurostack", "repo");
-const REPO = "https://github.com/raphasouthall/neurostack.git";
+const TARBALL_URL = "https://github.com/raphasouthall/neurostack/archive/refs/heads/main.tar.gz";
+const UV_INSTALL_URL = "https://astral.sh/uv/install.sh";
+const UV_BIN_DIR = path.join(os.homedir(), ".local", "bin");
+const PYTHON_VERSION = "3.12";
 
-function info(msg) { console.log(`  [*] ${msg}`); }
-function warn(msg) { console.error(`  [!] ${msg}`); }
-function die(msg) { console.error(`  [X] ${msg}`); process.exit(1); }
+function info(msg) { console.log(`  \x1b[36m▸\x1b[0m ${msg}`); }
+function warn(msg) { console.error(`  \x1b[33m▸\x1b[0m ${msg}`); }
+function die(msg) {
+  console.error(`\n  \x1b[31m✗\x1b[0m ${msg}\n`);
+  process.exit(1);
+}
 
 function which(cmd) {
   try {
@@ -23,64 +32,131 @@ function run(cmd, opts = {}) {
   return execSync(cmd, { encoding: "utf8", stdio: "inherit", ...opts });
 }
 
-// --- Python check ---
-let python = null;
-for (const cmd of ["python3.13", "python3.12", "python3.11", "python3"]) {
-  if (!which(cmd)) continue;
+function uvCmd() {
+  return which("uv") || (fs.existsSync(path.join(UV_BIN_DIR, "uv")) ? path.join(UV_BIN_DIR, "uv") : null);
+}
+
+/** Download a URL to a file or string using Node built-in https (follows redirects) */
+function download(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const get = (u) => {
+      https.get(u, { headers: { "User-Agent": "neurostack-installer" } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return get(res.headers.location);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode} from ${u}`));
+        }
+        if (destPath) {
+          const ws = createWriteStream(destPath);
+          res.pipe(ws);
+          ws.on("finish", () => resolve(destPath));
+          ws.on("error", reject);
+        } else {
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => resolve(Buffer.concat(chunks).toString()));
+        }
+        res.on("error", reject);
+      }).on("error", reject);
+    };
+    get(url);
+  });
+}
+
+async function main() {
+  console.log("\n  \x1b[1mNeuroStack installer\x1b[0m\n");
+
+  // ── Step 1: Install uv (the only external dependency) ──
+  if (!uvCmd()) {
+    info("Installing uv (Python package manager)...");
+    try {
+      const script = await download(UV_INSTALL_URL);
+      const tmpFile = path.join(os.tmpdir(), `uv-install-${Date.now()}.sh`);
+      fs.writeFileSync(tmpFile, script, { mode: 0o755 });
+      run(`sh "${tmpFile}"`, { env: { ...process.env, UV_UNMANAGED_INSTALL: UV_BIN_DIR } });
+      fs.unlinkSync(tmpFile);
+      process.env.PATH = `${UV_BIN_DIR}:${process.env.PATH}`;
+    } catch (e) {
+      die(
+        `Failed to install uv: ${e.message}\n` +
+        `      Install manually: https://docs.astral.sh/uv/getting-started/installation/\n` +
+        `      Then re-run: npm rebuild neurostack`
+      );
+    }
+  }
+  const uv = uvCmd();
+  if (!uv) die("uv installed but not found on PATH. Run: npm rebuild neurostack");
+  info(`uv: ${execSync(`"${uv}" --version`, { encoding: "utf8" }).trim()}`);
+
+  // ── Step 2: Install Python via uv (no system Python needed) ──
+  info(`Ensuring Python ${PYTHON_VERSION} is available...`);
   try {
-    const ver = execSync(`${cmd} -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"`,
-      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
-    const [major, minor] = ver.split(".").map(Number);
-    if (major >= 3 && minor >= 11) { python = cmd; break; }
-  } catch { /* skip */ }
-}
-if (!python) die("Python 3.11+ is required. Install it and try again.");
-info(`Python: ${execSync(`${python} --version`, { encoding: "utf8" }).trim()}`);
+    run(`"${uv}" python install ${PYTHON_VERSION}`);
+  } catch (e) {
+    die(`Failed to install Python ${PYTHON_VERSION} via uv: ${e.message}`);
+  }
 
-// --- FTS5 check ---
-try {
-  execSync(`${python} -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE VIRTUAL TABLE t USING fts5(c)'); c.close()"`,
-    { stdio: ["pipe", "pipe", "pipe"] });
-  info("FTS5: available");
-} catch {
-  die("SQLite FTS5 extension required but not available in your Python build");
-}
+  // Verify FTS5 in the uv-managed Python
+  try {
+    run(
+      `"${uv}" run --python ${PYTHON_VERSION} python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE VIRTUAL TABLE t USING fts5(c)'); c.close()"`,
+      { stdio: ["pipe", "pipe", "pipe"] }
+    );
+    info("SQLite FTS5: ok");
+  } catch {
+    warn("FTS5 check skipped — will verify at first run");
+  }
 
-// --- git check ---
-if (!which("git")) die("git is required. Install it and try again.");
+  // ── Step 3: Download source tarball (no git needed) ──
+  if (fs.existsSync(path.join(INSTALL_DIR, "pyproject.toml"))) {
+    // Existing install — try git pull if available, otherwise re-download
+    if (fs.existsSync(path.join(INSTALL_DIR, ".git")) && which("git")) {
+      info("Updating existing installation...");
+      try {
+        run(`git -C "${INSTALL_DIR}" pull --ff-only`);
+      } catch {
+        warn("git pull failed — re-downloading...");
+        fs.rmSync(INSTALL_DIR, { recursive: true, force: true });
+      }
+    } else {
+      info("Re-downloading source...");
+      fs.rmSync(INSTALL_DIR, { recursive: true, force: true });
+    }
+  }
 
-// --- uv check/install ---
-if (!which("uv")) {
-  info("Installing uv...");
-  run("curl -LsSf https://astral.sh/uv/install.sh | sh");
-  process.env.PATH = `${path.join(os.homedir(), ".local", "bin")}:${process.env.PATH}`;
-}
-info(`uv: ${execSync("uv --version", { encoding: "utf8" }).trim()}`);
+  if (!fs.existsSync(path.join(INSTALL_DIR, "pyproject.toml"))) {
+    info("Downloading NeuroStack...");
+    const tarFile = path.join(os.tmpdir(), `neurostack-${Date.now()}.tar.gz`);
+    try {
+      await download(TARBALL_URL, tarFile);
+      fs.mkdirSync(INSTALL_DIR, { recursive: true });
+      // GitHub tarballs extract to neurostack-main/ — strip that prefix
+      run(`tar xzf "${tarFile}" --strip-components=1 -C "${INSTALL_DIR}"`);
+      fs.unlinkSync(tarFile);
+    } catch (e) {
+      die(
+        `Failed to download source: ${e.message}\n` +
+        `      Check your internet connection and try: npm rebuild neurostack`
+      );
+    }
+  }
+  info("Source: ok");
 
-// --- Clone/update ---
-if (fs.existsSync(path.join(INSTALL_DIR, ".git"))) {
-  info("Updating existing installation...");
-  run(`git -C ${INSTALL_DIR} pull --ff-only`);
-} else {
-  info("Cloning NeuroStack...");
-  fs.mkdirSync(path.dirname(INSTALL_DIR), { recursive: true });
-  run(`git clone ${REPO} ${INSTALL_DIR}`);
-}
+  // ── Step 4: Install Python dependencies ──
+  const mode = process.env.NEUROSTACK_MODE || "lite";
+  const extraArgs = mode === "community" ? "--extra full --extra community"
+                 : mode === "full" ? "--extra full"
+                 : "";
+  info(`Installing Python dependencies (${mode} mode)...`);
+  run(`"${uv}" sync --python ${PYTHON_VERSION} ${extraArgs}`.trim(), { cwd: INSTALL_DIR });
 
-// --- Install with uv ---
-const mode = process.env.NEUROSTACK_MODE || "lite";
-const extraArgs = mode === "community" ? "--extra full --extra community"
-               : mode === "full" ? "--extra full"
-               : "";
-info(`Installing in ${mode} mode...`);
-run(`uv sync ${extraArgs}`.trim(), { cwd: INSTALL_DIR });
-
-// --- Config ---
-const configDir = path.join(os.homedir(), ".config", "neurostack");
-const configFile = path.join(configDir, "config.toml");
-if (!fs.existsSync(configFile)) {
-  fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(configFile, `# NeuroStack Configuration
+  // ── Step 5: Default config ──
+  const configDir = path.join(os.homedir(), ".config", "neurostack");
+  const configFile = path.join(configDir, "config.toml");
+  if (!fs.existsSync(configFile)) {
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(configFile, `# NeuroStack Configuration
 # See: https://github.com/raphasouthall/neurostack#configuration
 
 vault_root = "${os.homedir()}/brain"
@@ -88,9 +164,23 @@ embed_url = "http://localhost:11435"
 llm_url = "http://localhost:11434"
 llm_model = "phi3.5"
 `);
-  info(`Config written: ${configFile}`);
-} else {
-  info(`Config exists: ${configFile}`);
+    info(`Config: ${configFile}`);
+  } else {
+    info(`Config exists: ${configFile}`);
+  }
+
+  // ── Done ──
+  console.log(`
+  \x1b[32m✓ NeuroStack installed!\x1b[0m (${mode} mode)
+
+  Get started:
+    neurostack init          Set up vault structure
+    neurostack index         Index your vault
+    neurostack search 'q'    Search
+    neurostack doctor        Health check
+`);
 }
 
-info("NeuroStack installed successfully via npm!");
+main().catch((e) => {
+  die(`Unexpected error: ${e.message}\n      Please report: https://github.com/raphasouthall/neurostack/issues`);
+});

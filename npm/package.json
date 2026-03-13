@@ -6,7 +6,8 @@
     "neurostack": "bin/neurostack.js"
   },
   "scripts": {
-    "postinstall": "node postinstall.js"
+    "postinstall": "node postinstall.js",
+    "preuninstall": "node preuninstall.js"
   },
   "keywords": [
     "knowledge-management",
@@ -38,6 +39,7 @@
   "files": [
     "bin/",
     "postinstall.js",
+    "preuninstall.js",
     "README.md",
     "LICENSE"
   ]
