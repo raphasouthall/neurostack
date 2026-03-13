@@ -8,7 +8,7 @@
 
 **Your second brain, starting today.** Install one command, answer a few questions, and you have a knowledge vault that gets smarter every day you use it.
 
-NeuroStack helps you start and grow a personal knowledge base — whether you have thousands of notes or none at all. It scaffolds a vault, indexes everything by meaning, surfaces what needs attention, and gives your AI tools long-term memory. Everything runs locally. Your notes never leave your machine.
+NeuroStack helps you start and grow a personal knowledge base — whether you have thousands of notes or none at all. It scaffolds a vault, indexes everything by meaning, surfaces what needs attention, and gives your AI tools long-term memory. It works with **any AI provider** — use it as an [MCP server](https://modelcontextprotocol.io), as a [CLI tool alongside Claude](https://docs.anthropic.com/en/docs/claude-code/cli-usage), or pipe its output into any LLM workflow. Everything runs locally. Your notes never leave your machine.
 
 ## Get started in 30 seconds
 
@@ -63,7 +63,7 @@ neurostack uninstall
 
 ### Search — find anything by meaning, not just keywords
 - **Searches by meaning** — finds notes by what they say, not just what they're titled. Ask a question, get an answer.
-- **Works with your AI tools** — gives Claude Code, Cursor, and Windsurf long-term memory from your vault via MCP.
+- **Works with any AI tool** — use as an MCP server with [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-usage), Cursor, Windsurf, or any MCP-compatible client. Or pipe CLI output into ChatGPT, Gemini, local models — whatever you use.
 - **Saves tokens** — tiered retrieval sends your AI key facts first, full notes only when needed. 96% fewer tokens per query than naive RAG.
 
 <img src="docs/screenshots/prediction-errors.svg" alt="NeuroStack surfacing stale notes" width="720">
@@ -195,9 +195,13 @@ neurostack status                   # Overview of your vault and config
 
 </details>
 
-## MCP server
+## Use with any AI provider
 
-NeuroStack also runs as an [MCP](https://modelcontextprotocol.io) server — add it to Claude Code, Cursor, or Windsurf and your AI assistant can search your vault in any conversation.
+NeuroStack is provider-agnostic. Your vault is a local SQLite database with a CLI and MCP interface — use it however fits your workflow.
+
+### MCP server (Claude Code, Cursor, Windsurf, etc.)
+
+Add to your MCP config and your AI assistant gets long-term memory from your vault. Works with any [MCP-compatible client](https://modelcontextprotocol.io).
 
 ```json
 {
@@ -209,6 +213,23 @@ NeuroStack also runs as an [MCP](https://modelcontextprotocol.io) server — add
     }
   }
 }
+```
+
+### CLI (works with everything)
+
+The CLI outputs plain text — pipe it into any AI tool or workflow:
+
+```bash
+# Use with Claude Code as a CLI tool
+# See: https://docs.anthropic.com/en/docs/claude-code/cli-usage
+neurostack search "deployment checklist"
+
+# Pipe into any LLM
+neurostack search "project architecture" | llm "summarize these notes"
+
+# Use in scripts, CI, or automation
+CONTEXT=$(neurostack tiered "auth flow" --top-k 3)
+echo "$CONTEXT" | your-preferred-ai-tool
 ```
 
 <details>
