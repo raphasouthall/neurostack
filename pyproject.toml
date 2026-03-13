@@ -6,7 +6,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
-    { name = "Raphael Southall", email = "raphasouthall@gmail.com" },
+    { name = "Raphael Southall" },
 ]
 keywords = ["knowledge-management", "obsidian", "mcp", "neuroscience", "pkm", "zettelkasten"]
 classifiers = [
