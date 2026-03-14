@@ -12,10 +12,22 @@ from pathlib import Path
 log = logging.getLogger("neurostack")
 
 _PATTERNS: dict[str, list[re.Pattern]] = {
-    "bug": [re.compile(r"\b(root cause|fixed by|bug fix|traceback|stack trace|the fix was|error was)\b", re.I)],
-    "decision": [re.compile(r"\b(decided to|switched from .+ to|chose .+ over|going with .+ because|opting for .+ instead)\b", re.I)],
-    "convention": [re.compile(r"(always use|never use|rule:|convention:|must always|must never)\b", re.I)],
-    "learning": [re.compile(r"\b(discovered that|turns out that|TIL:|learned that|found that .+ because|the reason is)\b", re.I)],
+    "bug": [re.compile(
+        r"\b(root cause|fixed by|bug fix|traceback"
+        r"|stack trace|the fix was|error was)\b", re.I,
+    )],
+    "decision": [re.compile(
+        r"\b(decided to|switched from .+ to|chose .+ over"
+        r"|going with .+ because|opting for .+ instead)\b", re.I,
+    )],
+    "convention": [re.compile(
+        r"(always use|never use|rule:|convention:"
+        r"|must always|must never)\b", re.I,
+    )],
+    "learning": [re.compile(
+        r"\b(discovered that|turns out that|TIL:"
+        r"|learned that|found that .+ because|the reason is)\b", re.I,
+    )],
 }
 _MIN_LEN = 40
 _MAX_SUMMARY = 200
