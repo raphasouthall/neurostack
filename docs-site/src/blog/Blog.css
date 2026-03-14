@@ -392,11 +392,69 @@
 
 /* ── Responsive ───────────────────────────────────── */
 @media (max-width: 640px) {
-  .blog-stats {
-    grid-template-columns: repeat(2, 1fr);
+  .blog {
+    padding-left: var(--space-md);
+    padding-right: var(--space-md);
+  }
+
+  .blog-post {
+    padding-left: var(--space-md);
+    padding-right: var(--space-md);
   }
 
   .blog-post-title {
     font-size: var(--text-xl);
+  }
+
+  .blog-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* SVG figures: bleed to edges, scroll horizontally */
+  .blog-figure {
+    margin-left: calc(-1 * var(--space-md));
+    margin-right: calc(-1 * var(--space-md));
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .blog-figure img {
+    min-width: 560px;
+    display: block;
+  }
+
+  /* Card hero: scrollable SVG */
+  .blog-card-hero {
+    padding: var(--space-sm);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .blog-card-hero img {
+    min-width: 560px;
+    display: block;
+  }
+
+  .blog-card-body {
+    padding: var(--space-sm) var(--space-md) var(--space-md);
+  }
+
+  /* Tables: horizontal scroll */
+  .blog-table {
+    min-width: 480px;
+  }
+
+  /* Bug cards: stack severity + title */
+  .blog-bug-header {
+    flex-wrap: wrap;
+  }
+
+  /* Code blocks: smaller padding */
+  .blog-code-block {
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--text-xs);
   }
 }
