@@ -65,6 +65,176 @@ PROFESSIONS: dict[str, Profession] = {
 - Use project-note template with writing-specific sections
 """,
     ),
+    "developer": Profession(
+        name="developer",
+        description=(
+            "Software developer or engineer"
+            " — architecture decisions, code reviews, debugging"
+        ),
+        extra_dirs=[
+            "work/architecture",
+            "work/debugging",
+            "research/patterns",
+        ],
+        claude_md_section="""\
+
+## Developer Workflow
+
+### Architecture Decisions
+- Record decisions in `work/architecture/` using architecture-decision template
+- Include context, options considered, and trade-offs
+- Link to relevant technical specs and research notes
+
+### Debugging & Investigation
+- Log investigations in `work/debugging/` using debugging-log template
+- Record root cause, fix, and lessons learned
+- Link to related architecture decisions
+
+### Code Reviews
+- Capture recurring patterns and insights using code-review-note template
+- Store reusable patterns in `research/patterns/`
+
+### Technical Specs
+- Use technical-spec template for feature and system designs
+- Link to architecture decisions and related project notes
+""",
+    ),
+    "writer": Profession(
+        name="writer",
+        description=(
+            "Writer or content creator"
+            " — fiction, articles, worldbuilding, craft notes"
+        ),
+        extra_dirs=[
+            "home/projects/drafts",
+            "research/craft",
+            "literature/sources",
+        ],
+        claude_md_section="""\
+
+## Writer Workflow
+
+### Story & Article Pipeline
+1. Outline in `home/projects/` using story-outline or article-draft template
+2. Develop characters in `home/projects/` using character-profile template
+3. Build world details using world-building-note template
+
+### Craft Notes
+- Store writing craft insights in `research/craft/`
+- Extract techniques from literature into research notes
+
+### Literature & Inspiration
+- Capture source material in `literature/sources/` using literature-note template
+- Extract insights into permanent research notes
+
+### Drafts
+- Work-in-progress drafts live in `home/projects/drafts/`
+- Move to `archive/` when published or abandoned
+""",
+    ),
+    "student": Profession(
+        name="student",
+        description=(
+            "Student or lifelong learner"
+            " — lectures, study guides, courses, exam prep"
+        ),
+        extra_dirs=[
+            "work/courses",
+            "work/assignments",
+            "research/study-methods",
+        ],
+        claude_md_section="""\
+
+## Student Workflow
+
+### Course Management
+- Create a course-overview note per course in `work/courses/`
+- Link lecture notes, assignments, and study guides to the course
+
+### Lecture Capture
+- Use lecture-note template during or after class
+- Tag with course name and topic
+- Extract key concepts into permanent research notes
+
+### Study & Exam Prep
+- Build study guides using study-guide template
+- Use active recall and spaced repetition principles
+- Store study methods in `research/study-methods/`
+
+### Assignments
+- Track assignments in `work/assignments/` using assignment-tracker template
+- Link to relevant lecture notes and research
+""",
+    ),
+    "devops": Profession(
+        name="devops",
+        description=(
+            "DevOps engineer or SRE"
+            " — runbooks, incidents, infrastructure, change management"
+        ),
+        extra_dirs=[
+            "work/runbooks",
+            "work/incidents",
+            "work/infrastructure",
+        ],
+        claude_md_section="""\
+
+## DevOps Workflow
+
+### Runbooks
+- Store operational runbooks in `work/runbooks/` using runbook template
+- Keep runbooks actionable with step-by-step commands
+- Link to related infrastructure notes and incident reports
+
+### Incident Management
+- Record post-incident reviews in `work/incidents/` using incident-report template
+- Include timeline, root cause, impact, and action items
+- Link to runbooks that were used or need updating
+
+### Infrastructure Documentation
+- Document systems and services in `work/infrastructure/` using infrastructure-note template
+- Include architecture diagrams, dependencies, and SLOs
+
+### Change Management
+- Record changes using change-request template
+- Link to affected infrastructure notes and runbooks
+""",
+    ),
+    "data-scientist": Profession(
+        name="data-scientist",
+        description=(
+            "Data scientist or ML engineer"
+            " — analyses, models, datasets, experiment tracking"
+        ),
+        extra_dirs=[
+            "work/analyses",
+            "work/models",
+            "work/datasets",
+            "experiments/logs",
+        ],
+        claude_md_section="""\
+
+## Data Scientist Workflow
+
+### Analysis Pipeline
+1. Document datasets in `work/datasets/` using dataset-note template
+2. Record analyses in `work/analyses/` using analysis-note template
+3. Document models in `work/models/` using model-card template
+
+### Experiment Tracking
+- Log experiments in `experiments/logs/` using experiment-log template
+- Record hypothesis, methodology, metrics, and conclusions
+- Link to datasets and model cards
+
+### Data Pipelines
+- Document pipelines using pipeline-note template
+- Include data lineage, transformations, and dependencies
+
+### Research & Methods
+- Store ML/stats insights as permanent research notes
+- Cross-link between analyses, models, and research
+""",
+    ),
 }
 
 
