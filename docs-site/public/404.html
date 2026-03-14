@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>NeuroStack</title>
+    <script>
+      // GitHub Pages SPA redirect — sends all paths to index.html
+      // preserving the path in sessionStorage for the client router
+      sessionStorage.redirect = location.href;
+      location.replace(location.origin);
+    </script>
+  </head>
+  <body></body>
+</html>

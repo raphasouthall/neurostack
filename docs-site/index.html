@@ -68,6 +68,20 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // GitHub Pages SPA — restore path from 404 redirect
+      (function(){
+        var r = sessionStorage.redirect;
+        if (r) {
+          delete sessionStorage.redirect;
+          var a = document.createElement('a');
+          a.href = r;
+          if (a.pathname !== location.pathname) {
+            history.replaceState(null, '', a.pathname + a.search + a.hash);
+          }
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
