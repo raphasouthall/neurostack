@@ -275,7 +275,10 @@ def cmd_communities(args):
                 summarize_url=args.summarize_url,
                 embed_url=args.embed_url,
             )
-            print(json.dumps({"coarse": n_coarse, "fine": n_fine, "status": "done"}, indent=2, default=str))
+            print(json.dumps(
+                {"coarse": n_coarse, "fine": n_fine, "status": "done"},
+                indent=2, default=str,
+            ))
             return
         print(f"Detected {n_coarse} coarse communities, {n_fine} fine communities.")
         print("Generating LLM summaries (this may take a few minutes)...")
@@ -473,8 +476,8 @@ def cmd_stats(args):
 
 
 def cmd_prediction_errors(args):
-    from .search import _normalize_workspace
     from .schema import DB_PATH, get_db
+    from .search import _normalize_workspace
     conn = get_db(DB_PATH)
 
     if args.resolve:
@@ -1646,13 +1649,19 @@ def main():
     p.add_argument("path", nargs="?", help="Vault path (default: from config)")
     p.add_argument(
         "--profession", "-p",
-        help="Apply a profession pack (e.g., developer, writer, student, devops, data-scientist, researcher). Use 'scaffold --list' to see all",
+        help="Apply a profession pack (e.g., developer, writer, "
+        "student, devops, data-scientist, researcher). "
+        "Use 'scaffold --list' to see all",
     )
     p.set_defaults(func=cmd_init)
 
     # scaffold
     p = sub.add_parser("scaffold", help="Apply a profession pack to an existing vault")
-    p.add_argument("profession", nargs="?", help="Profession name (e.g., developer, writer, student, devops, data-scientist, researcher)")
+    p.add_argument(
+        "profession", nargs="?",
+        help="Profession name (e.g., developer, writer, "
+        "student, devops, data-scientist, researcher)",
+    )
     p.add_argument("--list", "-l", action="store_true", help="List available profession packs")
     p.set_defaults(func=cmd_scaffold)
 
@@ -1760,7 +1769,9 @@ def main():
     )
     p.add_argument(
         "--workspace", "-w", default=None,
-        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+        help="Restrict results to vault subdirectory "
+        "(e.g. 'work/acme-cloud'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_search)
 
@@ -1775,7 +1786,9 @@ def main():
     p.add_argument("--depth", type=int, default=1)
     p.add_argument(
         "--workspace", "-w", default=None,
-        help="Restrict neighbors to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+        help="Restrict neighbors to vault subdirectory "
+        "(e.g. 'work/acme-cloud'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_graph)
 
@@ -1786,7 +1799,9 @@ def main():
     p.add_argument("--mode", choices=["hybrid", "semantic", "keyword"], default="hybrid")
     p.add_argument(
         "--workspace", "-w", default=None,
-        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+        help="Restrict results to vault subdirectory "
+        "(e.g. 'work/acme-cloud'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_triples)
 
@@ -1806,7 +1821,9 @@ def main():
     )
     p.add_argument(
         "--workspace", "-w", default=None,
-        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+        help="Restrict results to vault subdirectory "
+        "(e.g. 'work/acme-cloud'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_tiered)
 
@@ -1841,7 +1858,9 @@ def main():
     )
     p_q.add_argument(
         "--workspace", "-w", default=None,
-        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+        help="Restrict results to vault subdirectory "
+        "(e.g. 'work/acme-cloud'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
     )
 
     # communities list
@@ -1854,7 +1873,9 @@ def main():
     p = sub.add_parser("brief", help="Generate session brief")
     p.add_argument(
         "--workspace", "-w", default=None,
-        help="Restrict brief to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+        help="Restrict brief to vault subdirectory "
+        "(e.g. 'work/acme-cloud'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_brief)
 
@@ -1880,7 +1901,9 @@ def main():
                    help="Mark note(s) as resolved")
     p.add_argument(
         "--workspace", "-w", default=None,
-        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+        help="Restrict results to vault subdirectory "
+        "(e.g. 'work/acme-cloud'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_prediction_errors)
 

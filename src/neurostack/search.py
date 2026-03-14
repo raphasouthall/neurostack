@@ -97,7 +97,12 @@ def _normalize_workspace(workspace: str | None) -> str | None:
     return workspace if workspace else None
 
 
-def fts_search(conn: sqlite3.Connection, query: str, limit: int = 50, workspace: str | None = None) -> list[dict]:
+def fts_search(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int = 50,
+    workspace: str | None = None,
+) -> list[dict]:
     """Full-text search over chunks, returns chunk_ids and content."""
     # Escape FTS5 special characters (quote each token to prevent hyphen/dot/operator injection)
     safe_query = " ".join(
@@ -495,7 +500,12 @@ def _to_search_results(conn: sqlite3.Connection, results: list[dict]) -> list[Se
 # ---------------------------------------------------------------------------
 
 
-def triple_fts_search(conn: sqlite3.Connection, query: str, limit: int = 30, workspace: str | None = None) -> list[dict]:
+def triple_fts_search(
+    conn: sqlite3.Connection,
+    query: str,
+    limit: int = 30,
+    workspace: str | None = None,
+) -> list[dict]:
     """Full-text search over triples."""
     safe_query = " ".join(
         '"' + word.replace('"', '') + '"'
@@ -616,14 +626,20 @@ def search_triples(
         return _to_triple_results(conn, fts_results[:top_k])
 
     if mode == "semantic":
-        sem_results = triple_semantic_search(conn, query_embedding, limit=top_k, workspace=workspace)
+        sem_results = triple_semantic_search(
+            conn, query_embedding, limit=top_k, workspace=workspace,
+        )
         return _to_triple_results(conn, sem_results[:top_k])
 
     # Hybrid: FTS5 pre-filter + semantic rerank
-    fts_results = triple_fts_search(conn, query, limit=30, workspace=workspace)
+    fts_results = triple_fts_search(
+        conn, query, limit=30, workspace=workspace,
+    )
 
     if not fts_results:
-        sem_results = triple_semantic_search(conn, query_embedding, limit=top_k, workspace=workspace)
+        sem_results = triple_semantic_search(
+            conn, query_embedding, limit=top_k, workspace=workspace,
+        )
         return _to_triple_results(conn, sem_results[:top_k])
 
     embeddings = []

@@ -18,7 +18,11 @@ EXTERNAL_MEMORY_DB = Path(os.environ.get(
 ))
 
 
-def get_recent_vault_changes(conn: sqlite3.Connection, limit: int = 10, workspace: str = None) -> list[dict]:
+def get_recent_vault_changes(
+    conn: sqlite3.Connection,
+    limit: int = 10,
+    workspace: str = None,
+) -> list[dict]:
     """Get recently modified notes with summaries."""
     if workspace:
         rows = conn.execute(

@@ -231,13 +231,14 @@ def _hybrid_memory_search(
 
     # Try semantic reranking
     try:
+        import numpy as np
+
         from .config import get_config
         from .embedder import (
             blob_to_embedding,
             cosine_similarity_batch,
             get_embedding,
         )
-        import numpy as np
 
         url = embed_url or get_config().embed_url
         query_emb = get_embedding(query, base_url=url)

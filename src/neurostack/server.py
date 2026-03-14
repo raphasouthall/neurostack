@@ -37,7 +37,8 @@ def vault_search(
             - "full": ~200-500 tokens/result. Snippets + summaries.
             - "auto": Start with triples, escalate to full if coverage is low. Default.
         context: Optional project/domain context for boosting
-        workspace: Optional vault subdirectory prefix to restrict results (e.g. "work/acme-cloud")
+        workspace: Optional vault subdirectory prefix to restrict
+            results (e.g. "work/acme-cloud")
 
     Use "triples" for quick factual lookups, "summaries" for overview,
     "full" when you need actual content, "auto" to let the system decide.
@@ -171,7 +172,8 @@ def vault_graph(note: str, depth: int = 1, workspace: str = None) -> str:
     Args:
         note: Note path (e.g. "research/predictive-coding.md")
         depth: How many link-hops to traverse (default 1)
-        workspace: Optional vault subdirectory prefix to restrict neighbors (e.g. "work/acme-cloud")
+        workspace: Optional vault subdirectory prefix to restrict
+            neighbors (e.g. "work/acme-cloud")
     """
     from .graph import get_neighborhood
     from .search import _normalize_workspace
@@ -214,7 +216,8 @@ def session_brief(workspace: str = None) -> str:
     recent memories, top connected notes, time-of-day context.
 
     Args:
-        workspace: Optional vault subdirectory prefix to restrict results (e.g. "work/acme-cloud")
+        workspace: Optional vault subdirectory prefix to restrict
+            results (e.g. "work/acme-cloud")
     """
     from .brief import generate_brief
 
@@ -232,11 +235,15 @@ def vault_triples(query: str, top_k: int = 10, mode: str = "hybrid", workspace: 
         query: Natural language search query
         top_k: Number of triples to return (default 10)
         mode: Search mode - "hybrid" (default), "semantic", or "keyword"
-        workspace: Optional vault subdirectory prefix to restrict results (e.g. "work/acme-cloud")
+        workspace: Optional vault subdirectory prefix to restrict
+            results (e.g. "work/acme-cloud")
     """
     from .search import search_triples
 
-    results = search_triples(query, top_k=top_k, mode=mode, embed_url=EMBED_URL, workspace=workspace)
+    results = search_triples(
+        query, top_k=top_k, mode=mode,
+        embed_url=EMBED_URL, workspace=workspace,
+    )
 
     output = []
     for t in results:
@@ -272,7 +279,8 @@ def vault_communities(
         top_k: Number of communities to retrieve (default 6)
         level: Community hierarchy level — 0=coarse themes (default), 1=fine sub-themes
         map_reduce: Use LLM map-reduce synthesis (True) or raw hits (False)
-        workspace: Optional vault subdirectory prefix to restrict results (e.g. "work/acme-cloud")
+        workspace: Optional vault subdirectory prefix to restrict
+            results (e.g. "work/acme-cloud")
     """
     from .community_search import global_query
 
@@ -388,7 +396,8 @@ def vault_prediction_errors(
         error_type: Filter by type — "low_overlap" or "contextual_mismatch". None = all.
         limit: Max errors to return (default 20).
         resolve: List of note paths to mark as resolved (clears their unresolved flags).
-        workspace: Optional vault subdirectory prefix to restrict results (e.g. "work/acme-cloud")
+        workspace: Optional vault subdirectory prefix to restrict
+            results (e.g. "work/acme-cloud")
     """
     from .schema import DB_PATH, get_db
     from .search import _normalize_workspace
