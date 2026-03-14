@@ -1179,6 +1179,92 @@ def _pull_ollama_models(ollama_bin, embed_model, llm_model, subprocess):
             )
 
 
+def cmd_update(args):
+    """Pull latest source from GitHub and re-sync dependencies."""
+    import shutil
+    import subprocess
+
+    project_root = Path(__file__).resolve().parent.parent.parent
+    if not (project_root / "pyproject.toml").exists():
+        fallback = Path.home() / ".local" / "share" / "neurostack" / "repo"
+        if (fallback / "pyproject.toml").exists():
+            project_root = fallback
+        else:
+            print("  \033[31m✗\033[0m Cannot find project root")
+            sys.exit(1)
+
+    git = shutil.which("git")
+    if not git:
+        print("  \033[31m✗\033[0m git not found")
+        sys.exit(1)
+
+    print(f"  Updating from {project_root}...\n")
+
+    # Show current version
+    print(f"  Current version: {__version__}")
+
+    # Git pull
+    result = subprocess.run(
+        ["git", "pull", "--ff-only"],
+        cwd=project_root, capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        print(f"  \033[31m✗\033[0m git pull failed:\n{result.stderr}")
+        sys.exit(1)
+
+    pulled = result.stdout.strip()
+    if "Already up to date" in pulled:
+        print("  \033[32m✓\033[0m Already up to date")
+    else:
+        print(f"  \033[32m✓\033[0m Pulled: {pulled.splitlines()[-1]}")
+
+    # Detect current mode
+    mode = "lite"
+    try:
+        import numpy  # noqa: F401
+        mode = "full"
+        try:
+            import leidenalg  # noqa: F401
+            mode = "community"
+        except ImportError:
+            pass
+    except ImportError:
+        pass
+
+    # uv sync
+    sync_cmd = ["uv", "sync", "--project", str(project_root)]
+    if mode == "full":
+        sync_cmd += ["--extra", "full"]
+    elif mode == "community":
+        sync_cmd += ["--extra", "full", "--extra", "community"]
+
+    print(f"  Syncing dependencies ({mode} mode)...")
+    result = subprocess.run(
+        sync_cmd, capture_output=True, text=True, timeout=300,
+    )
+    if result.returncode != 0:
+        print(f"  \033[31m✗\033[0m uv sync failed:\n{result.stderr}")
+        sys.exit(1)
+    print("  \033[32m✓\033[0m Dependencies synced")
+
+    # Show new version
+    try:
+        new_ver = subprocess.run(
+            ["uv", "run", "--project", str(project_root),
+             "python", "-c",
+             "from neurostack import __version__; print(__version__)"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        if new_ver and new_ver != __version__:
+            print(f"  \033[32m✓\033[0m Updated: {__version__} -> {new_ver}")
+        else:
+            print(f"  Version: {new_ver or __version__}")
+    except Exception:
+        pass
+
+    print("\n  Done.")
+
+
 def cmd_install(args):
     """Streamlined installation: mode selection, deps, and optional Ollama setup."""
     import platform
@@ -2080,6 +2166,13 @@ def main():
     p.add_argument("--embed-model", help="Embedding model (default: nomic-embed-text)")
     p.add_argument("--llm-model", help="LLM model (default: phi3.5)")
     p.set_defaults(func=cmd_install)
+
+    # update
+    p = sub.add_parser(
+        "update",
+        help="Pull latest source and re-sync dependencies",
+    )
+    p.set_defaults(func=cmd_update)
 
     # doctor
     p = sub.add_parser("doctor", help="Validate all subsystems")

@@ -311,6 +311,7 @@ neurostack stats                    # Index health overview
 neurostack doctor                   # Validate all subsystems
 neurostack watch                    # Watch vault for changes, re-index automatically
 neurostack serve                    # Start as MCP server for AI tools
+neurostack update                   # Pull latest source + re-sync dependencies
 neurostack uninstall                # Complete removal — data, deps, and npm package
 ```
 
