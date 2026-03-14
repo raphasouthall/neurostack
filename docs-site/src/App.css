@@ -572,7 +572,7 @@
   border: 1px solid var(--rule);
   background: var(--code-block-bg);
   padding: var(--space-md);
-  overflow-x: auto;
+  overflow: hidden;
   min-height: 300px;
   display: flex;
   align-items: center;
@@ -580,9 +580,9 @@
 }
 
 .showcase-img {
-  max-width: 100%;
+  width: 100%;
   height: auto;
-  max-height: 500px;
+  object-fit: contain;
 }
 
 @media (max-width: 640px) {
