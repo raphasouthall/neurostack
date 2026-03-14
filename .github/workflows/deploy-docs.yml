@@ -8,6 +8,10 @@ on:
       - '.github/workflows/deploy-docs.yml'
   release:
     types: [published]
+
+  # Note: release events checkout the tag ref, not a branch.
+  # The github-pages environment requires a branch ref, so
+  # the deploy job must explicitly target main.
   workflow_dispatch:
 
 permissions:
@@ -25,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
