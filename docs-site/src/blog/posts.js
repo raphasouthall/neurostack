@@ -11,7 +11,7 @@ export const posts = [
     excerpt: 'We ran NeuroStack through a comprehensive end-to-end test across 3 Podman containers — lite, full+Ollama, and community mode. 66 tests passed, 5 bugs found, and the full ML pipeline proved solid.',
     tags: ['release', 'testing', 'engineering'],
     readTime: '8 min',
-    heroSvg: '/screenshots/e2e-search.svg',
+    heroSvg: '/screenshots/e2e-search.gif',
     sections: [
       {
         type: 'text',
@@ -82,7 +82,7 @@ export const posts = [
       },
       {
         type: 'svg',
-        src: '/screenshots/e2e-search.svg',
+        src: '/screenshots/e2e-search.gif',
         alt: 'NeuroStack hybrid search results from E2E test',
         caption: 'Hybrid search combining FTS5 keywords with semantic embeddings. Real scores from the test run.',
       },
@@ -101,7 +101,7 @@ export const posts = [
       },
       {
         type: 'svg',
-        src: '/screenshots/e2e-tiered.svg',
+        src: '/screenshots/e2e-tiered.gif',
         alt: 'Tiered search showing triples and summaries',
         caption: 'Tiered search returns structured triples first, then summaries — 96% fewer tokens than naive RAG.',
       },
@@ -120,7 +120,7 @@ export const posts = [
       },
       {
         type: 'svg',
-        src: '/screenshots/e2e-graph.svg',
+        src: '/screenshots/e2e-graph.gif',
         alt: 'NeuroStack graph neighborhood',
         caption: 'Graph neighborhood for hippocampal-indexing — PageRank scores and connection strength.',
       },
@@ -147,7 +147,7 @@ export const posts = [
       },
       {
         type: 'svg',
-        src: '/screenshots/e2e-prediction-errors.svg',
+        src: '/screenshots/e2e-prediction-errors.gif',
         alt: 'NeuroStack prediction errors flagging stale notes',
         caption: 'What prediction-errors would surface after sustained usage — stale notes flagged with semantic distance scores.',
       },
