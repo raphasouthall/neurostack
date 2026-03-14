@@ -7,6 +7,7 @@
   max-width: 52rem;
   margin: 0 auto;
   padding: var(--space-2xl) var(--space-lg) var(--space-2xl);
+  overflow-x: hidden;
 }
 
 .blog-header {
@@ -47,6 +48,7 @@
   border-radius: 8px;
   overflow: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  min-width: 0;
 }
 
 .blog-card:hover {
@@ -130,6 +132,7 @@
   max-width: 44rem;
   margin: 0 auto;
   padding: var(--space-xl) var(--space-lg) var(--space-2xl);
+  overflow-x: hidden;
 }
 
 .blog-back {
@@ -426,16 +429,14 @@
     display: block;
   }
 
-  /* Card hero: scrollable SVG */
+  /* Card hero: scale SVG to fit, no scroll */
   .blog-card-hero {
     padding: var(--space-sm);
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
   }
 
   .blog-card-hero img {
-    min-width: 560px;
-    display: block;
+    width: 100%;
+    min-width: 0;
   }
 
   .blog-card-body {
