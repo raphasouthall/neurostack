@@ -15,7 +15,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .chunker import parse_note
-from .embedder import build_chunk_context, embedding_to_blob, get_embeddings_batch
+from .embedder import HAS_NUMPY, build_chunk_context, embedding_to_blob, get_embeddings_batch
 from .graph import build_graph, compute_pagerank
 from .schema import DB_PATH, get_db
 from .summarizer import summarize_note
@@ -156,10 +156,13 @@ def index_single_note(
             build_chunk_context(parsed.title, frontmatter_json, summary, c.content)
             for c in parsed.chunks
         ]
-        try:
-            embeddings = get_embeddings_batch(texts, base_url=embed_url)
-        except Exception as e:
-            log.warning(f"Embedding failed for {parsed.path}: {e}")
+        if HAS_NUMPY:
+            try:
+                embeddings = get_embeddings_batch(texts, base_url=embed_url)
+            except Exception as e:
+                log.warning(f"Embedding failed for {parsed.path}: {e}")
+                embeddings = [None] * len(texts)
+        else:
             embeddings = [None] * len(texts)
 
         for i, chunk in enumerate(parsed.chunks):
@@ -214,10 +217,13 @@ def _index_triples_for_note(
     # Build triple texts for batch embedding
     triple_texts = [triple_to_text(t) for t in triples]
 
-    try:
-        embeddings = get_embeddings_batch(triple_texts, base_url=embed_url)
-    except Exception as e:
-        log.warning(f"Triple embedding failed for {note_path}: {e}")
+    if HAS_NUMPY:
+        try:
+            embeddings = get_embeddings_batch(triple_texts, base_url=embed_url)
+        except Exception as e:
+            log.warning(f"Triple embedding failed for {note_path}: {e}")
+            embeddings = [None] * len(triples)
+    else:
         embeddings = [None] * len(triples)
 
     for i, t in enumerate(triples):
