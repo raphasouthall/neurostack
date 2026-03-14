@@ -789,21 +789,30 @@ function Install() {
 
 // ── Comparison ──────────────────────────────────
 const COMPARISON = [
-  { feature: 'Local-first', ns: 'Yes', obs: 'Yes', khoj: 'Partial', mem: 'No', notion: 'No' },
-  { feature: 'AI-provider agnostic', ns: 'MCP', obs: 'No', khoj: 'Partial', mem: 'No', notion: 'No' },
-  { feature: 'Semantic search', ns: 'Hybrid', obs: 'Plugin', khoj: 'Yes', mem: 'Yes', notion: 'Yes' },
-  { feature: 'Knowledge graph', ns: 'PageRank', obs: 'Backlinks', khoj: 'No', mem: 'No', notion: 'No' },
-  { feature: 'Community detection', ns: 'Leiden', obs: 'No', khoj: 'No', mem: 'No', notion: 'No' },
-  { feature: 'Drift detection', ns: 'Yes', obs: 'No', khoj: 'No', mem: 'No', notion: 'No' },
-  { feature: 'Tiered retrieval', ns: 'Auto', obs: 'No', khoj: 'No', mem: 'No', notion: 'No' },
-  { feature: 'Lite mode (~50MB)', ns: 'Yes', obs: 'N/A', khoj: 'No', mem: 'No', notion: 'No' },
-  { feature: 'CLI', ns: 'Yes', obs: 'No', khoj: 'Yes', mem: 'No', notion: 'No' },
-  { feature: 'MCP server', ns: 'Yes', obs: 'No', khoj: 'No', mem: 'No', notion: 'No' },
-  { feature: 'Open source', ns: 'Apache-2.0', obs: 'Core only', khoj: 'Yes', mem: 'No', notion: 'No' },
+  { feature: 'Local-first',            lite: 'Yes',        full: 'Yes',        obs: 'Yes',       khoj: 'Partial',  notion: 'No' },
+  { feature: 'AI-provider agnostic',   lite: 'MCP',        full: 'MCP',        obs: 'No',        khoj: 'Partial',  notion: 'No' },
+  { feature: 'Full-text search',       lite: 'FTS5',       full: 'FTS5',       obs: 'Yes',       khoj: 'Yes',      notion: 'Yes' },
+  { feature: 'Semantic search',        lite: 'No',         full: 'Hybrid',     obs: 'Plugin',    khoj: 'Yes',      notion: 'Yes' },
+  { feature: 'Knowledge graph',        lite: 'PageRank',   full: 'PageRank',   obs: 'Backlinks', khoj: 'No',       notion: 'No' },
+  { feature: 'Community detection',    lite: 'No',         full: 'Leiden',     obs: 'No',        khoj: 'No',       notion: 'No' },
+  { feature: 'Drift detection',        lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
+  { feature: 'Tiered retrieval',       lite: 'No',         full: 'Auto',       obs: 'No',        khoj: 'No',       notion: 'No' },
+  { feature: 'AI summaries & triples', lite: 'No',         full: 'Yes',        obs: 'No',        khoj: 'Partial',  notion: 'Yes' },
+  { feature: 'Cross-encoder reranking',lite: 'No',         full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
+  { feature: 'CLI',                    lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'Yes',      notion: 'No' },
+  { feature: 'MCP server',             lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
+  { feature: 'Open source',            lite: 'Apache-2.0', full: 'Apache-2.0', obs: 'Core only', khoj: 'Yes',      notion: 'No' },
+  { feature: 'Install size',           lite: '~130MB',     full: '~560MB',     obs: '~250MB',    khoj: '~500MB',   notion: 'Cloud' },
+  { feature: 'GPU required',           lite: 'No',         full: 'Optional',   obs: 'No',        khoj: 'Optional', notion: 'No' },
+  { feature: 'Price',                  lite: 'Free',       full: 'Free',       obs: '$50/yr',    khoj: 'Free/paid',notion: '$10/mo' },
 ]
 
+const POSITIVE_VALUES = new Set([
+  'Yes', 'Apache-2.0', 'MCP', 'Hybrid', 'PageRank', 'Leiden', 'Auto', 'FTS5', 'Free',
+])
+
 function renderCell(val) {
-  if (val === 'Yes' || val === 'Apache-2.0' || val === 'MCP' || val === 'Hybrid' || val === 'PageRank' || val === 'Leiden' || val === 'Auto') {
+  if (POSITIVE_VALUES.has(val)) {
     return <span className="check">{val}</span>
   }
   if (val === 'No' || val === 'N/A') {
@@ -826,21 +835,28 @@ function Comparison() {
             <thead>
               <tr>
                 <th>Feature</th>
-                <th className="highlight-col">NeuroStack</th>
+                <th className="highlight-col" colSpan="2">NeuroStack</th>
                 <th>Obsidian</th>
                 <th>Khoj</th>
-                <th>mem.ai</th>
                 <th>Notion AI</th>
+              </tr>
+              <tr className="comparison-subheader">
+                <th></th>
+                <th className="highlight-col sub">Full <span className="comparison-size">~560MB</span></th>
+                <th className="highlight-col sub">Lite <span className="comparison-size">~130MB</span></th>
+                <th></th>
+                <th></th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {COMPARISON.map((row) => (
+              {COMPARISON.filter(row => row.feature !== 'Install size').map((row) => (
                 <tr key={row.feature}>
                   <td>{row.feature}</td>
-                  <td className="highlight-col">{renderCell(row.ns)}</td>
+                  <td className="highlight-col">{renderCell(row.full)}</td>
+                  <td className="highlight-col">{renderCell(row.lite)}</td>
                   <td>{renderCell(row.obs)}</td>
                   <td>{renderCell(row.khoj)}</td>
-                  <td>{renderCell(row.mem)}</td>
                   <td>{renderCell(row.notion)}</td>
                 </tr>
               ))}

@@ -384,10 +384,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  transition: background 0.2s ease;
 }
 
 .feature-cell:hover {
   background: var(--paper-deep);
+}
+
+.feature-cell:hover .feature-label {
+  color: var(--accent-vivid);
 }
 
 .feature-label {
@@ -397,6 +402,7 @@
   letter-spacing: 0.1em;
   color: var(--accent);
   font-weight: 500;
+  transition: color 0.2s ease;
 }
 
 .feature-name {
@@ -862,11 +868,7 @@
   font-size: var(--text-sm);
 }
 
-.comparison-table thead {
-  border-bottom: 2px solid var(--ink);
-}
-
-.comparison-table th {
+.comparison-table thead tr:first-child th {
   font-family: var(--mono);
   font-size: var(--text-xs);
   text-transform: uppercase;
@@ -875,14 +877,39 @@
   font-weight: 500;
   text-align: center;
   padding: var(--space-sm) var(--space-sm);
+  border-bottom: 1px solid var(--rule);
 }
 
-.comparison-table th:first-child {
+.comparison-table thead tr:first-child th:first-child {
   text-align: left;
 }
 
-.comparison-table th.highlight-col {
+.comparison-table thead tr:first-child th.highlight-col {
   color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.comparison-subheader th {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--ink-faint);
+  text-align: center;
+  padding: 0.35em var(--space-sm) var(--space-sm);
+  border-bottom: 2px solid var(--ink);
+}
+
+.comparison-subheader th.sub {
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+.comparison-size {
+  font-weight: 400;
+  color: var(--ink-faint);
+  margin-left: 0.3em;
+  font-size: 0.85em;
 }
 
 .comparison-table td {
@@ -890,12 +917,22 @@
   border-bottom: 1px solid var(--rule);
   text-align: center;
   color: var(--ink-light);
+  transition: background 0.12s ease;
+}
+
+.comparison-table tbody tr:hover td {
+  background: var(--highlight);
+}
+
+.comparison-table tbody tr:hover td.highlight-col {
+  background: color-mix(in oklch, var(--accent-light) 80%, var(--highlight));
 }
 
 .comparison-table td:first-child {
   text-align: left;
   font-weight: 500;
   color: var(--ink);
+  white-space: nowrap;
 }
 
 .comparison-table td.highlight-col {
