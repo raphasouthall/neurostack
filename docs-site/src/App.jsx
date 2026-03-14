@@ -230,7 +230,7 @@ function Hero() {
           <div className="hero-chips animate-in delay-4">
             <span className="hero-chip"><strong>Zero</strong> prerequisites</span>
             <span className="hero-chip"><strong>Any</strong> AI provider</span>
-            <span className="hero-chip"><strong>9</strong> MCP tools</span>
+            <span className="hero-chip"><strong>12</strong> MCP tools</span>
             <span className="hero-chip"><strong>~15 tok</strong> per triple</span>
           </div>
         </div>
@@ -349,8 +349,20 @@ const FEATURES = [
   {
     label: 'Protocol',
     name: 'MCP Server',
-    desc: '9-tool Model Context Protocol server. Works with Claude Code, Codex, Gemini CLI, Cursor, Windsurf — any MCP-compatible client. Provider-agnostic by design.',
+    desc: '12-tool Model Context Protocol server. Works with Claude Code, Codex, Gemini CLI, Cursor, Windsurf — any MCP-compatible client. Provider-agnostic by design.',
     ref: 'Standard transport: stdio or SSE'
+  },
+  {
+    label: 'Memory',
+    name: 'Agent Memory Layer',
+    desc: 'AI agents write observations, decisions, conventions, learnings, context, and bugs into the vault via vault_remember / vault_forget / vault_memories. Memories have optional TTL, workspace scoping, and surface automatically in search results.',
+    ref: 'Episodic memory encoding — Tulving 1972'
+  },
+  {
+    label: 'Scoping',
+    name: 'Workspace Scoping',
+    desc: 'Scope search and memory to subdirectories with --workspace flag or NEUROSTACK_WORKSPACE env var. Keeps project context isolated without separate databases.',
+    ref: 'Contextual binding — Howard & Kahana 2002'
   },
 ]
 
@@ -432,9 +444,9 @@ const CLI_GROUPS = [
   {
     label: 'Search & Retrieval',
     commands: [
-      { cmd: 'neurostack search "query"', desc: 'Hybrid FTS5 + semantic search. Flags: --top-k, --mode [hybrid|semantic|keyword], --context, --rerank' },
-      { cmd: 'neurostack tiered "query"', desc: 'Tiered search with auto-escalation. Flags: --depth [triples|summaries|full|auto], --top-k, --context, --rerank' },
-      { cmd: 'neurostack triples "query"', desc: 'Search structured SPO facts. Flags: --top-k, --mode' },
+      { cmd: 'neurostack search "query"', desc: 'Hybrid FTS5 + semantic search. Flags: --top-k, --mode [hybrid|semantic|keyword], --context, --rerank, --workspace, --json' },
+      { cmd: 'neurostack tiered "query"', desc: 'Tiered search with auto-escalation. Flags: --depth [triples|summaries|full|auto], --top-k, --context, --rerank, --json' },
+      { cmd: 'neurostack triples "query"', desc: 'Search structured SPO facts. Flags: --top-k, --mode, --json' },
       { cmd: 'neurostack summary <path>', desc: 'Get pre-computed 2-3 sentence note summary (~100-200 tokens)' },
     ]
   },
@@ -443,7 +455,7 @@ const CLI_GROUPS = [
     commands: [
       { cmd: 'neurostack graph <note.md>', desc: 'Wiki-link neighbourhood with PageRank scoring. Flag: --depth' },
       { cmd: 'neurostack communities build', desc: 'Run Leiden clustering + generate LLM summaries for each community' },
-      { cmd: 'neurostack communities query "q"', desc: 'Global GraphRAG query over communities. Flags: --top-k, --level [0|1], --no-map-reduce' },
+      { cmd: 'neurostack communities query "q"', desc: 'Global GraphRAG query over communities. Flags: --top-k, --level [0|1], --no-map-reduce, --json' },
       { cmd: 'neurostack communities list', desc: 'List detected communities. Flag: --level' },
     ]
   },
@@ -500,6 +512,7 @@ const MCP_TOOLS = [
       { name: 'mode', type: 'str', desc: '"hybrid" | "semantic" | "keyword". Default: "hybrid"' },
       { name: 'depth', type: 'str', desc: '"triples" | "summaries" | "full" | "auto". Default: "auto"' },
       { name: 'context', type: 'str', desc: 'Domain context for boosting (e.g. "neuroscience", "devops")' },
+      { name: 'workspace', type: 'str', desc: 'Scope to subdirectory (e.g. "work/project-x"). Also via NEUROSTACK_WORKSPACE env var' },
     ],
     useCase: 'Most lookups — specific facts, notes, or topics. Always pass depth="auto" and context for best results.'
   },
@@ -566,6 +579,35 @@ const MCP_TOOLS = [
     useCase: 'Find outdated or miscategorised notes that need attention.'
   },
   {
+    name: 'vault_remember',
+    purpose: 'Write an observation, decision, convention, learning, context note, or bug into the vault. Memories surface automatically in future search results.',
+    params: [
+      { name: 'content', type: 'str', desc: 'The memory content to store (required)' },
+      { name: 'category', type: 'str', desc: '"observation" | "decision" | "convention" | "learning" | "context" | "bug". Default: "observation"' },
+      { name: 'ttl_days', type: 'int', desc: 'Auto-expire after N days (optional, omit for permanent)' },
+      { name: 'workspace', type: 'str', desc: 'Scope to a subdirectory (optional)' },
+    ],
+    useCase: 'Agents recording what they learn — project conventions, debugging insights, architectural decisions.'
+  },
+  {
+    name: 'vault_forget',
+    purpose: 'Remove a previously stored memory by ID. Use when a memory is outdated, incorrect, or no longer relevant.',
+    params: [
+      { name: 'memory_id', type: 'str', desc: 'The memory ID to remove (required)' },
+    ],
+    useCase: 'Cleaning up stale or superseded agent memories.'
+  },
+  {
+    name: 'vault_memories',
+    purpose: 'List stored agent memories, optionally filtered by category or workspace. Memories are returned with their IDs for management.',
+    params: [
+      { name: 'category', type: 'str', desc: 'Filter by category (optional)' },
+      { name: 'workspace', type: 'str', desc: 'Filter by workspace scope (optional)' },
+      { name: 'limit', type: 'int', desc: 'Max results. Default: 20' },
+    ],
+    useCase: 'Reviewing what an agent has remembered — auditing conventions, checking for stale context.'
+  },
+  {
     name: 'session_brief',
     purpose: 'Compact ~500-token session context combining recent vault changes, git commits, external memories, top connected notes, and time context.',
     params: [],
@@ -611,7 +653,7 @@ function MCPTools() {
       <section className="section" id="mcp">
         <SectionHeader number="05" title="MCP Server Tools" />
         <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '60ch' }}>
-          NeuroStack exposes a Model Context Protocol server with 9 tools.
+          NeuroStack exposes a Model Context Protocol server with 12 tools.
           Works with{' '}
           <a href="https://docs.anthropic.com/en/docs/claude-code/cli-usage" target="_blank" rel="noopener noreferrer">Claude Code</a>,{' '}
           <a href="https://developers.openai.com/codex/mcp/" target="_blank" rel="noopener noreferrer">Codex</a>,{' '}
@@ -806,6 +848,7 @@ const COMPARISON = [
   { feature: 'Cross-encoder reranking',lite: 'No',         full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
   { feature: 'CLI',                    lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'Yes',      notion: 'No' },
   { feature: 'MCP server',             lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
+  { feature: 'Agent memory',           lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
   { feature: 'Open source',            lite: 'Apache-2.0', full: 'Apache-2.0', obs: 'Core only', khoj: 'Yes',      notion: 'No' },
   { feature: 'Install size',           lite: '~130MB',     full: '~560MB',     obs: '~250MB',    khoj: '~500MB',   notion: 'Cloud' },
   { feature: 'GPU required',           lite: 'No',         full: 'Optional',   obs: 'No',        khoj: 'Optional', notion: 'No' },
@@ -928,6 +971,7 @@ function Config() {
               'NEUROSTACK_LLM_URL',
               'NEUROSTACK_LLM_MODEL',
               'NEUROSTACK_SESSION_DIR',
+              'NEUROSTACK_WORKSPACE',
             ].map((v) => (
               <span className="env-var" key={v}>{v}</span>
             ))}
