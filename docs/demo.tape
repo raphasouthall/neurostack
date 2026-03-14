@@ -33,21 +33,28 @@ Show
 # --- Scene 1: Stats — show the vault at a glance ---
 Sleep 750ms
 Type "neurostack stats"
+Sleep 1500ms
 Enter
 Sleep 4500ms
 
 # --- Scene 2: Search — find notes by keyword ---
+Enter
 Type "neurostack search 'spaced repetition'"
+Sleep 1500ms
 Enter
 Sleep 6s
 
 # --- Scene 3: Graph — explore connections ---
+Enter
 Type "neurostack graph research/memory-consolidation.md"
+Sleep 1500ms
 Enter
 Sleep 6s
 
 # --- Scene 4: Brief — morning briefing ---
+Enter
 Type "neurostack brief"
+Sleep 1500ms
 Enter
 Sleep 7500ms
 
