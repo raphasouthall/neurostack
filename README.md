@@ -6,8 +6,9 @@
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/sponsor-NeuroStack-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/raphasouthall)
+[![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-support-yellow?logo=buymeacoffee)](https://buymeacoffee.com/raphasouthall)
 
-> **Looking for sponsors** — NeuroStack is built and maintained by a single developer. If it's useful to you, consider [sponsoring the project](https://github.com/sponsors/raphasouthall) to help fund development, hosting, and new features.
+> **Looking for sponsors** — NeuroStack is built and maintained by a single developer. If it's useful to you, consider [sponsoring the project](https://github.com/sponsors/raphasouthall) or [buying me a coffee](https://buymeacoffee.com/raphasouthall) to help fund development, hosting, and new features.
 
 **Your second brain, starting today.** Install one command, answer a few questions, and you have a knowledge vault that gets smarter every day you use it.
 
