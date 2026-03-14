@@ -65,20 +65,20 @@ export const posts = [
       },
       {
         type: 'text',
-        content: 'The headline result: the full-mode pipeline is solid. From a cold install on Fedora 41 with Python 3.13, NeuroStack indexed 27 notes into 89 chunks, embedded every chunk, summarised every note, and extracted 82 triples — all automatically.',
+        content: 'The headline result: the full-mode pipeline is solid. From a cold install on Fedora 41 with Python 3.13, NeuroStack indexed 14 notes into 45 chunks, embedded every chunk, summarised every note, and built 37 graph edges — all automatically.',
       },
       {
         type: 'stats',
         items: [
-          { label: 'Chunks embedded', value: '89', detail: '100%' },
-          { label: 'Notes summarised', value: '27', detail: '100%' },
-          { label: 'Triples extracted', value: '82', detail: 'from 10 notes' },
+          { label: 'Chunks embedded', value: '45', detail: '100%' },
+          { label: 'Notes summarised', value: '14', detail: '100%' },
           { label: 'Graph edges', value: '37', detail: 'wiki-link derived' },
+          { label: 'Search score', value: '0.77', detail: 'top hit relevance' },
         ],
       },
       {
         type: 'text',
-        content: 'Hybrid search scored 0.7951 on a natural-language query ("how does the hippocampus index memories"), correctly surfacing the hippocampal-indexing note. Semantic-only search found "prediction coding" notes when asked about "what role does surprise play in learning" — meaning the embeddings capture conceptual relationships, not just keywords.',
+        content: 'Hybrid search scored 0.7734 on a natural-language query ("how does the hippocampus index memories"), correctly surfacing the hippocampal-indexing note. Predictive-coding notes appeared at 0.7514 — meaning the embeddings capture conceptual relationships, not just keywords.',
       },
       {
         type: 'svg',
@@ -97,7 +97,7 @@ export const posts = [
       },
       {
         type: 'text',
-        content: 'In the test, asking "how does sleep help memory" returned 9 triples and 3 summaries — structured facts like "REM sleep consolidates emotional memories" and concise note summaries. The full notes would have been ~1,450 tokens; tiered search sent ~150.',
+        content: 'In the test, asking "how does sleep help memory" returned 9 triples and 3 summaries — structured facts like "Spaced Repetition enhances memory retention" and concise note summaries. The system auto-selected triples+summaries depth, skipping full chunks entirely.',
       },
       {
         type: 'svg',
@@ -112,7 +112,7 @@ export const posts = [
       },
       {
         type: 'text',
-        content: 'The wiki-link graph correctly mapped note connections. Hippocampal-indexing had a PageRank of 0.0320 with 3 inlinks and 3 outlinks — linking to predictive-coding, sleep-consolidation, and tolman-cognitive-maps.',
+        content: 'The wiki-link graph correctly mapped note connections. Hippocampal-indexing had a PageRank of 0.3052 with 9 inlinks and 3 outlinks — the clear hub node linking to predictive-coding, sleep-consolidation, tolman-cognitive-maps, and 6 more.',
       },
       {
         type: 'text',
@@ -199,7 +199,7 @@ export const posts = [
         type: 'list',
         items: [
           { bold: 'install.sh', text: ' — Flawless across all 3 modes on Fedora 41 with Python 3.13. Zero manual intervention.' },
-          { bold: 'Hybrid search quality', text: ' — Scores of 0.79+ for relevant results. Semantic search correctly finds conceptual matches.' },
+          { bold: 'Hybrid search quality', text: ' — Scores of 0.77+ for relevant results. Semantic search correctly finds conceptual matches.' },
           { bold: 'Scaffold packs', text: ' — The researcher pack created 16 items including templates and seed notes. Genuine time-saver.' },
           { bold: 'Watch mode', text: ' — Detected a new file within 3 seconds and auto-indexed it.' },
           { bold: 'Doctor diagnostics', text: ' — Clean output with graceful degradation messaging for each missing component.' },
