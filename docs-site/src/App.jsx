@@ -160,6 +160,7 @@ function Reveal({ children, className = '' }) {
 function Nav() {
   const [scrolled, setScrolled] = useState(false)
   const [stars, setStars] = useState(null)
+  const [version, setVersion] = useState(null)
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20)
     window.addEventListener('scroll', onScroll, { passive: true })
@@ -170,6 +171,10 @@ function Nav() {
       .then(r => r.json())
       .then(d => { if (d.stargazers_count != null) setStars(d.stargazers_count) })
       .catch(() => {})
+    fetch('https://api.github.com/repos/raphasouthall/neurostack/releases/latest')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.tag_name) setVersion(d.tag_name) })
+      .catch(() => {})
   }, [])
 
   return (
@@ -177,7 +182,7 @@ function Nav() {
       <div className="nav-brand">
         <NeuroIcon size={24} className="nav-icon" />
         <h1>NeuroStack</h1>
-        <span className="nav-version">v0.1.0-alpha</span>
+        {version && <span className="nav-version">{version}</span>}
       </div>
       <ul className="nav-links">
         <li><a href="#features">Features</a></li>

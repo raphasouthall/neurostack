@@ -6,6 +6,8 @@ on:
     paths:
       - 'docs-site/**'
       - '.github/workflows/deploy-docs.yml'
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -32,6 +36,13 @@ jobs:
       - name: Install dependencies
         working-directory: docs-site
         run: npm ci
+
+      - name: Inject version into structured data
+        working-directory: docs-site
+        run: |
+          VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.1.0")
+          VERSION=${VERSION#v}
+          sed -i "s/\"softwareVersion\": \"[^\"]*\"/\"softwareVersion\": \"$VERSION\"/" index.html
 
       - name: Build
         working-directory: docs-site
