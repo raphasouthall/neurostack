@@ -37,6 +37,7 @@ class Memory:
     workspace: str | None
     created_at: str
     expires_at: str | None
+    session_id: int | None = None
     score: float = 0.0
 
 
@@ -49,6 +50,7 @@ def save_memory(
     workspace: str | None = None,
     ttl_hours: float | None = None,
     embed_url: str | None = None,
+    session_id: int | None = None,
 ) -> Memory:
     """Save a new memory and return it.
 
@@ -89,11 +91,12 @@ def save_memory(
     cursor = conn.execute(
         """
         INSERT INTO memories (content, tags, entity_type, source_agent,
-                              workspace, embedding, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+                              workspace, embedding, expires_at,
+                              session_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (content, tags_json, entity_type, source_agent,
-         workspace, embedding_blob, expires_at),
+         workspace, embedding_blob, expires_at, session_id),
     )
     conn.commit()
 
@@ -112,6 +115,7 @@ def save_memory(
         workspace=workspace,
         created_at=created_at,
         expires_at=expires_at,
+        session_id=session_id,
     )
 
 
@@ -357,6 +361,243 @@ def get_memory_stats(conn: sqlite3.Connection) -> dict:
     }
 
 
+def start_session(
+    conn: sqlite3.Connection,
+    source_agent: str | None = None,
+    workspace: str | None = None,
+) -> dict:
+    """Start a new memory session. Returns session_id and started_at."""
+    if workspace:
+        workspace = workspace.strip("/") or None
+
+    cursor = conn.execute(
+        """
+        INSERT INTO memory_sessions (source_agent, workspace)
+        VALUES (?, ?)
+        """,
+        (source_agent, workspace),
+    )
+    conn.commit()
+    session_id = cursor.lastrowid
+    row = conn.execute(
+        "SELECT started_at FROM memory_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+
+    return {
+        "session_id": session_id,
+        "started_at": row["started_at"],
+        "source_agent": source_agent,
+        "workspace": workspace,
+    }
+
+
+def end_session(
+    conn: sqlite3.Connection,
+    session_id: int,
+    summary: str | None = None,
+) -> dict:
+    """End a memory session. Optionally stores a summary."""
+    # Verify session exists and is not already ended
+    row = conn.execute(
+        "SELECT * FROM memory_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    if not row:
+        return {"error": f"Session {session_id} not found"}
+    if row["ended_at"]:
+        return {"error": f"Session {session_id} already ended"}
+
+    conn.execute(
+        """
+        UPDATE memory_sessions
+        SET ended_at = datetime('now'), summary = ?
+        WHERE session_id = ?
+        """,
+        (summary, session_id),
+    )
+    conn.commit()
+
+    updated = conn.execute(
+        "SELECT * FROM memory_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+
+    return {
+        "session_id": session_id,
+        "started_at": updated["started_at"],
+        "ended_at": updated["ended_at"],
+        "summary": updated["summary"],
+        "source_agent": updated["source_agent"],
+        "workspace": updated["workspace"],
+    }
+
+
+def get_session(
+    conn: sqlite3.Connection,
+    session_id: int,
+) -> dict | None:
+    """Get session details with its memories."""
+    row = conn.execute(
+        "SELECT * FROM memory_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    if not row:
+        return None
+
+    memories = conn.execute(
+        """
+        SELECT memory_id, content, tags, entity_type,
+               source_agent, workspace, created_at, expires_at,
+               session_id
+        FROM memories
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+        """,
+        (session_id,),
+    ).fetchall()
+
+    return {
+        "session_id": row["session_id"],
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+        "source_agent": row["source_agent"],
+        "workspace": row["workspace"],
+        "summary": row["summary"],
+        "memory_count": len(memories),
+        "memories": [
+            {
+                "memory_id": m["memory_id"],
+                "content": m["content"],
+                "entity_type": m["entity_type"],
+                "tags": json.loads(m["tags"])
+                if isinstance(m["tags"], str)
+                else (m["tags"] or []),
+                "created_at": m["created_at"],
+            }
+            for m in memories
+        ],
+    }
+
+
+def list_sessions(
+    conn: sqlite3.Connection,
+    limit: int = 20,
+    workspace: str | None = None,
+) -> list[dict]:
+    """List recent sessions with memory counts."""
+    where_parts = []
+    params: list = []
+
+    if workspace:
+        ws = workspace.strip("/")
+        where_parts.append(
+            "(ms.workspace = ? OR ms.workspace LIKE ? || '/%')"
+        )
+        params.extend([ws, ws])
+
+    where = (
+        "WHERE " + " AND ".join(where_parts) if where_parts else ""
+    )
+
+    rows = conn.execute(
+        f"""
+        SELECT ms.session_id, ms.started_at, ms.ended_at,
+               ms.source_agent, ms.workspace, ms.summary,
+               COUNT(m.memory_id) as memory_count
+        FROM memory_sessions ms
+        LEFT JOIN memories m ON m.session_id = ms.session_id
+        {where}
+        GROUP BY ms.session_id
+        ORDER BY ms.started_at DESC
+        LIMIT ?
+        """,
+        params + [limit],
+    ).fetchall()
+
+    return [
+        {
+            "session_id": r["session_id"],
+            "started_at": r["started_at"],
+            "ended_at": r["ended_at"],
+            "source_agent": r["source_agent"],
+            "workspace": r["workspace"],
+            "summary": r["summary"],
+            "memory_count": r["memory_count"],
+        }
+        for r in rows
+    ]
+
+
+def summarize_session(
+    conn: sqlite3.Connection,
+    session_id: int,
+    llm_url: str | None = None,
+    llm_model: str | None = None,
+) -> str:
+    """Generate an LLM summary of a session's memories.
+
+    Gathers all memories from the session and sends them to
+    Ollama to produce a 2-3 sentence summary.
+    """
+    import re
+
+    import httpx
+
+    from .config import get_config
+
+    cfg = get_config()
+    llm_url = llm_url or cfg.llm_url
+    llm_model = llm_model or cfg.llm_model
+
+    session = get_session(conn, session_id)
+    if not session:
+        return ""
+    memories = session.get("memories", [])
+    if not memories:
+        return "No memories recorded in this session."
+
+    memory_lines = []
+    for m in memories:
+        memory_lines.append(
+            f"- [{m['entity_type']}] {m['content']}"
+        )
+    memory_text = "\n".join(memory_lines)
+
+    prompt = (
+        "Summarize this AI coding session in 2-3 concise "
+        "sentences. Focus on what was accomplished, key "
+        "decisions made, and any problems encountered. "
+        "Be direct.\n\n"
+        f"Session memories:\n{memory_text}\n\n"
+        "Summary:"
+    )
+
+    resp = httpx.post(
+        f"{llm_url}/api/generate",
+        json={
+            "model": llm_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 200,
+            },
+            "think": False,
+        },
+        timeout=120.0,
+    )
+    resp.raise_for_status()
+    summary = resp.json().get("response", "").strip()
+
+    # Strip think tags if model includes them
+    summary = re.sub(
+        r"<think>.*?</think>", "", summary, flags=re.DOTALL
+    ).strip()
+
+    return summary
+
+
 def _row_to_memory(row: dict | sqlite3.Row, score: float = 0.0) -> Memory:
     """Convert a database row to a Memory object."""
     # sqlite3.Row doesn't have .get(), so use dict conversion
@@ -381,5 +622,6 @@ def _row_to_memory(row: dict | sqlite3.Row, score: float = 0.0) -> Memory:
         workspace=row.get("workspace"),
         created_at=row["created_at"],
         expires_at=row.get("expires_at"),
+        session_id=row.get("session_id"),
         score=score,
     )

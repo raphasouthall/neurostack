@@ -529,8 +529,9 @@ def vault_remember(
     source_agent: str = None,
     workspace: str = None,
     ttl_hours: float = None,
+    session_id: int = None,
 ) -> str:
-    """Save a memory — persist an observation, decision, or learning for future retrieval.
+    """Save a memory - persist an observation, decision, or learning for future retrieval.
 
     Memories are searchable alongside vault notes. Use this to record:
     - Architecture decisions made during a session
@@ -541,12 +542,16 @@ def vault_remember(
     Args:
         content: The memory content to save (1-2 sentences recommended)
         tags: Optional tags for filtering (e.g. ["auth", "refactor"])
-        entity_type: Type of memory — "observation", "decision", "convention",
-                     "learning", "context", or "bug"
-        source_agent: Name of the agent writing this (e.g. "claude-code", "cursor")
-        workspace: Optional vault subdirectory scope (e.g. "work/acme-cloud")
-        ttl_hours: Optional time-to-live in hours. Memory auto-expires after this.
-                   None = permanent.
+        entity_type: Type of memory - "observation", "decision",
+            "convention", "learning", "context", or "bug"
+        source_agent: Name of the agent writing this
+            (e.g. "claude-code", "cursor")
+        workspace: Optional vault subdirectory scope
+            (e.g. "work/acme-cloud")
+        ttl_hours: Optional time-to-live in hours. Memory auto-expires
+            after this. None = permanent.
+        session_id: Optional session ID from vault_session_start to
+            group this memory with a session
     """
     from .memories import save_memory
     from .schema import DB_PATH, get_db
@@ -556,6 +561,7 @@ def vault_remember(
         conn, content=content, tags=tags, entity_type=entity_type,
         source_agent=source_agent, workspace=workspace,
         ttl_hours=ttl_hours, embed_url=EMBED_URL,
+        session_id=session_id,
     )
 
     return json.dumps({
@@ -650,6 +656,61 @@ def vault_harvest(sessions: int = 1, dry_run: bool = False) -> str:
         embed_url=EMBED_URL,
     )
     return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+def vault_session_start(
+    source_agent: str = None,
+    workspace: str = None,
+) -> str:
+    """Start a new memory session to group related memories.
+
+    Call at the beginning of a work session. All memories saved
+    with the returned session_id will be grouped together and
+    can be reviewed or summarized as a unit.
+
+    Args:
+        source_agent: Name of the agent starting the session
+            (e.g. "claude-code", "cursor")
+        workspace: Optional vault subdirectory scope
+            (e.g. "work/acme-cloud")
+    """
+    from .memories import start_session
+    from .schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    result = start_session(
+        conn,
+        source_agent=source_agent,
+        workspace=workspace,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def vault_session_end(
+    session_id: int,
+    summarize: bool = True,
+) -> str:
+    """End a memory session and optionally generate a summary.
+
+    Call at the end of a work session. If summarize=True, uses
+    the LLM to produce a 2-3 sentence summary of all memories
+    recorded during the session.
+
+    Args:
+        session_id: The session ID returned by vault_session_start
+        summarize: Generate LLM summary of session (default True)
+    """
+    from .memories import end_session, summarize_session
+    from .schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    summary = None
+    if summarize:
+        summary = summarize_session(conn, session_id)
+    result = end_session(conn, session_id, summary=summary)
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
