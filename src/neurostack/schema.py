@@ -14,7 +14,7 @@ _cfg = get_config()
 DB_DIR = _cfg.db_dir
 DB_PATH = _cfg.db_path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -192,6 +192,10 @@ CREATE TABLE IF NOT EXISTS memories (
     workspace TEXT,
     session_id INTEGER REFERENCES memory_sessions(session_id),
     embedding BLOB,
+    updated_at TEXT,
+    revision_count INTEGER NOT NULL DEFAULT 1,
+    merge_count INTEGER NOT NULL DEFAULT 0,
+    merged_from JSON,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT
 );
@@ -202,6 +206,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at)
     WHERE expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_memories_session
     ON memories(session_id) WHERE session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_memories_embedded ON memories(memory_id)
+    WHERE embedding IS NOT NULL;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     content,
@@ -411,6 +417,17 @@ CREATE INDEX IF NOT EXISTS idx_memories_session
 """
 
 
+# Migration from v8 to v9: add memory revision tracking columns
+MIGRATION_V9 = """
+ALTER TABLE memories ADD COLUMN updated_at TEXT;
+ALTER TABLE memories ADD COLUMN revision_count INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE memories ADD COLUMN merge_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memories ADD COLUMN merged_from JSON;
+CREATE INDEX IF NOT EXISTS idx_memories_embedded ON memories(memory_id)
+    WHERE embedding IS NOT NULL;
+"""
+
+
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
@@ -493,6 +510,44 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v8 complete.")
+
+    if current < 9:
+        log.info("Migrating schema v8 -> v9: adding memory revision tracking...")
+        # Create partial index (idempotent)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_embedded"
+            " ON memories(memory_id) WHERE embedding IS NOT NULL"
+        )
+        # ALTER TABLE doesn't support IF NOT EXISTS -
+        # check column existence first
+        cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(memories)"
+            ).fetchall()
+        }
+        if "updated_at" not in cols:
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN updated_at TEXT"
+            )
+        if "revision_count" not in cols:
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN"
+                " revision_count INTEGER NOT NULL DEFAULT 1"
+            )
+        if "merge_count" not in cols:
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN"
+                " merge_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "merged_from" not in cols:
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN merged_from JSON"
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version VALUES (9)"
+        )
+        conn.commit()
+        log.info("Migration to v9 complete.")
 
 
 def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:

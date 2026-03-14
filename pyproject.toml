@@ -1,6 +1,6 @@
 [project]
 name = "neurostack"
-version = "0.2.0"
+version = "0.3.0"
 description = "Build, maintain, and search your knowledge vault. CLI + MCP server with stale note detection, semantic search, and neuroscience-grounded memory."
 readme = "README.md"
 license = "Apache-2.0"

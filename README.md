@@ -118,9 +118,11 @@ NeuroStack indexes your vault into a knowledge graph, then uses techniques borro
 | What you see | What it does | How your brain does it |
 |---|---|---|
 | **Stale note detection** | Flags notes that appear in the wrong search contexts | Prediction error signals trigger memory reconsolidation |
-| **Hot notes** | Recently active notes get priority in results | CREB-elevated neurons preferentially join new memories |
+| **Hot notes + decay** | Recently active notes get priority; unused notes fade | CREB-elevated neurons preferentially join new memories; excitability decays over time |
+| **Memory dedup** | Detects near-duplicate memories, merges on demand | Pattern separation in dentate gyrus distinguishes similar but distinct memories |
 | **Topic clusters** | Reveals thematic groups across your vault | Neural ensembles form overlapping assemblies |
 | **Smart retrieval** | Starts with key facts, escalates only when needed | Hippocampal rapid binding complements slow cortical learning |
+| **Context recovery** | Rebuilds task-specific context after interruption | Hippocampal replay reinstates activity patterns during memory retrieval |
 | **Meaning-based search** | Finds notes by concept, not just keywords | Associative memory retrieval follows semantic paths |
 
 <details>
@@ -184,9 +186,9 @@ Compared to naive RAG (dumping full document chunks at ~750 tokens each), NeuroS
 
 ## Agent memories
 
-Your AI can write back short-lived memories — observations, decisions, conventions, bugs — that surface automatically in future `vault_search` results. Unlike vault notes, memories are lightweight and can expire.
+Your AI can write back short-lived memories - observations, decisions, conventions, bugs - that surface automatically in future `vault_search` results. Unlike vault notes, memories are lightweight and can expire.
 
-**MCP tools:** `vault_remember`, `vault_forget`, `vault_memories`
+**MCP tools:** `vault_remember`, `vault_forget`, `vault_memories`, `vault_update_memory`, `vault_merge`
 
 ```bash
 # CLI
@@ -194,6 +196,8 @@ neurostack memories add "deployment requires VPN" --type convention
 neurostack memories add "auth token expires in 1h" --type observation --ttl 7d
 neurostack memories search "deployment"
 neurostack memories list
+neurostack memories update <id> --content "new text" --add-tags "infra"
+neurostack memories merge <target_id> <source_id>
 neurostack memories forget <id>
 neurostack memories prune              # Remove expired memories
 neurostack memories stats
@@ -202,6 +206,53 @@ neurostack memories stats
 **Entity types:** `observation`, `decision`, `convention`, `learning`, `context`, `bug`
 
 Memories with a `--ttl` auto-expire after the given duration. Without TTL, they persist until explicitly forgotten or pruned.
+
+### Update in place
+
+Edit a memory without deleting and recreating it. Update any field - content, tags, entity type, workspace, or TTL. Content changes automatically re-embed for semantic search. Tag operations support replace, add, and remove.
+
+```bash
+neurostack memories update 42 --content "revised observation"
+neurostack memories update 42 --add-tags "auth,security"
+neurostack memories update 42 --remove-tags "old-tag"
+neurostack memories update 42 --type decision --ttl 0    # make permanent
+```
+
+**MCP tool:** `vault_update_memory` - pass only the fields you want to change.
+
+### Dedup and merge
+
+When saving a memory, NeuroStack checks for near-duplicates using a two-stage pipeline (FTS5 keyword overlap, then cosine similarity on embeddings). It never auto-merges - instead it returns candidates so the caller can decide.
+
+```bash
+# Save returns near-duplicate warnings
+neurostack memories add "use env vars for secrets"
+#   Saved memory #5 (observation)
+#   ! Near-duplicates found:
+#     #2 (similarity: 0.76)
+#       Always use environment variables for secrets
+#   Merge: neurostack memories merge <target> <source>
+
+# Explicit merge - folds source into target
+neurostack memories merge 2 5
+```
+
+Merge unions tags, keeps the longer content, picks the more specific entity type, and tracks an audit trail (`merge_count`, `merged_from`).
+
+**MCP tools:** `vault_remember` (returns `near_duplicates` in response), `vault_merge`
+
+### Tag suggestions
+
+When saving a memory, NeuroStack suggests tags based on FTS5 overlap with existing tagged memories and file path extraction. No LLM call - pure heuristic, under 10ms.
+
+```bash
+neurostack memories add "Fixed handler in src/auth/middleware.py" --type bug
+#   Saved memory #6 (bug)
+#   Suggested tags: py, auth, bug, security
+#   Apply: neurostack memories update 6 --add-tags py,auth,bug,security
+```
+
+**MCP tool:** `vault_remember` returns `suggested_tags` in response.
 
 ### Session harvest
 
@@ -215,6 +266,39 @@ neurostack harvest --json           # Machine-readable output
 ```
 
 **MCP tool:** `vault_harvest` - call from your AI assistant to extract and save insights from the current session.
+
+### Automation hooks
+
+Schedule periodic harvest runs with a systemd user timer instead of manually running `neurostack harvest`:
+
+```bash
+neurostack hooks install            # Install hourly harvest timer
+neurostack hooks status             # Check if timer is active
+neurostack hooks remove             # Remove the timer
+```
+
+## Context recovery
+
+After `/clear` or starting a new conversation, use `vault_context` to recover task-specific context. Unlike `session_brief` (a time-anchored status snapshot), `vault_context` is task-anchored - it retrieves memories, triples, summaries, and session history relevant to a specific task, within a token budget.
+
+```bash
+neurostack context "implement auth middleware" --budget 2000
+neurostack context "database migration" --workspace work/my-project --no-triples
+```
+
+**MCP tool:** `vault_context` - returns structured JSON with memories, triples, note summaries, and session history scoped to the task.
+
+## Excitability decay
+
+Notes that haven't been accessed recently lose their "hotness" score through exponential decay - just like biological memory. The `decay` command reports which notes are dormant, active, or never used, using the existing hotness scoring system as the single source of truth.
+
+```bash
+neurostack decay                              # Default report
+neurostack decay --threshold 0.1 --half-life 60  # Custom thresholds
+neurostack decay --json                       # Machine-readable
+```
+
+`vault_stats` also includes excitability breakdown (active/dormant/never-used counts).
 
 ## Features at a glance
 
@@ -302,12 +386,17 @@ neurostack search "query"           # Search by meaning or keywords
 neurostack search -w "work/" "query"  # Search scoped to a workspace path
 neurostack harvest                   # Extract insights from recent sessions
 neurostack memories list              # List agent write-back memories
+neurostack memories update <id> --content "new text"  # Update in place
+neurostack memories merge <target> <source>  # Merge two memories
+neurostack context "task description"  # Task-scoped context recovery
+neurostack decay                     # Excitability report - dormant vs active notes
 neurostack graph "note.md"          # See a note's connections
 neurostack prediction-errors        # Find stale or misleading notes
 neurostack communities query "topic"  # Explore topic clusters
-neurostack brief                    # Morning briefing — what needs attention
+neurostack brief                    # Morning briefing - what needs attention
 neurostack record-usage note.md     # Mark notes as used (drives hotness scoring)
-neurostack stats                    # Index health overview
+neurostack hooks install            # Set up automatic harvest timer
+neurostack stats                    # Index health overview (includes excitability)
 neurostack doctor                   # Validate all subsystems
 neurostack watch                    # Watch vault for changes, re-index automatically
 neurostack serve                    # Start as MCP server for AI tools
@@ -333,9 +422,18 @@ neurostack harvest --sessions 5 --dry-run      # Preview without saving
 neurostack memories add "text" --type observation  # Store a memory
 neurostack memories search "query"  # Search memories
 neurostack memories list            # List all memories
+neurostack memories update <id> --content "revised"  # Update in place
+neurostack memories update <id> --add-tags "new-tag"  # Add tags
+neurostack memories merge <target> <source>  # Merge two memories
 neurostack memories forget <id>     # Remove a memory
 neurostack memories prune           # Remove expired memories
 neurostack memories stats           # Memory store overview
+neurostack context "task" --budget 2000  # Task-scoped context recovery
+neurostack decay                    # Excitability report
+neurostack decay --threshold 0.1    # Custom dormancy threshold
+neurostack hooks install            # Set up hourly harvest timer
+neurostack hooks status             # Check automation status
+neurostack hooks remove             # Remove automation hooks
 neurostack demo                     # Interactive demo with sample vault
 neurostack status                   # Overview of your vault and config
 ```
@@ -391,21 +489,25 @@ echo "$CONTEXT" | your-preferred-ai-tool
 ```
 
 <details>
-<summary><strong>All 12 MCP tools</strong></summary>
+<summary><strong>All 16 MCP tools</strong></summary>
 
 | Tool | What it does |
 |------|-------------|
 | `vault_search` | Search your vault by meaning or keywords, with tiered depth |
 | `vault_summary` | Get a pre-computed summary of any note |
-| `vault_graph` | See a note's neighborhood — what links to it and what it links to |
+| `vault_graph` | See a note's neighborhood - what links to it and what it links to |
 | `vault_triples` | Get structured facts (who/what/how) extracted from your notes |
 | `vault_communities` | Answer big-picture questions across topic clusters |
-| `vault_stats` | Check the health of your index |
+| `vault_context` | Assemble task-scoped context for session recovery |
+| `vault_stats` | Check the health of your index (includes excitability + memory stats) |
 | `vault_record_usage` | Track which notes are "hot" (recently accessed) |
 | `vault_prediction_errors` | Surface notes that need review |
-| `vault_remember` | Store a memory (observation, decision, convention, learning, context, or bug) |
+| `vault_remember` | Store a memory (returns near-duplicate warnings + tag suggestions) |
+| `vault_update_memory` | Update a memory in place (partial updates, re-embeds on content change) |
+| `vault_merge` | Merge two memories (unions tags, tracks audit trail) |
 | `vault_forget` | Remove a memory by ID |
 | `vault_memories` | List or search stored memories |
+| `vault_harvest` | Extract insights from Claude Code session transcripts |
 | `session_brief` | Get a compact briefing when starting a new session |
 
 </details>

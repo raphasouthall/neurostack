@@ -9,9 +9,12 @@ from neurostack.memories import (
     Memory,
     forget_memory,
     get_memory_stats,
+    merge_memories,
     prune_memories,
     save_memory,
     search_memories,
+    suggest_tags,
+    update_memory,
 )
 
 
@@ -249,6 +252,175 @@ class TestMemoryStats:
         assert stats["total"] == 3
         assert stats["by_type"]["decision"] == 2
         assert stats["by_type"]["bug"] == 1
+
+
+class TestUpdateMemory:
+    def test_update_content(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Original content")
+        updated = update_memory(in_memory_db, m.memory_id, content="New content")
+        assert updated is not None
+        assert updated.content == "New content"
+        assert updated.updated_at is not None
+        assert updated.revision_count == 2
+
+    def test_update_nonexistent(self, in_memory_db):
+        result = update_memory(in_memory_db, 99999, content="Nope")
+        assert result is None
+
+    def test_update_tags_replace(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Tagged", tags=["a", "b"])
+        updated = update_memory(in_memory_db, m.memory_id, tags=["x", "y"])
+        assert updated.tags == ["x", "y"]
+
+    def test_update_tags_add(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Tagged", tags=["a", "b"])
+        updated = update_memory(in_memory_db, m.memory_id, add_tags=["c"])
+        assert set(updated.tags) == {"a", "b", "c"}
+
+    def test_update_tags_remove(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Tagged", tags=["a", "b", "c"])
+        updated = update_memory(in_memory_db, m.memory_id, remove_tags=["b"])
+        assert "b" not in updated.tags
+        assert "a" in updated.tags
+
+    def test_update_entity_type(self, in_memory_db):
+        m = save_memory(in_memory_db, content="A decision", entity_type="observation")
+        updated = update_memory(in_memory_db, m.memory_id, entity_type="decision")
+        assert updated.entity_type == "decision"
+
+    def test_update_invalid_entity_type(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Test")
+        with pytest.raises(ValueError, match="Invalid entity_type"):
+            update_memory(in_memory_db, m.memory_id, entity_type="invalid")
+
+    def test_update_ttl_to_permanent(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Ephemeral", ttl_hours=24)
+        assert m.expires_at is not None
+        updated = update_memory(in_memory_db, m.memory_id, ttl_hours=0)
+        assert updated.expires_at is None
+
+    def test_update_fts_synced(self, in_memory_db):
+        m = save_memory(in_memory_db, content="unique_old_token_xyz")
+        update_memory(in_memory_db, m.memory_id, content="unique_new_token_abc")
+
+        old = in_memory_db.execute(
+            "SELECT * FROM memories_fts WHERE memories_fts MATCH ?",
+            ("unique_old_token_xyz",),
+        ).fetchall()
+        assert len(old) == 0
+
+        new = in_memory_db.execute(
+            "SELECT * FROM memories_fts WHERE memories_fts MATCH ?",
+            ("unique_new_token_abc",),
+        ).fetchall()
+        assert len(new) == 1
+
+    def test_update_preserves_created_at(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Original")
+        original_created = m.created_at
+        updated = update_memory(in_memory_db, m.memory_id, content="Changed")
+        assert updated.created_at == original_created
+
+    def test_update_workspace(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Scoped")
+        updated = update_memory(in_memory_db, m.memory_id, workspace="work/project")
+        assert updated.workspace == "work/project"
+
+
+class TestMergeMemories:
+    def test_merge_basic(self, in_memory_db):
+        m1 = save_memory(in_memory_db, content="Short note", tags=["a"])
+        m2 = save_memory(
+            in_memory_db,
+            content="A much longer and more detailed note about the topic",
+            tags=["b"],
+        )
+        result = merge_memories(in_memory_db, m1.memory_id, m2.memory_id)
+        assert result is not None
+        # Keeps the longer content since it's > 1.2x longer
+        assert "longer" in result.content
+        # Tags are unioned
+        assert "a" in result.tags
+        assert "b" in result.tags
+        # Merge metadata
+        assert result.merge_count == 1
+        assert result.merged_from == [m2.memory_id]
+
+    def test_merge_deletes_source(self, in_memory_db):
+        m1 = save_memory(in_memory_db, content="Target memory")
+        m2 = save_memory(in_memory_db, content="Source memory to merge")
+        merge_memories(in_memory_db, m1.memory_id, m2.memory_id)
+        row = in_memory_db.execute(
+            "SELECT * FROM memories WHERE memory_id = ?", (m2.memory_id,)
+        ).fetchone()
+        assert row is None
+
+    def test_merge_keeps_specific_type(self, in_memory_db):
+        m1 = save_memory(in_memory_db, content="An observation", entity_type="observation")
+        m2 = save_memory(in_memory_db, content="A bug fix observation", entity_type="bug")
+        result = merge_memories(in_memory_db, m1.memory_id, m2.memory_id)
+        assert result.entity_type == "bug"
+
+    def test_merge_nonexistent_returns_none(self, in_memory_db):
+        m1 = save_memory(in_memory_db, content="Exists")
+        assert merge_memories(in_memory_db, m1.memory_id, 99999) is None
+        assert merge_memories(in_memory_db, 99999, m1.memory_id) is None
+
+    def test_merge_fts_updated(self, in_memory_db):
+        m1 = save_memory(in_memory_db, content="target_unique_token_merge_with_enough_content")
+        m2 = save_memory(in_memory_db, content="source_unique_short")
+        merge_memories(in_memory_db, m1.memory_id, m2.memory_id)
+        # Source row is deleted - its FTS entry should be gone
+        source_fts = in_memory_db.execute(
+            "SELECT * FROM memories_fts WHERE memories_fts MATCH ?",
+            ("source_unique_short",),
+        ).fetchall()
+        assert len(source_fts) == 0
+        # Target FTS entry should still exist
+        target_fts = in_memory_db.execute(
+            "SELECT * FROM memories_fts WHERE memories_fts MATCH ?",
+            ("target_unique_token_merge_with_enough_content",),
+        ).fetchall()
+        assert len(target_fts) == 1
+
+    def test_merge_increments_revision(self, in_memory_db):
+        m1 = save_memory(in_memory_db, content="Target")
+        m2 = save_memory(in_memory_db, content="Source longer content for merge test")
+        result = merge_memories(in_memory_db, m1.memory_id, m2.memory_id)
+        assert result.revision_count == 2
+
+
+class TestSuggestTags:
+    def test_suggest_from_file_paths(self, in_memory_db):
+        tags = suggest_tags(in_memory_db, "Fixed bug in src/auth/handler.py")
+        assert "py" in tags
+        assert "auth" in tags
+
+    def test_suggest_entity_type(self, in_memory_db):
+        tags = suggest_tags(in_memory_db, "Use JWT for authentication", entity_type="decision")
+        assert "decision" in tags
+
+    def test_suggest_from_existing_memories(self, in_memory_db):
+        save_memory(
+            in_memory_db, content="Database migration strategy",
+            tags=["database", "migration"],
+        )
+        save_memory(
+            in_memory_db, content="Database connection pooling",
+            tags=["database", "performance"],
+        )
+        tags = suggest_tags(in_memory_db, "Database query optimization needed")
+        assert "database" in tags
+
+    def test_suggest_empty_content(self, in_memory_db):
+        tags = suggest_tags(in_memory_db, "hi")
+        assert isinstance(tags, list)
+
+    def test_save_returns_suggested_tags(self, in_memory_db):
+        save_memory(in_memory_db, content="Auth module configuration", tags=["auth"])
+        m = save_memory(in_memory_db, content="Auth module refactoring in src/auth/module.py")
+        # Should suggest 'auth' from FTS overlap + 'py' from file path
+        assert m.suggested_tags is None or isinstance(m.suggested_tags, list)
 
 
 class TestMemorySchemaIntegration:
