@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import './App.css'
 
 /* ═══════════════════════════════════════════════════════════════
@@ -157,7 +158,7 @@ function Reveal({ children, className = '' }) {
 }
 
 // ── Navigation ──────────────────────────────────
-function Nav() {
+export function Nav() {
   const [scrolled, setScrolled] = useState(false)
   const [stars, setStars] = useState(null)
   const [version, setVersion] = useState(null)
@@ -195,18 +196,23 @@ function Nav() {
     { href: '#mcp', label: 'MCP' },
     { href: '#install', label: 'Install' },
     { href: '#comparison', label: 'Compare' },
+    { href: '/blog', label: 'Blog', route: true },
   ]
 
   return (
     <nav className="nav" style={{ borderBottomColor: scrolled ? undefined : 'transparent' }}>
-      <div className="nav-brand">
+      <Link to="/" className="nav-brand">
         <NeuroIcon size={24} className="nav-icon" />
         <h1>NeuroStack</h1>
         {version && <span className="nav-version">{version}</span>}
-      </div>
+      </Link>
       <ul className="nav-links">
         {navItems.map(item => (
-          <li key={item.href}><a href={item.href}>{item.label}</a></li>
+          <li key={item.href}>
+            {item.route
+              ? <Link to={item.href}>{item.label}</Link>
+              : <a href={item.href}>{item.label}</a>}
+          </li>
         ))}
       </ul>
       <div className="nav-right">
@@ -238,7 +244,9 @@ function Nav() {
           <ul className="mobile-menu-links">
             {navItems.map(item => (
               <li key={item.href}>
-                <a href={item.href} onClick={() => setMenuOpen(false)}>{item.label}</a>
+                {item.route
+                  ? <Link to={item.href} onClick={() => setMenuOpen(false)}>{item.label}</Link>
+                  : <a href={item.href} onClick={() => setMenuOpen(false)}>{item.label}</a>}
               </li>
             ))}
           </ul>
@@ -1129,7 +1137,7 @@ function SponsorBanner() {
 }
 
 // ── Footer ──────────────────────────────────────
-function Footer() {
+export function Footer() {
   return (
     <footer className="footer">
       <div className="footer-left">
@@ -1144,6 +1152,7 @@ function Footer() {
         </a>
         <a href="#install" className="footer-link">Install</a>
         <a href="#features" className="footer-link">Docs</a>
+        <Link to="/blog" className="footer-link">Blog</Link>
       </div>
     </footer>
   )
