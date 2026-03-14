@@ -583,5 +583,26 @@ def vault_memories(
     return json.dumps(output, indent=2)
 
 
+@mcp.tool()
+def vault_harvest(sessions: int = 1, dry_run: bool = False) -> str:
+    """Extract insights from recent Claude Code sessions and save as memories.
+
+    Scans session transcripts for decisions, bugs, conventions, and learnings.
+    Deduplicates against existing memories before saving.
+
+    Args:
+        sessions: Number of recent sessions to scan (default 1)
+        dry_run: If True, show what would be saved without saving
+    """
+    from .harvest import harvest_sessions
+
+    result = harvest_sessions(
+        n_sessions=sessions,
+        dry_run=dry_run,
+        embed_url=EMBED_URL,
+    )
+    return json.dumps(result, indent=2, default=str)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
