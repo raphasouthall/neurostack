@@ -1852,14 +1852,133 @@ def cmd_serve(args):
 
 
 def cmd_sessions(args):
-    """Search session transcripts."""
-    from .session_index import main as session_main
-    # Forward remaining args to session_index
-    extra = args.session_args
-    if args.json and "--json" not in extra:
-        extra = ["--json"] + extra
-    sys.argv = ["neurostack-sessions"] + extra
-    session_main()
+    """Manage memory sessions and search session transcripts."""
+    sessions_cmd = getattr(args, "sessions_command", None)
+
+    if sessions_cmd == "search" or sessions_cmd is None:
+        # Delegate to session-index (existing behavior)
+        from .session_index import main as session_main
+        extra = getattr(args, "session_args", []) or []
+        if args.json and "--json" not in extra:
+            extra = ["--json"] + extra
+        sys.argv = ["neurostack-sessions"] + extra
+        session_main()
+        return
+
+    if sessions_cmd == "start":
+        from .memories import start_session
+        from .schema import DB_PATH, get_db
+        conn = get_db(DB_PATH)
+        result = start_session(
+            conn,
+            source_agent=getattr(args, "source", None),
+            workspace=_get_workspace(args),
+        )
+        if args.json:
+            print(json.dumps(result, indent=2))
+            return
+        print(
+            f"  Session {result['session_id']} started"
+            f" at {result['started_at']}"
+        )
+        return
+
+    if sessions_cmd == "end":
+        from .memories import end_session, summarize_session
+        from .schema import DB_PATH, get_db
+        conn = get_db(DB_PATH)
+        summary = None
+        if getattr(args, "summarize", False):
+            print("  Generating session summary...")
+            summary = summarize_session(
+                conn, args.id,
+                llm_url=args.summarize_url,
+            )
+        result = end_session(conn, args.id, summary=summary)
+        if "error" in result:
+            print(f"  Error: {result['error']}")
+            return
+        if args.json:
+            print(json.dumps(result, indent=2))
+            return
+        print(
+            f"  Session {result['session_id']} ended"
+            f" at {result['ended_at']}"
+        )
+        if result.get("summary"):
+            print(f"  Summary: {result['summary']}")
+        return
+
+    if sessions_cmd == "list":
+        from .memories import list_sessions
+        from .schema import DB_PATH, get_db
+        conn = get_db(DB_PATH)
+        sessions = list_sessions(
+            conn,
+            limit=args.limit,
+            workspace=_get_workspace(args),
+        )
+        if args.json:
+            print(json.dumps(sessions, indent=2))
+            return
+        if not sessions:
+            print("  No sessions found.")
+            return
+        for s in sessions:
+            status = (
+                "active" if not s["ended_at"] else "ended"
+            )
+            agent = s["source_agent"] or "unknown"
+            print(
+                f"  #{s['session_id']} [{status}] "
+                f"{agent} - {s['started_at']} "
+                f"({s['memory_count']} memories)"
+            )
+            if s.get("summary"):
+                print(f"    {s['summary'][:120]}")
+        return
+
+    if sessions_cmd == "show":
+        from .memories import get_session
+        from .schema import DB_PATH, get_db
+        conn = get_db(DB_PATH)
+        session = get_session(conn, args.id)
+        if not session:
+            print(f"  Session {args.id} not found.")
+            return
+        if args.json:
+            print(json.dumps(session, indent=2))
+            return
+        sid = session["session_id"]
+        status = (
+            "active" if not session["ended_at"]
+            else "ended"
+        )
+        print(f"  Session #{sid} [{status}]")
+        print(f"  Started: {session['started_at']}")
+        if session["ended_at"]:
+            print(f"  Ended: {session['ended_at']}")
+        if session.get("source_agent"):
+            print(
+                f"  Agent: {session['source_agent']}"
+            )
+        if session.get("workspace"):
+            print(
+                f"  Workspace: {session['workspace']}"
+            )
+        if session.get("summary"):
+            print(
+                f"  Summary: {session['summary']}"
+            )
+        print(
+            f"  Memories: {session['memory_count']}"
+        )
+        for m in session.get("memories", []):
+            print(
+                f"    [{m['entity_type']}] "
+                f"{m['content'][:100]}"
+            )
+        return
 
 
 def cmd_status(args):
@@ -2240,11 +2359,62 @@ def main():
     p.set_defaults(func=cmd_serve)
 
     # sessions
-    p = sub.add_parser("sessions", help="Search session transcripts")
-    p.add_argument(
+    p = sub.add_parser(
+        "sessions",
+        help="Memory sessions and transcript search",
+    )
+    sess_sub = p.add_subparsers(dest="sessions_command")
+
+    # sessions search (delegates to session-index)
+    sp = sess_sub.add_parser(
+        "search", help="Search session transcripts",
+    )
+    sp.add_argument(
         "session_args", nargs=argparse.REMAINDER,
         help="Arguments passed to session-index",
     )
+
+    # sessions start
+    sp = sess_sub.add_parser(
+        "start", help="Start a new memory session",
+    )
+    sp.add_argument(
+        "--source", help="Source agent name",
+    )
+    sp.add_argument(
+        "--workspace", "-w", default=None,
+        help="Workspace scope",
+    )
+
+    # sessions end
+    sp = sess_sub.add_parser(
+        "end", help="End a memory session",
+    )
+    sp.add_argument("id", type=int, help="Session ID")
+    sp.add_argument(
+        "--summarize", action="store_true",
+        help="Generate LLM summary of session memories",
+    )
+
+    # sessions list
+    sp = sess_sub.add_parser(
+        "list", help="List recent memory sessions",
+    )
+    sp.add_argument(
+        "--limit", type=int, default=20,
+    )
+    sp.add_argument(
+        "--workspace", "-w", default=None,
+        help="Filter by workspace",
+    )
+
+    # sessions show
+    sp = sess_sub.add_parser(
+        "show",
+        help="Show session details and memories",
+    )
+    sp.add_argument("id", type=int, help="Session ID")
+
     p.set_defaults(func=cmd_sessions)
 
     # index

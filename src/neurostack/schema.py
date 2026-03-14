@@ -14,7 +14,7 @@ _cfg = get_config()
 DB_DIR = _cfg.db_dir
 DB_PATH = _cfg.db_path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -190,6 +190,7 @@ CREATE TABLE IF NOT EXISTS memories (
     entity_type TEXT NOT NULL DEFAULT 'observation',
     source_agent TEXT,
     workspace TEXT,
+    session_id INTEGER REFERENCES memory_sessions(session_id),
     embedding BLOB,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT
@@ -199,6 +200,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(entity_type);
 CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace);
 CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at)
     WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_memories_session
+    ON memories(session_id) WHERE session_id IS NOT NULL;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     content,
@@ -221,6 +224,19 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(rowid, content)
         VALUES (new.memory_id, new.content);
 END;
+
+-- Session lifecycle tracking for memories
+CREATE TABLE IF NOT EXISTS memory_sessions (
+    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    source_agent TEXT,
+    workspace TEXT,
+    summary TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_sessions_workspace
+    ON memory_sessions(workspace);
 """
 
 # Migration from v1 to v2: add triples tables
@@ -373,6 +389,27 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 """
 
+# Migration from v7 to v8: add session lifecycle tracking
+MIGRATION_V8 = """
+CREATE TABLE IF NOT EXISTS memory_sessions (
+    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    source_agent TEXT,
+    workspace TEXT,
+    summary TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_sessions_workspace
+    ON memory_sessions(workspace);
+
+ALTER TABLE memories ADD COLUMN session_id INTEGER
+    REFERENCES memory_sessions(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_memories_session
+    ON memories(session_id) WHERE session_id IS NOT NULL;
+"""
+
 
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
@@ -380,46 +417,82 @@ def _run_migrations(conn: sqlite3.Connection):
     current = row["v"] if row else 0
 
     if current < 2:
-        log.info("Migrating schema v1 → v2: adding triples tables...")
+        log.info("Migrating schema v1 -> v2: adding triples tables...")
         conn.executescript(MIGRATION_V2)
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (2)")
         conn.commit()
         log.info("Migration to v2 complete.")
 
     if current < 3:
-        log.info("Migrating schema v2 → v3: adding GraphRAG community tables...")
+        log.info("Migrating schema v2 -> v3: adding GraphRAG community tables...")
         conn.executescript(MIGRATION_V3)
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (3)")
         conn.commit()
         log.info("Migration to v3 complete.")
 
     if current < 4:
-        log.info("Migrating schema v3 → v4: adding note_usage table...")
+        log.info("Migrating schema v3 -> v4: adding note_usage table...")
         conn.executescript(MIGRATION_V4)
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (4)")
         conn.commit()
         log.info("Migration to v4 complete.")
 
     if current < 5:
-        log.info("Migrating schema v4 → v5: adding folder_summaries table...")
+        log.info("Migrating schema v4 -> v5: adding folder_summaries table...")
         conn.executescript(MIGRATION_V5)
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (5)")
         conn.commit()
         log.info("Migration to v5 complete.")
 
     if current < 6:
-        log.info("Migrating schema v5 → v6: adding prediction_errors table...")
+        log.info("Migrating schema v5 -> v6: adding prediction_errors table...")
         conn.executescript(MIGRATION_V6)
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (6)")
         conn.commit()
         log.info("Migration to v6 complete.")
 
     if current < 7:
-        log.info("Migrating schema v6 → v7: adding memories table...")
+        log.info("Migrating schema v6 -> v7: adding memories table...")
         conn.executescript(MIGRATION_V7)
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (7)")
         conn.commit()
         log.info("Migration to v7 complete.")
+
+    if current < 8:
+        log.info("Migrating schema v7 -> v8: adding session lifecycle...")
+        # Create session table and index (idempotent)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS memory_sessions (
+                session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL DEFAULT (datetime('now')),
+                ended_at TEXT,
+                source_agent TEXT,
+                workspace TEXT,
+                summary TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_sessions_workspace
+                ON memory_sessions(workspace);
+            CREATE INDEX IF NOT EXISTS idx_memories_session
+                ON memories(session_id)
+                WHERE session_id IS NOT NULL;
+        """)
+        # ALTER TABLE doesn't support IF NOT EXISTS -
+        # check column existence first
+        cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(memories)"
+            ).fetchall()
+        }
+        if "session_id" not in cols:
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN session_id"
+                " INTEGER REFERENCES memory_sessions(session_id)"
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version VALUES (8)"
+        )
+        conn.commit()
+        log.info("Migration to v8 complete.")
 
 
 def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
