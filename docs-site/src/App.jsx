@@ -432,7 +432,7 @@ const CLI_GROUPS = [
   {
     label: 'Core',
     commands: [
-      { cmd: 'neurostack install', desc: 'Install or upgrade mode (lite/full/community) and optionally pull Ollama models. Flags: --mode, --pull-models, --embed-model, --llm-model' },
+      { cmd: 'neurostack install', desc: 'Install or upgrade mode (lite/full/community), auto-install Ollama, and pull models (skips already-available). Flags: --mode, --pull-models, --embed-model, --llm-model' },
       { cmd: 'neurostack init', desc: 'Interactive setup wizard — vault path, model, profession packs. Or: neurostack init [path] -p researcher' },
       { cmd: 'neurostack index', desc: 'Full re-index of vault — parses notes, extracts chunks, builds FTS5 and embeddings' },
       { cmd: 'neurostack watch', desc: 'Watch vault for changes and live-index on save' },
@@ -748,7 +748,8 @@ function Install() {
         <SectionHeader number="06" title="Get Started" />
         <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '60ch' }}>
           Bootstrap the CLI, then use <code>neurostack install</code> to choose your mode
-          and set up Ollama models. Re-run anytime to upgrade.
+          and set up Ollama models. It auto-installs Ollama if needed and skips
+          models you already have. Re-run anytime to upgrade.
         </p>
         <div className="install-grid">
           <div className="install-card">
@@ -813,7 +814,7 @@ function Install() {
                 <li><strong>numpy</strong> ~30MB &mdash; numerical computing</li>
                 <li><strong>sentence-transformers</strong> ~100MB &mdash; embeddings &amp; reranking</li>
                 <li><strong>PyTorch CPU</strong> ~300MB &mdash; ML runtime</li>
-                <li><strong>Ollama</strong> ~1GB+ &mdash; <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer">install separately</a></li>
+                <li><strong>Ollama</strong> ~1GB+ &mdash; auto-installed on Linux, or <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer">download for macOS</a></li>
               </ul>
             </div>
           </div>

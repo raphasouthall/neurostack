@@ -32,10 +32,10 @@ No prior config needed. No Python, git, or curl required.
 | **full** | + semantic search, AI summaries, cross-encoder reranking | ~560 MB | No (CPU inference) |
 | **community** | + GraphRAG topic clustering (Leiden algorithm) | ~575 MB | No |
 
-The `install` command handles everything — dependency syncing via `uv`, Ollama model pulls, and config updates:
+The `install` command handles everything — dependency syncing via `uv`, Ollama installation, model pulls, and config updates. It detects what's already installed and skips unnecessary work:
 
 ```bash
-# Interactive — walks you through mode and model selection
+# Interactive — walks you through mode, Ollama, and model selection
 neurostack install
 
 # Non-interactive — specify mode directly
@@ -47,6 +47,10 @@ neurostack install --mode full --pull-models
 # Custom models
 neurostack install --mode full --pull-models --embed-model nomic-embed-text --llm-model qwen3:8b
 ```
+
+When choosing full or community mode:
+- **Ollama not installed?** — offers to install it automatically (Linux) or shows the download link (macOS).
+- **Models already pulled?** — skips the download and moves on.
 
 You can re-run `neurostack install` at any time to upgrade between modes (e.g., lite → full).
 
