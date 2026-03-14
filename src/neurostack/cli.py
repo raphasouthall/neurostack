@@ -1959,10 +1959,14 @@ def cmd_harvest(args):
             print(f"    tags: {', '.join(item['tags'])}")
 
     for item in result["skipped"]:
-        print(f"  \033[33m-\033[0m [{item['entity_type']}] {item.get('status', 'skipped')}: {item['content'][:60]}")
+        status = item.get("status", "skipped")
+        snip = item["content"][:60]
+        print(f"  \033[33m-\033[0m [{item['entity_type']}] {status}: {snip}")
 
-    total = len(result["saved"]) + len(result["skipped"])
-    print(f"\n  Total: {len(result['saved'])} saved, {len(result['skipped'])} skipped ({total} insights found)")
+    n_saved = len(result["saved"])
+    n_skip = len(result["skipped"])
+    total = n_saved + n_skip
+    print(f"\n  Total: {n_saved} saved, {n_skip} skipped ({total} found)")
 
 
 def main():
@@ -2272,8 +2276,14 @@ def main():
 
     # harvest
     p = sub.add_parser("harvest", help="Extract insights from recent Claude Code sessions")
-    p.add_argument("--sessions", type=int, default=1, help="Number of recent sessions to harvest (default: 1)")
-    p.add_argument("--dry-run", "-n", action="store_true", help="Show what would be saved without saving")
+    p.add_argument(
+        "--sessions", type=int, default=1,
+        help="Number of recent sessions to harvest (default: 1)",
+    )
+    p.add_argument(
+        "--dry-run", "-n", action="store_true",
+        help="Show what would be saved without saving",
+    )
     p.add_argument("--json", action="store_true", help="Output as JSON")
     p.set_defaults(func=cmd_harvest)
 
