@@ -390,14 +390,14 @@ function Features() {
 function CLIShowcase() {
   const [active, setActive] = useState(0)
   const screens = [
-    { label: 'Search', file: '07-search.svg' },
-    { label: 'Index', file: '06-index.svg' },
-    { label: 'Graph', file: 'graph.svg' },
-    { label: 'Communities', file: 'communities.svg' },
-    { label: 'Tiered', file: 'tiered.svg' },
-    { label: 'Stats', file: '08-stats.svg' },
-    { label: 'Brief', file: 'brief.svg' },
-    { label: 'Doctor', file: '09-doctor.svg' },
+    { label: 'Search', file: 'search.gif' },
+    { label: 'Graph', file: 'graph.gif' },
+    { label: 'Brief', file: 'brief.gif' },
+    { label: 'Memories', file: 'memories.gif' },
+    { label: 'Stats', file: 'stats.gif' },
+    { label: 'Scaffold', file: 'scaffold.gif' },
+    { label: 'Doctor', file: 'doctor.gif' },
+    { label: 'Prediction Errors', file: 'prediction-errors.gif' },
   ]
 
   return (
@@ -434,27 +434,27 @@ const CLI_GROUPS = [
     commands: [
       { cmd: 'neurostack install', desc: 'Install or upgrade mode (lite/full/community), auto-install Ollama, and pull models (skips already-available). Flags: --mode, --pull-models, --embed-model, --llm-model' },
       { cmd: 'neurostack init', desc: 'Interactive setup wizard — vault path, model, profession packs. Or: neurostack init [path] -p researcher' },
-      { cmd: 'neurostack index', desc: 'Full re-index of vault — parses notes, extracts chunks, builds FTS5 and embeddings' },
+      { cmd: 'neurostack index', desc: 'Full re-index of vault — parses notes, extracts chunks, builds FTS5 and embeddings', gif: 'index.gif' },
       { cmd: 'neurostack watch', desc: 'Watch vault for changes and live-index on save' },
-      { cmd: 'neurostack status', desc: 'Overview of index health and configuration' },
-      { cmd: 'neurostack doctor', desc: 'Validate all subsystems — SQLite, Ollama, models, schema version' },
-      { cmd: 'neurostack stats', desc: 'Index statistics: notes, chunks, embeddings, summaries, triples, communities' },
+      { cmd: 'neurostack status', desc: 'Overview of index health and configuration', gif: 'status.gif' },
+      { cmd: 'neurostack doctor', desc: 'Validate all subsystems — SQLite, Ollama, models, schema version', gif: 'doctor.gif' },
+      { cmd: 'neurostack stats', desc: 'Index statistics: notes, chunks, embeddings, summaries, triples, communities', gif: 'stats.gif' },
       { cmd: 'neurostack uninstall', desc: 'Complete removal — data, venv, database, and npm package' },
     ]
   },
   {
     label: 'Search & Retrieval',
     commands: [
-      { cmd: 'neurostack search "query"', desc: 'Hybrid FTS5 + semantic search. Flags: --top-k, --mode [hybrid|semantic|keyword], --context, --rerank, --workspace, --json' },
+      { cmd: 'neurostack search "query"', desc: 'Hybrid FTS5 + semantic search. Flags: --top-k, --mode [hybrid|semantic|keyword], --context, --rerank, --workspace, --json', gif: 'search.gif' },
       { cmd: 'neurostack tiered "query"', desc: 'Tiered search with auto-escalation. Flags: --depth [triples|summaries|full|auto], --top-k, --context, --rerank, --json' },
       { cmd: 'neurostack triples "query"', desc: 'Search structured SPO facts. Flags: --top-k, --mode, --json' },
-      { cmd: 'neurostack summary <path>', desc: 'Get pre-computed 2-3 sentence note summary (~100-200 tokens)' },
+      { cmd: 'neurostack summary <path>', desc: 'Get pre-computed 2-3 sentence note summary (~100-200 tokens)', gif: 'summary.gif' },
     ]
   },
   {
     label: 'Graph & Communities',
     commands: [
-      { cmd: 'neurostack graph <note.md>', desc: 'Wiki-link neighbourhood with PageRank scoring. Flag: --depth' },
+      { cmd: 'neurostack graph <note.md>', desc: 'Wiki-link neighbourhood with PageRank scoring. Flag: --depth', gif: 'graph.gif' },
       { cmd: 'neurostack communities build', desc: 'Run Leiden clustering + generate LLM summaries for each community' },
       { cmd: 'neurostack communities query "q"', desc: 'Global GraphRAG query over communities. Flags: --top-k, --level [0|1], --no-map-reduce, --json' },
       { cmd: 'neurostack communities list', desc: 'List detected communities. Flag: --level' },
@@ -463,10 +463,21 @@ const CLI_GROUPS = [
   {
     label: 'Maintenance',
     commands: [
-      { cmd: 'neurostack prediction-errors', desc: 'Show poorly-fit notes. Flags: --type [low_overlap|contextual_mismatch], --limit, --resolve <path>' },
+      { cmd: 'neurostack prediction-errors', desc: 'Show poorly-fit notes. Flags: --type [low_overlap|contextual_mismatch], --limit, --resolve <path>', gif: 'prediction-errors.gif' },
       { cmd: 'neurostack backfill [target]', desc: 'Backfill missing summaries, triples, or all' },
       { cmd: 'neurostack reembed-chunks', desc: 'Re-embed all chunks with updated context' },
       { cmd: 'neurostack folder-summaries', desc: 'Build folder-level summaries for semantic context boosting. Flag: --force' },
+    ]
+  },
+  {
+    label: 'Vault & Memories',
+    commands: [
+      { cmd: 'neurostack scaffold --list', desc: 'List available profession packs (researcher, developer, writer, student, devops, data-scientist)', gif: 'scaffold.gif' },
+      { cmd: 'neurostack onboard <dir>', desc: 'Onboard an existing directory of notes into a NeuroStack vault. Flag: -n (dry run)' },
+      { cmd: 'neurostack memories add "text"', desc: 'Store an agent memory. Flags: --type [observation|decision|convention|learning|context|bug], --ttl', gif: 'memories.gif' },
+      { cmd: 'neurostack memories list', desc: 'List all stored memories' },
+      { cmd: 'neurostack memories search "q"', desc: 'Search memories by keyword' },
+      { cmd: 'neurostack record-usage <path>', desc: 'Mark a note as used — drives hotness scoring for retrieval priority', gif: 'record-usage.gif' },
     ]
   },
   {
@@ -474,10 +485,43 @@ const CLI_GROUPS = [
     commands: [
       { cmd: 'neurostack serve', desc: 'Start MCP server. Flag: --transport [stdio|sse]' },
       { cmd: 'neurostack sessions search "q"', desc: 'Search session transcripts via FTS5' },
-      { cmd: 'neurostack brief', desc: 'Generate a compact ~500-token session context brief' },
+      { cmd: 'neurostack brief', desc: 'Generate a compact ~500-token session context brief', gif: 'brief.gif' },
     ]
   },
 ]
+
+function CLICommand({ c }) {
+  const [showGif, setShowGif] = useState(false)
+  return (
+    <>
+      <div style={{ display: 'contents' }}>
+        <div className="cli-cmd">
+          {c.cmd}
+          {c.gif && (
+            <button
+              className="cli-demo-toggle"
+              onClick={() => setShowGif(!showGif)}
+              title={showGif ? 'Hide demo' : 'Show demo'}
+            >
+              {showGif ? '▾ hide' : '▸ demo'}
+            </button>
+          )}
+        </div>
+        <div className="cli-desc">{c.desc}</div>
+      </div>
+      {showGif && c.gif && (
+        <div className="cli-demo-row">
+          <img
+            src={`/screenshots/${c.gif}`}
+            alt={`Demo: ${c.cmd}`}
+            className="cli-demo-gif"
+            loading="lazy"
+          />
+        </div>
+      )}
+    </>
+  )
+}
 
 function CLI() {
   return (
@@ -489,10 +533,7 @@ function CLI() {
             <div key={group.label} className="cli-row" style={{ display: 'contents' }}>
               <div className="cli-group-label">{group.label}</div>
               {group.commands.map((c) => (
-                <div key={c.cmd} style={{ display: 'contents' }}>
-                  <div className="cli-cmd">{c.cmd}</div>
-                  <div className="cli-desc">{c.desc}</div>
-                </div>
+                <CLICommand key={c.cmd} c={c} />
               ))}
             </div>
           ))}
