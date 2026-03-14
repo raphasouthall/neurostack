@@ -90,6 +90,34 @@ def vault_search(
     return json.dumps(output, indent=2)
 
 
+@mcp.tool()
+def vault_ask(
+    question: str,
+    top_k: int = 8,
+    workspace: str = None,
+) -> str:
+    """Ask a natural language question and get an answer with citations from vault content.
+
+    Uses RAG (Retrieval-Augmented Generation) to search the vault for relevant
+    content, then synthesizes an answer with inline [[note-title]] citations.
+
+    Args:
+        question: Natural language question to answer
+        top_k: Number of chunks to retrieve for context (default 8)
+        workspace: Optional vault subdirectory prefix to restrict
+            results (e.g. "work/nyk-europe-azure")
+    """
+    from .ask import ask_vault
+
+    result = ask_vault(
+        question=question,
+        top_k=top_k,
+        embed_url=EMBED_URL,
+        workspace=workspace,
+    )
+    return json.dumps(result, indent=2)
+
+
 def _search_memories_for_results(query: str, workspace: str = None, limit: int = 3) -> list[dict]:
     """Search memories and return compact results for inclusion in vault_search."""
     try:
@@ -206,6 +234,26 @@ def vault_graph(note: str, depth: int = 1, workspace: str = None) -> str:
         "neighbor_count": len(result.neighbors),
     }
     return json.dumps(output, indent=2)
+
+
+@mcp.tool()
+def vault_related(note: str, top_k: int = 10, workspace: str = None) -> str:
+    """Find semantically related notes using embedding similarity.
+
+    Unlike vault_graph (which follows explicit wiki-links), this discovers
+    connections based on semantic content similarity - notes that discuss
+    similar topics even if not explicitly linked.
+
+    Args:
+        note: Note path (e.g. "research/predictive-coding.md")
+        top_k: Number of related notes to return (default 10)
+        workspace: Optional vault subdirectory prefix to restrict
+            results (e.g. "work/nyk-europe-azure")
+    """
+    from .related import find_related
+
+    results = find_related(note_path=note, top_k=top_k, workspace=workspace)
+    return json.dumps(results, indent=2)
 
 
 @mcp.tool()
@@ -602,6 +650,30 @@ def vault_harvest(sessions: int = 1, dry_run: bool = False) -> str:
         embed_url=EMBED_URL,
     )
     return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
+def vault_capture(
+    content: str,
+    tags: list[str] = None,
+) -> str:
+    """Quick-capture a thought into the vault inbox.
+
+    Zero-friction way to dump a thought without creating a full note.
+    Creates a timestamped markdown file in the vault's inbox/ folder.
+
+    Args:
+        content: The thought or idea to capture
+        tags: Optional tags for the capture (e.g. ["idea", "research"])
+    """
+    from .capture import capture_thought
+
+    result = capture_thought(
+        content=content,
+        vault_root=str(VAULT_ROOT),
+        tags=tags,
+    )
+    return json.dumps(result, indent=2)
 
 
 if __name__ == "__main__":

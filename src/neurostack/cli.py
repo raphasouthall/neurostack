@@ -75,6 +75,25 @@ def cmd_search(args):
         print(f"   Snippet: {r.snippet[:200]}")
 
 
+def cmd_ask(args):
+    from .ask import ask_vault
+    result = ask_vault(
+        question=args.question,
+        top_k=args.top_k,
+        embed_url=args.embed_url,
+        llm_url=args.summarize_url,
+        workspace=_get_workspace(args),
+    )
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    print(f"\n{result['answer']}\n")
+    if result['sources']:
+        print("Sources:")
+        for s in result['sources']:
+            print(f"  - {s['title']} ({s['path']})")
+
+
 def cmd_summary(args):
     from .schema import DB_PATH, get_db
     conn = get_db(DB_PATH)
@@ -173,6 +192,26 @@ def cmd_graph(args):
                 print(f"     {n.summary[:100]}")
 
 
+def cmd_related(args):
+    from .related import find_related
+    results = find_related(
+        note_path=args.note,
+        top_k=args.top_k,
+        workspace=_get_workspace(args),
+    )
+    if args.json:
+        print(json.dumps(results, indent=2))
+        return
+    if not results:
+        print("No related notes found.")
+        return
+    for r in results:
+        print(f"\n  {r['title']} ({r['path']})")
+        print(f"    Similarity: {r['score']:.4f}")
+        if r.get('summary'):
+            print(f"    Summary: {r['summary'][:200]}")
+
+
 def cmd_brief(args):
     from .brief import generate_brief
     brief = generate_brief(vault_root=Path(args.vault), workspace=_get_workspace(args))
@@ -180,6 +219,19 @@ def cmd_brief(args):
         print(json.dumps({"brief": brief}, indent=2, default=str))
         return
     print(brief)
+
+
+def cmd_capture(args):
+    from .capture import capture_thought
+    result = capture_thought(
+        content=args.content,
+        vault_root=args.vault,
+        tags=args.tags.split(",") if args.tags else None,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+    print(f"  Captured to: {result['path']}")
 
 
 def cmd_triples(args):
@@ -2222,6 +2274,18 @@ def main():
     )
     p.set_defaults(func=cmd_search)
 
+    # ask
+    p = sub.add_parser("ask", help="Ask a question using vault content (RAG)")
+    p.add_argument("question", help="Natural language question")
+    p.add_argument("--top-k", type=int, default=8, help="Number of chunks to retrieve for context")
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict results to vault subdirectory "
+        "(e.g. 'work/nyk-europe-azure'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
+    )
+    p.set_defaults(func=cmd_ask)
+
     # summary
     p = sub.add_parser("summary", help="Get note summary")
     p.add_argument("path_or_query", help="Note path or search query")
@@ -2238,6 +2302,18 @@ def main():
         "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_graph)
+
+    # related
+    p = sub.add_parser("related", help="Find semantically related notes")
+    p.add_argument("note", help="Note path to find related notes for")
+    p.add_argument("--top-k", type=int, default=10)
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict results to vault subdirectory "
+        "(e.g. 'work/nyk-europe-azure'). "
+        "Also reads NEUROSTACK_WORKSPACE env var",
+    )
+    p.set_defaults(func=cmd_related)
 
     # triples
     p = sub.add_parser("triples", help="Search knowledge graph triples")
@@ -2325,6 +2401,12 @@ def main():
         "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_brief)
+
+    # capture
+    p = sub.add_parser("capture", help="Quick-capture a thought into the vault inbox")
+    p.add_argument("content", help="The thought to capture")
+    p.add_argument("--tags", "-t", help="Comma-separated tags")
+    p.set_defaults(func=cmd_capture)
 
     # folder-summaries
     p = sub.add_parser(
