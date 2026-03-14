@@ -10,7 +10,7 @@
 
 NeuroStack helps you start and grow a personal knowledge base — whether you have thousands of notes or none at all. It scaffolds a vault, indexes everything by meaning, surfaces what needs attention, and gives your AI tools long-term memory. It works with **any AI provider** — use it as an [MCP server](https://modelcontextprotocol.io), as a [CLI tool alongside Claude](https://docs.anthropic.com/en/docs/claude-code/cli-usage), or pipe its output into any LLM workflow. Everything runs locally. Your notes never leave your machine.
 
-## Get started in 30 seconds
+## Get started
 
 ```bash
 npm install -g neurostack
