@@ -11,8 +11,10 @@ import httpx
 from .config import get_config
 from .search import hybrid_search
 
-ASK_PROMPT = """You are a knowledge assistant answering questions using the provided vault notes.
-Use ONLY the information from the sources below to answer. If the answer is not in the sources, say so.
+ASK_PROMPT = """You are a knowledge assistant answering questions \
+using the provided vault notes.
+Use ONLY the information from the sources below to answer. \
+If the answer is not in the sources, say so.
 Cite sources inline using [[note-title]] format.
 
 Sources:
