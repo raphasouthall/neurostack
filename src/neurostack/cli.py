@@ -1925,6 +1925,46 @@ def cmd_memories(args):
         print("       neurostack memories --help")
 
 
+def cmd_harvest(args):
+    """Extract insights from recent Claude Code sessions."""
+    from .harvest import harvest_sessions
+
+    result = harvest_sessions(
+        n_sessions=args.sessions,
+        dry_run=args.dry_run,
+        embed_url=args.embed_url,
+    )
+
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+        return
+
+    if "error" in result:
+        print(f"  Error: {result['error']}")
+        return
+
+    mode = "DRY RUN" if result.get("dry_run") else "Harvest"
+    print(f"\n  {mode} - scanned {result['sessions_scanned']} session(s)\n")
+
+    if result["counts"]:
+        print("  Counts by type:")
+        for etype, count in sorted(result["counts"].items()):
+            print(f"    {etype}: {count}")
+        print()
+
+    for item in result["saved"]:
+        mid = item.get("memory_id", "-")
+        print(f"  \033[32m+\033[0m [{item['entity_type']}] #{mid} {item['content'][:80]}")
+        if item.get("tags"):
+            print(f"    tags: {', '.join(item['tags'])}")
+
+    for item in result["skipped"]:
+        print(f"  \033[33m-\033[0m [{item['entity_type']}] {item.get('status', 'skipped')}: {item['content'][:60]}")
+
+    total = len(result["saved"]) + len(result["skipped"])
+    print(f"\n  Total: {len(result['saved'])} saved, {len(result['skipped'])} skipped ({total} insights found)")
+
+
 def main():
     cfg = get_config()
 
@@ -2229,6 +2269,13 @@ def main():
         "note_paths", nargs="+", help="Note paths to mark as used"
     )
     p.set_defaults(func=cmd_record_usage)
+
+    # harvest
+    p = sub.add_parser("harvest", help="Extract insights from recent Claude Code sessions")
+    p.add_argument("--sessions", type=int, default=1, help="Number of recent sessions to harvest (default: 1)")
+    p.add_argument("--dry-run", "-n", action="store_true", help="Show what would be saved without saving")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.set_defaults(func=cmd_harvest)
 
     # watch
     p = sub.add_parser("watch", help="Watch vault for changes")
