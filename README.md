@@ -143,6 +143,27 @@ NeuroStack's tiered retrieval sends your AI only what it needs:
 
 Compared to naive RAG (dumping full document chunks at ~750 tokens each), NeuroStack uses **96% fewer tokens** per query. That means lower API costs, faster responses, and more of your AI's attention on actually answering your question instead of processing background noise.
 
+## Agent memories
+
+Your AI can write back short-lived memories — observations, decisions, conventions, bugs — that surface automatically in future `vault_search` results. Unlike vault notes, memories are lightweight and can expire.
+
+**MCP tools:** `vault_remember`, `vault_forget`, `vault_memories`
+
+```bash
+# CLI
+neurostack memories add "deployment requires VPN" --type convention
+neurostack memories add "auth token expires in 1h" --type observation --ttl 7d
+neurostack memories search "deployment"
+neurostack memories list
+neurostack memories forget <id>
+neurostack memories prune              # Remove expired memories
+neurostack memories stats
+```
+
+**Entity types:** `observation`, `decision`, `convention`, `learning`, `context`, `bug`
+
+Memories with a `--ttl` auto-expire after the given duration. Without TTL, they persist until explicitly forgotten or pruned.
+
 ## Features at a glance
 
 | Feature | Lite (no GPU) | Full (local AI) |
@@ -223,6 +244,8 @@ neurostack scaffold researcher      # Apply a profession pack to existing vault
 neurostack scaffold --list          # List available profession packs
 neurostack index                    # Build the knowledge graph
 neurostack search "query"           # Search by meaning or keywords
+neurostack search -w "work/" "query"  # Search scoped to a workspace path
+neurostack memories list              # List agent write-back memories
 neurostack graph "note.md"          # See a note's connections
 neurostack prediction-errors        # Find stale or misleading notes
 neurostack communities query "topic"  # Explore topic clusters
@@ -248,6 +271,12 @@ neurostack backfill [summaries|triples|all]  # Fill gaps in AI-generated data
 neurostack reembed-chunks           # Re-embed all chunks
 neurostack folder-summaries         # Build folder-level context summaries
 neurostack sessions search "query"  # Search session transcripts
+neurostack memories add "text" --type observation  # Store a memory
+neurostack memories search "query"  # Search memories
+neurostack memories list            # List all memories
+neurostack memories forget <id>     # Remove a memory
+neurostack memories prune           # Remove expired memories
+neurostack memories stats           # Memory store overview
 neurostack demo                     # Interactive demo with sample vault
 neurostack status                   # Overview of your vault and config
 ```
@@ -287,6 +316,13 @@ The CLI outputs plain text — pipe it into any AI tool or workflow:
 # See: https://docs.anthropic.com/en/docs/claude-code/cli-usage
 neurostack search "deployment checklist"
 
+# JSON output for scripting — all query commands support --json
+neurostack --json search "query" | jq '.[] | .title'
+
+# Scope to a workspace path (or set NEUROSTACK_WORKSPACE env var)
+neurostack search -w "work/" "deployment"
+export NEUROSTACK_WORKSPACE=work/my-project
+
 # Pipe into any LLM
 neurostack search "project architecture" | llm "summarize these notes"
 
@@ -296,7 +332,7 @@ echo "$CONTEXT" | your-preferred-ai-tool
 ```
 
 <details>
-<summary><strong>All 9 MCP tools</strong></summary>
+<summary><strong>All 12 MCP tools</strong></summary>
 
 | Tool | What it does |
 |------|-------------|
@@ -308,6 +344,9 @@ echo "$CONTEXT" | your-preferred-ai-tool
 | `vault_stats` | Check the health of your index |
 | `vault_record_usage` | Track which notes are "hot" (recently accessed) |
 | `vault_prediction_errors` | Surface notes that need review |
+| `vault_remember` | Store a memory (observation, decision, convention, learning, context, or bug) |
+| `vault_forget` | Remove a memory by ID |
+| `vault_memories` | List or search stored memories |
 | `session_brief` | Get a compact briefing when starting a new session |
 
 </details>
@@ -338,7 +377,7 @@ Every setting has a `NEUROSTACK_*` env var override.
     sessions.db                      # Session transcript index
 ```
 
-NeuroStack is **read-only** — it indexes your vault but never modifies your files.
+NeuroStack **never modifies your vault files**. All data (indexes, memories, sessions) lives in its own databases.
 
 ## Requirements
 
