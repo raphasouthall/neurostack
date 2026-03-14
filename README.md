@@ -120,11 +120,16 @@ Each pack adds:
 - **Extra directories** — folder structure tailored to the workflow
 - **CLAUDE.md guidance** — workflow instructions for your AI assistant
 
-| Pack | Templates | Seed Notes | Extra Dirs |
-|------|-----------|------------|------------|
-| **researcher** | synthesis-note, experiment-log, method-note, paper-project | systematic reviews, reproducibility, effect sizes, citation networks, scoping reviews, data management | `research/methods/`, `literature/sources/`, `experiments/logs/` |
+| Pack | Description | Templates | Seed Notes |
+|------|-------------|-----------|------------|
+| **researcher** | Academic or independent researcher — literature reviews, experiments, thesis work | synthesis-note, experiment-log, method-note, paper-project | 6 |
+| **developer** | Software developer or engineer — architecture decisions, code reviews, debugging | architecture-decision, code-review-note, debugging-log, technical-spec | 6 |
+| **writer** | Writer or content creator — fiction, articles, worldbuilding, craft notes | article-draft, character-profile, story-outline, world-building-note | 5 |
+| **student** | Student or lifelong learner — lectures, study guides, courses, exam prep | assignment-tracker, course-overview, lecture-note, study-guide | 5 |
+| **devops** | DevOps engineer or SRE — runbooks, incidents, infrastructure, change management | change-request, incident-report, infrastructure-note, runbook | 6 |
+| **data-scientist** | Data scientist or ML engineer — analyses, models, datasets, experiment tracking | analysis-note, dataset-note, model-card, pipeline-note | 6 |
 
-More packs coming — contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions of new profession packs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Token economy
 

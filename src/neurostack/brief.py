@@ -18,18 +18,31 @@ EXTERNAL_MEMORY_DB = Path(os.environ.get(
 ))
 
 
-def get_recent_vault_changes(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
+def get_recent_vault_changes(conn: sqlite3.Connection, limit: int = 10, workspace: str = None) -> list[dict]:
     """Get recently modified notes with summaries."""
-    rows = conn.execute(
-        """
-        SELECT n.path, n.title, s.summary_text, n.updated_at
-        FROM notes n
-        LEFT JOIN summaries s ON s.note_path = n.path
-        ORDER BY n.updated_at DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+    if workspace:
+        rows = conn.execute(
+            """
+            SELECT n.path, n.title, s.summary_text, n.updated_at
+            FROM notes n
+            LEFT JOIN summaries s ON s.note_path = n.path
+            WHERE n.path LIKE ?
+            ORDER BY n.updated_at DESC
+            LIMIT ?
+            """,
+            (workspace + "%", limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT n.path, n.title, s.summary_text, n.updated_at
+            FROM notes n
+            LEFT JOIN summaries s ON s.note_path = n.path
+            ORDER BY n.updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -73,26 +86,52 @@ def get_external_memories(limit: int = 5) -> list[dict]:
         return []
 
 
-def get_top_notes(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
+def get_top_notes(conn: sqlite3.Connection, limit: int = 5, workspace: str = None) -> list[dict]:
     """Get top notes by PageRank."""
-    rows = conn.execute(
-        """
-        SELECT gs.note_path, n.title, gs.pagerank, gs.in_degree
-        FROM graph_stats gs
-        JOIN notes n ON n.path = gs.note_path
-        ORDER BY gs.pagerank DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+    if workspace:
+        rows = conn.execute(
+            """
+            SELECT gs.note_path, n.title, gs.pagerank, gs.in_degree
+            FROM graph_stats gs
+            JOIN notes n ON n.path = gs.note_path
+            WHERE gs.note_path LIKE ?
+            ORDER BY gs.pagerank DESC
+            LIMIT ?
+            """,
+            (workspace + "%", limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT gs.note_path, n.title, gs.pagerank, gs.in_degree
+            FROM graph_stats gs
+            JOIN notes n ON n.path = gs.note_path
+            ORDER BY gs.pagerank DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
-def generate_brief(vault_root: Path = None) -> str:
-    """Generate a compact session brief."""
+def generate_brief(vault_root: Path = None, workspace: str = None) -> str:
+    """Generate a compact session brief.
+
+    Args:
+        vault_root: Path to the vault root directory.
+        workspace: Optional vault subdirectory prefix to restrict results.
+    """
     if vault_root is None:
         vault_root = get_config().vault_root
     conn = get_db(DB_PATH)
+
+    # Normalize workspace
+    ws = None
+    if workspace:
+        ws = workspace.strip("/")
+        if not ws:
+            ws = None
+    ws_prefix = ws + "/" if ws else None
 
     now = datetime.now()
     hour = now.hour
@@ -105,22 +144,38 @@ def generate_brief(vault_root: Path = None) -> str:
     else:
         time_ctx = "night"
 
-    parts = [f"## Session Brief ({now.strftime('%Y-%m-%d %H:%M')}, {time_ctx})\n"]
+    ws_label = f" [{ws}]" if ws else ""
+    parts = [f"## Session Brief ({now.strftime('%Y-%m-%d %H:%M')}, {time_ctx}){ws_label}\n"]
 
     # Vault stats
-    note_count = conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"]
-    chunk_count = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
-    summary_count = conn.execute("SELECT COUNT(*) as c FROM summaries").fetchone()["c"]
-    embedded_count = conn.execute(
-        "SELECT COUNT(*) as c FROM chunks WHERE embedding IS NOT NULL"
-    ).fetchone()["c"]
+    if ws_prefix:
+        note_count = conn.execute(
+            "SELECT COUNT(*) as c FROM notes WHERE path LIKE ?", (ws_prefix + "%",)
+        ).fetchone()["c"]
+        chunk_count = conn.execute(
+            "SELECT COUNT(*) as c FROM chunks WHERE note_path LIKE ?", (ws_prefix + "%",)
+        ).fetchone()["c"]
+        summary_count = conn.execute(
+            "SELECT COUNT(*) as c FROM summaries WHERE note_path LIKE ?", (ws_prefix + "%",)
+        ).fetchone()["c"]
+        embedded_count = conn.execute(
+            "SELECT COUNT(*) as c FROM chunks WHERE embedding IS NOT NULL AND note_path LIKE ?",
+            (ws_prefix + "%",),
+        ).fetchone()["c"]
+    else:
+        note_count = conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"]
+        chunk_count = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
+        summary_count = conn.execute("SELECT COUNT(*) as c FROM summaries").fetchone()["c"]
+        embedded_count = conn.execute(
+            "SELECT COUNT(*) as c FROM chunks WHERE embedding IS NOT NULL"
+        ).fetchone()["c"]
     parts.append(
         f"**Vault:** {note_count} notes, {chunk_count} chunks, "
         f"{embedded_count} embedded, {summary_count} summarized\n"
     )
 
     # Recent changes
-    changes = get_recent_vault_changes(conn, limit=5)
+    changes = get_recent_vault_changes(conn, limit=5, workspace=ws_prefix)
     if changes:
         parts.append("**Recent changes:**")
         for c in changes:
@@ -149,7 +204,7 @@ def generate_brief(vault_root: Path = None) -> str:
         parts.append("")
 
     # Top connected notes
-    top = get_top_notes(conn, limit=5)
+    top = get_top_notes(conn, limit=5, workspace=ws_prefix)
     if top:
         parts.append("**Most connected notes:**")
         for t in top:

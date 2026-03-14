@@ -29,6 +29,7 @@ def test_schema_creation(in_memory_db):
         "folder_summaries",
         "note_usage",
         "prediction_errors",
+        "memories",
     }
     assert expected.issubset(tables)
 
@@ -49,6 +50,7 @@ def test_fts_virtual_tables(in_memory_db):
     }
     assert "chunks_fts" in tables
     assert "triples_fts" in tables
+    assert "memories_fts" in tables
 
 
 def test_fts_sync_trigger_insert(in_memory_db):

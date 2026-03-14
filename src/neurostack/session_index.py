@@ -328,6 +328,21 @@ def cmd_search(args):
         params,
     ).fetchall()
 
+    if getattr(args, "json", False):
+        output = []
+        for row in rows:
+            output.append({
+                "session_id": row["session_id"],
+                "slug": row["slug"] or "",
+                "role": row["role"],
+                "timestamp": row["timestamp"],
+                "tool_name": row["tool_name"] or None,
+                "content": row["content"],
+                "cwd": row["cwd"] or "",
+            })
+        print(json.dumps(output, indent=2, default=str))
+        return
+
     if not rows:
         print("No results found.")
         return
@@ -404,6 +419,29 @@ def cmd_context(args):
     sess = conn.execute(
         "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
     ).fetchone()
+
+    if getattr(args, "json", False):
+        messages = []
+        for i in range(start, end):
+            r = rows[i]
+            messages.append({
+                "role": r["role"],
+                "timestamp": r["timestamp"],
+                "tool_name": r["tool_name"] or None,
+                "content": r["content"],
+                "is_match": i == target_idx,
+            })
+        output = {
+            "session_id": session_id,
+            "slug": sess["slug"] or "",
+            "cwd": sess["cwd"] or "",
+            "first_ts": sess["first_ts"],
+            "last_ts": sess["last_ts"],
+            "messages": messages,
+        }
+        print(json.dumps(output, indent=2, default=str))
+        return
+
     print(f"\033[1mSession:\033[0m {session_id} ({sess['slug'] or '?'})")
     print(f"\033[1mCwd:\033[0m {sess['cwd'] or '?'}")
     first = sess['first_ts'][:16] if sess['first_ts'] else '?'
@@ -441,6 +479,21 @@ def cmd_stats(args):
     ).fetchall()
 
     db_size = DB_PATH.stat().st_size / (1024 * 1024) if DB_PATH.exists() else 0
+
+    if getattr(args, "json", False):
+        output = {
+            "db_path": str(DB_PATH),
+            "db_size_mb": round(db_size, 1),
+            "sessions": sessions,
+            "messages": messages,
+            "by_role": {r["role"]: r["c"] for r in by_role},
+            "recent_sessions": [
+                {"session_id": r["session_id"], "slug": r["slug"] or "", "last_ts": r["last_ts"]}
+                for r in latest
+            ],
+        }
+        print(json.dumps(output, indent=2, default=str))
+        return
 
     print(f"Database: {DB_PATH} ({db_size:.1f} MB)")
     print(f"Sessions: {sessions}")
@@ -480,6 +533,20 @@ def cmd_sessions(args):
         params,
     ).fetchall()
 
+    if getattr(args, "json", False):
+        output = []
+        for r in rows:
+            output.append({
+                "session_id": r["session_id"],
+                "slug": r["slug"] or "",
+                "cwd": r["cwd"] or "",
+                "first_ts": r["first_ts"],
+                "last_ts": r["last_ts"],
+                "msg_count": r["msg_count"],
+            })
+        print(json.dumps(output, indent=2, default=str))
+        return
+
     for r in rows:
         date = r["first_ts"][:16] if r["first_ts"] else "?"
         slug = r["slug"] or ""
@@ -496,6 +563,7 @@ def main():
         prog="session-index",
         description="FTS5 search over Claude Code session transcripts",
     )
+    parser.add_argument("--json", action="store_true", default=False, help="Output results as JSON")
     sub = parser.add_subparsers(dest="command")
 
     # index
