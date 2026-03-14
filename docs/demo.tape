@@ -11,7 +11,7 @@ Set FontSize 16
 Set Width 1200
 Set Height 700
 Set Padding 20
-Set TypingSpeed 40ms
+Set TypingSpeed 60ms
 Set Theme "Catppuccin Mocha"
 Set WindowBar Colorful
 Set WindowBarSize 40
@@ -31,25 +31,25 @@ Sleep 500ms
 Show
 
 # --- Scene 1: Stats — show the vault at a glance ---
-Sleep 500ms
+Sleep 750ms
 Type "neurostack stats"
 Enter
-Sleep 3s
+Sleep 4500ms
 
 # --- Scene 2: Search — find notes by keyword ---
 Type "neurostack search 'spaced repetition'"
 Enter
-Sleep 4s
+Sleep 6s
 
 # --- Scene 3: Graph — explore connections ---
 Type "neurostack graph research/memory-consolidation.md"
 Enter
-Sleep 4s
+Sleep 6s
 
 # --- Scene 4: Brief — morning briefing ---
 Type "neurostack brief"
 Enter
-Sleep 5s
+Sleep 7500ms
 
 # --- End ---
-Sleep 2s
+Sleep 3s
