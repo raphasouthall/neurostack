@@ -6,12 +6,9 @@ on:
     paths:
       - 'docs-site/**'
       - '.github/workflows/deploy-docs.yml'
-  release:
-    types: [published]
 
-  # Note: release events checkout the tag ref, not a branch.
-  # The github-pages environment requires a branch ref, so
-  # the deploy job must explicitly target main.
+  # Release deploys are handled by the push-to-main trigger.
+  # Release events use tag refs which github-pages environment rejects.
   workflow_dispatch:
 
 permissions:
