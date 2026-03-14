@@ -116,6 +116,7 @@ def global_query(
     embed_url: str = EMBED_URL,
     summarize_url: str = SUMMARIZE_URL,
     model: str = SUMMARIZE_MODEL,
+    workspace: str = None,
 ) -> dict:
     """Answer a global query using community summaries (GraphRAG global search).
 
@@ -124,6 +125,7 @@ def global_query(
         top_k: Number of communities to retrieve
         level: Community hierarchy level (0=coarse, 1=fine)
         use_map_reduce: Use LLM map-reduce synthesis (True) or return raw hits (False)
+        workspace: Optional vault subdirectory prefix to restrict results
 
     Returns dict: {answer, communities_used, community_hits}
     """
@@ -131,9 +133,43 @@ def global_query(
         conn = get_db(DB_PATH)
 
     # Try requested level first, fall back to any level
-    hits = search_communities(query, top_k=top_k, level=level, conn=conn, embed_url=embed_url)
+    # Over-fetch when workspace filtering to compensate for post-filter losses
+    fetch_k = top_k * 3 if workspace else top_k
+    hits = search_communities(query, top_k=fetch_k, level=level, conn=conn, embed_url=embed_url)
     if not hits:
-        hits = search_communities(query, top_k=top_k, level=None, conn=conn, embed_url=embed_url)
+        hits = search_communities(query, top_k=fetch_k, level=None, conn=conn, embed_url=embed_url)
+
+    # Workspace filtering: keep only communities whose member entities appear
+    # in triples from notes within the workspace prefix.
+    if workspace and hits:
+        from .search import _normalize_workspace
+        ws = _normalize_workspace(workspace)
+        if ws:
+            ws_prefix = ws + "/"
+            filtered = []
+            for hit in hits:
+                # Check if any community member entity exists in triples from workspace notes
+                members = conn.execute(
+                    "SELECT entity FROM community_members WHERE community_id = ?",
+                    (hit["community_id"],),
+                ).fetchall()
+                member_entities = {m["entity"] for m in members}
+                if member_entities:
+                    placeholders = ",".join("?" * len(member_entities))
+                    match = conn.execute(
+                        f"""SELECT 1 FROM triples
+                            WHERE (subject IN ({placeholders}) OR object IN ({placeholders}))
+                              AND note_path LIKE ?
+                            LIMIT 1""",
+                        list(member_entities) + list(member_entities) + [ws_prefix + "%"],
+                    ).fetchone()
+                    if match:
+                        filtered.append(hit)
+            hits = filtered[:top_k]
+        else:
+            hits = hits[:top_k]
+    else:
+        hits = hits[:top_k]
 
     if not hits:
         return {

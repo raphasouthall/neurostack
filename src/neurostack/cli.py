@@ -31,6 +31,14 @@ def cmd_index(args):
     print(f"Indexed {notes} notes, {chunks} chunks, {edges} graph edges.")
 
 
+def _get_workspace(args) -> str | None:
+    """Get workspace from args or NEUROSTACK_WORKSPACE env var."""
+    ws = getattr(args, "workspace", None)
+    if not ws:
+        ws = os.environ.get("NEUROSTACK_WORKSPACE")
+    return ws or None
+
+
 def cmd_search(args):
     from .search import hybrid_search
     results = hybrid_search(
@@ -40,7 +48,23 @@ def cmd_search(args):
         embed_url=args.embed_url,
         context=args.context,
         rerank=args.rerank,
+        workspace=_get_workspace(args),
     )
+    if args.json:
+        output = []
+        for r in results:
+            entry = {
+                "path": r.note_path,
+                "title": r.title,
+                "section": r.heading_path,
+                "score": round(r.score, 4),
+                "snippet": r.snippet,
+            }
+            if r.summary:
+                entry["summary"] = r.summary
+            output.append(entry)
+        print(json.dumps(output, indent=2, default=str))
+        return
     for r in results:
         print(f"\n{'='*60}")
         print(f"📄 {r.title} ({r.note_path})")
@@ -57,12 +81,21 @@ def cmd_summary(args):
 
     # Try as path first
     row = conn.execute(
-        "SELECT n.title, n.frontmatter, s.summary_text FROM notes n "
+        "SELECT n.path, n.title, n.frontmatter, s.summary_text FROM notes n "
         "LEFT JOIN summaries s ON s.note_path = n.path WHERE n.path = ?",
         (args.path_or_query,),
     ).fetchone()
 
     if row:
+        if args.json:
+            output = {
+                "path": row["path"],
+                "title": row["title"],
+                "frontmatter": json.loads(row["frontmatter"]) if row["frontmatter"] else {},
+                "summary": row["summary_text"] or "(not yet generated)",
+            }
+            print(json.dumps(output, indent=2, default=str))
+            return
         print(f"Title: {row['title']}")
         print(f"Frontmatter: {row['frontmatter']}")
         print(f"Summary: {row['summary_text'] or '(not yet generated)'}")
@@ -72,18 +105,60 @@ def cmd_summary(args):
         results = hybrid_search(args.path_or_query, top_k=1, embed_url=args.embed_url)
         if results:
             r = results[0]
+            if args.json:
+                output = {
+                    "path": r.note_path,
+                    "title": r.title,
+                    "summary": r.summary or "(not yet generated)",
+                }
+                print(json.dumps(output, indent=2, default=str))
+                return
             print(f"Title: {r.title} ({r.note_path})")
             print(f"Summary: {r.summary or '(not yet generated)'}")
         else:
+            if args.json:
+                print(json.dumps({"error": "Note not found"}, indent=2, default=str))
+                return
             print("No matching note found.")
 
 
 def cmd_graph(args):
     from .graph import get_neighborhood
+    from .search import _normalize_workspace
     result = get_neighborhood(args.note, depth=args.depth)
+    ws = _normalize_workspace(_get_workspace(args))
+    if result and ws:
+        result.neighbors = [
+            n for n in result.neighbors
+            if n.path.startswith(ws + "/")
+        ]
     if not result:
+        if args.json:
+            print(json.dumps({"error": f"Note not found: {args.note}"}, indent=2, default=str))
+            return
         print(f"Note not found: {args.note}")
         return
+
+    if args.json:
+        def node_to_dict(n):
+            d = {
+                "path": n.path,
+                "title": n.title,
+                "pagerank": round(n.pagerank, 4),
+                "in_degree": n.in_degree,
+                "out_degree": n.out_degree,
+            }
+            if n.summary:
+                d["summary"] = n.summary
+            return d
+        output = {
+            "center": node_to_dict(result.center),
+            "neighbors": [node_to_dict(n) for n in result.neighbors],
+            "neighbor_count": len(result.neighbors),
+        }
+        print(json.dumps(output, indent=2, default=str))
+        return
+
     c = result.center
     print(f"\n📌 {c.title} ({c.path})")
     print(f"   PageRank: {c.pagerank:.4f} | In: {c.in_degree} | Out: {c.out_degree}")
@@ -100,7 +175,11 @@ def cmd_graph(args):
 
 def cmd_brief(args):
     from .brief import generate_brief
-    print(generate_brief(vault_root=Path(args.vault)))
+    brief = generate_brief(vault_root=Path(args.vault), workspace=_get_workspace(args))
+    if args.json:
+        print(json.dumps({"brief": brief}, indent=2, default=str))
+        return
+    print(brief)
 
 
 def cmd_triples(args):
@@ -110,7 +189,21 @@ def cmd_triples(args):
         top_k=args.top_k,
         mode=args.mode,
         embed_url=args.embed_url,
+        workspace=_get_workspace(args),
     )
+    if args.json:
+        output = []
+        for t in results:
+            output.append({
+                "note": t.note_path,
+                "title": t.title,
+                "s": t.subject,
+                "p": t.predicate,
+                "o": t.object,
+                "score": round(t.score, 4),
+            })
+        print(json.dumps(output, indent=2, default=str))
+        return
     for t in results:
         print(f"  [{t.score:.3f}] {t.subject} | {t.predicate} | {t.object}")
         print(f"          from: {t.title} ({t.note_path})")
@@ -126,7 +219,11 @@ def cmd_tiered(args):
         embed_url=args.embed_url,
         context=getattr(args, "context", None),
         rerank=args.rerank,
+        workspace=_get_workspace(args),
     )
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+        return
     print(f"Depth used: {result['depth_used']}")
     if result["triples"]:
         print(f"\n--- Triples ({len(result['triples'])}) ---")
@@ -173,6 +270,13 @@ def cmd_communities(args):
         from .community import summarize_all_communities
         from .leiden import detect_communities
         n_coarse, n_fine = detect_communities()
+        if args.json:
+            summarize_all_communities(
+                summarize_url=args.summarize_url,
+                embed_url=args.embed_url,
+            )
+            print(json.dumps({"coarse": n_coarse, "fine": n_fine, "status": "done"}, indent=2, default=str))
+            return
         print(f"Detected {n_coarse} coarse communities, {n_fine} fine communities.")
         print("Generating LLM summaries (this may take a few minutes)...")
         summarize_all_communities(
@@ -189,7 +293,11 @@ def cmd_communities(args):
             use_map_reduce=not args.no_map_reduce,
             embed_url=args.embed_url,
             summarize_url=args.summarize_url,
+            workspace=_get_workspace(args),
         )
+        if args.json:
+            print(json.dumps(result, indent=2, default=str))
+            return
         print(f"\nCommunities used: {result['communities_used']}")
         print("\nTop communities:")
         for hit in result["community_hits"][:5]:
@@ -210,6 +318,18 @@ def cmd_communities(args):
             params.append(level_filter)
         q += " ORDER BY level, entity_count DESC"
         rows = conn.execute(q, params).fetchall()
+        if args.json:
+            output = []
+            for row in rows:
+                output.append({
+                    "community_id": row["community_id"],
+                    "level": row["level"],
+                    "title": row["title"] or None,
+                    "entity_count": row["entity_count"],
+                    "member_notes": row["member_notes"],
+                })
+            print(json.dumps(output, indent=2, default=str))
+            return
         if not rows:
             print("No communities found. Run: cli.py communities build")
         else:
@@ -319,6 +439,25 @@ def cmd_stats(args):
         "SELECT COUNT(DISTINCT note_path) as c FROM triples"
     ).fetchone()["c"]
 
+    if args.json:
+        embed_pct = embedded * 100 // max(chunks, 1)
+        sum_pct = summaries * 100 // max(notes, 1)
+        triple_pct = notes_with_triples * 100 // max(notes, 1)
+        output = {
+            "notes": notes,
+            "chunks": chunks,
+            "embedded": embedded,
+            "embedding_coverage": f"{embed_pct}%",
+            "summaries": summaries,
+            "summary_coverage": f"{sum_pct}%",
+            "graph_edges": edges,
+            "triples": total_triples,
+            "notes_with_triples": notes_with_triples,
+            "triple_coverage": f"{triple_pct}%",
+        }
+        print(json.dumps(output, indent=2, default=str))
+        return
+
     print(f"Notes:       {notes}")
     print(f"Chunks:      {chunks}")
     embed_pct = embedded * 100 // max(chunks, 1)
@@ -334,6 +473,7 @@ def cmd_stats(args):
 
 
 def cmd_prediction_errors(args):
+    from .search import _normalize_workspace
     from .schema import DB_PATH, get_db
     conn = get_db(DB_PATH)
 
@@ -348,6 +488,9 @@ def cmd_prediction_errors(args):
             paths,
         )
         conn.commit()
+        if args.json:
+            print(json.dumps({"resolved": len(paths), "paths": paths}, indent=2, default=str))
+            return
         print(f"Resolved {len(paths)} note(s).")
         return
 
@@ -356,6 +499,11 @@ def cmd_prediction_errors(args):
     if args.type:
         where += " AND error_type = ?"
         params.append(args.type)
+
+    ws = _normalize_workspace(_get_workspace(args))
+    if ws:
+        where += " AND note_path LIKE ? || '%'"
+        params.append(ws + "/")
 
     rows = conn.execute(
         f"""
@@ -373,9 +521,36 @@ def cmd_prediction_errors(args):
         params + [args.limit],
     ).fetchall()
 
+    total_where = "WHERE resolved_at IS NULL"
+    total_params = []
+    if ws:
+        total_where += " AND note_path LIKE ? || '%'"
+        total_params.append(ws + "/")
+
     total = conn.execute(
-        "SELECT COUNT(DISTINCT note_path) FROM prediction_errors WHERE resolved_at IS NULL"
+        f"SELECT COUNT(DISTINCT note_path) FROM prediction_errors {total_where}",
+        total_params,
     ).fetchone()[0]
+
+    if args.json:
+        errors = [
+            {
+                "note_path": r["note_path"],
+                "error_type": r["error_type"],
+                "context": r["context"],
+                "avg_cosine_distance": round(r["avg_distance"], 3),
+                "occurrences": r["occurrences"],
+                "last_seen": r["last_seen"],
+                "sample_query": r["sample_query"],
+            }
+            for r in rows
+        ]
+        print(json.dumps({
+            "total_flagged_notes": total,
+            "showing": len(errors),
+            "errors": errors,
+        }, indent=2, default=str))
+        return
 
     if not rows:
         print("No unresolved prediction errors.")
@@ -1060,6 +1235,20 @@ def cmd_doctor(args):
         ))
 
     # Print results
+    if args.json:
+        output = {
+            "checks": [
+                {"name": name, "status": status, "detail": detail}
+                for name, status, detail in checks
+            ],
+            "errors": sum(1 for _, s, _ in checks if s in ("ERROR", "MISSING")),
+            "warnings": sum(1 for _, s, _ in checks if s == "WARN"),
+        }
+        print(json.dumps(output, indent=2, default=str))
+        if output["errors"]:
+            sys.exit(1)
+        return
+
     print("\nNeuroStack Doctor\n" + "=" * 40)
     for name, status, detail in checks:
         icon = {"OK": "+", "WARN": "!", "ERROR": "X", "SKIP": "-", "MISSING": "X"}[status]
@@ -1233,13 +1422,38 @@ def cmd_sessions(args):
     """Search session transcripts."""
     from .session_index import main as session_main
     # Forward remaining args to session_index
-    sys.argv = ["neurostack-sessions"] + args.session_args
+    extra = args.session_args
+    if args.json and "--json" not in extra:
+        extra = ["--json"] + extra
+    sys.argv = ["neurostack-sessions"] + extra
     session_main()
 
 
 def cmd_status(args):
     """Show NeuroStack status overview."""
     cfg = get_config()
+
+    if args.json:
+        output = {
+            "version": __version__,
+            "vault_root": str(cfg.vault_root),
+            "db_path": str(cfg.db_path),
+            "config_path": str(CONFIG_PATH),
+            "initialized": cfg.db_path.exists(),
+        }
+        if cfg.db_path.exists():
+            import sqlite3
+            conn = sqlite3.connect(str(cfg.db_path))
+            conn.row_factory = sqlite3.Row
+            output["notes"] = conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"]
+            output["chunks"] = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
+            output["embedded"] = conn.execute(
+                "SELECT COUNT(*) as c FROM chunks WHERE embedding IS NOT NULL"
+            ).fetchone()["c"]
+            conn.close()
+            output["mode"] = "full" if output["embedded"] > 0 else "lite"
+        print(json.dumps(output, indent=2, default=str))
+        return
 
     print(f"NeuroStack v{__version__}")
     print(f"  Vault:    {cfg.vault_root}")
@@ -1266,6 +1480,156 @@ def cmd_status(args):
         print("  Status:   Not initialized. Run: neurostack init")
 
 
+def cmd_memories(args):
+    """Manage agent-written memories."""
+    from .memories import (
+        forget_memory,
+        get_memory_stats,
+        prune_memories,
+        save_memory,
+        search_memories,
+    )
+    from .schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    subcmd = getattr(args, "memories_command", None)
+
+    if subcmd == "add":
+        memory = save_memory(
+            conn,
+            content=args.content,
+            tags=args.tags.split(",") if args.tags else None,
+            entity_type=args.type,
+            source_agent=args.source or "cli",
+            workspace=_get_workspace(args) if hasattr(args, "workspace") else None,
+            ttl_hours=args.ttl,
+            embed_url=args.embed_url,
+        )
+        if args.json:
+            print(json.dumps({
+                "saved": True,
+                "memory_id": memory.memory_id,
+                "entity_type": memory.entity_type,
+                "created_at": memory.created_at,
+                "expires_at": memory.expires_at,
+            }, indent=2))
+        else:
+            print(f"  \033[32m✓\033[0m Saved memory #{memory.memory_id} ({memory.entity_type})")
+            if memory.expires_at:
+                print(f"    Expires: {memory.expires_at}")
+
+    elif subcmd == "search":
+        memories = search_memories(
+            conn,
+            query=args.query,
+            entity_type=args.type,
+            workspace=_get_workspace(args) if hasattr(args, "workspace") else None,
+            limit=args.limit,
+            embed_url=args.embed_url,
+        )
+        if args.json:
+            print(json.dumps([
+                {
+                    "memory_id": m.memory_id,
+                    "content": m.content,
+                    "entity_type": m.entity_type,
+                    "tags": m.tags,
+                    "source_agent": m.source_agent,
+                    "workspace": m.workspace,
+                    "created_at": m.created_at,
+                    "expires_at": m.expires_at,
+                    "score": round(m.score, 4) if m.score else None,
+                }
+                for m in memories
+            ], indent=2, default=str))
+        else:
+            if not memories:
+                print("  No memories found.")
+                return
+            for m in memories:
+                score_str = f" (score: {m.score:.4f})" if m.score else ""
+                print(f"\n  \033[1m#{m.memory_id}\033[0m [{m.entity_type}]{score_str}")
+                print(f"  {m.content}")
+                if m.tags:
+                    print(f"  Tags: {', '.join(m.tags)}")
+                if m.source_agent:
+                    print(f"  Source: {m.source_agent}")
+                if m.workspace:
+                    print(f"  Workspace: {m.workspace}")
+                print(f"  Created: {m.created_at}")
+                if m.expires_at:
+                    print(f"  Expires: {m.expires_at}")
+
+    elif subcmd == "list":
+        memories = search_memories(
+            conn,
+            entity_type=args.type,
+            workspace=_get_workspace(args) if hasattr(args, "workspace") else None,
+            limit=args.limit,
+        )
+        if args.json:
+            print(json.dumps([
+                {
+                    "memory_id": m.memory_id,
+                    "content": m.content,
+                    "entity_type": m.entity_type,
+                    "tags": m.tags,
+                    "source_agent": m.source_agent,
+                    "workspace": m.workspace,
+                    "created_at": m.created_at,
+                    "expires_at": m.expires_at,
+                }
+                for m in memories
+            ], indent=2, default=str))
+        else:
+            if not memories:
+                print("  No memories stored.")
+                return
+            for m in memories:
+                expire = f" [expires {m.expires_at}]" if m.expires_at else ""
+                src = f" ({m.source_agent})" if m.source_agent else ""
+                print(f"  #{m.memory_id:<4} [{m.entity_type}]{src}{expire}")
+                print(f"        {m.content[:120]}")
+
+    elif subcmd == "forget":
+        deleted = forget_memory(conn, args.id)
+        if args.json:
+            print(json.dumps({"deleted": deleted, "memory_id": args.id}))
+        else:
+            if deleted:
+                print(f"  \033[32m✓\033[0m Deleted memory #{args.id}")
+            else:
+                print(f"  \033[31m✗\033[0m Memory #{args.id} not found")
+
+    elif subcmd == "prune":
+        count = prune_memories(
+            conn,
+            older_than_days=args.older_than,
+            expired_only=args.expired,
+        )
+        if args.json:
+            print(json.dumps({"pruned": count}))
+        else:
+            print(f"  Pruned {count} memories.")
+
+    elif subcmd == "stats":
+        stats = get_memory_stats(conn)
+        if args.json:
+            print(json.dumps(stats, indent=2))
+        else:
+            print(f"  Total:    {stats['total']}")
+            print(f"  Embedded: {stats['embedded']}")
+            print(f"  Expired:  {stats['expired']}")
+            if stats["by_type"]:
+                print("  By type:")
+                for t, c in sorted(stats["by_type"].items()):
+                    print(f"    {t}: {c}")
+
+    else:
+        print("Usage: neurostack memories {add,search,list,forget,prune,stats}")
+        print("       neurostack memories --help")
+
+
 def main():
     cfg = get_config()
 
@@ -1273,6 +1637,7 @@ def main():
     parser.add_argument("--vault", default=str(cfg.vault_root), help="Vault root path")
     parser.add_argument("--embed-url", default=cfg.embed_url, help="Ollama embed URL")
     parser.add_argument("--summarize-url", default=cfg.llm_url, help="Ollama summarize URL")
+    parser.add_argument("--json", action="store_true", default=False, help="Output results as JSON")
 
     sub = parser.add_subparsers(dest="command")
 
@@ -1281,13 +1646,13 @@ def main():
     p.add_argument("path", nargs="?", help="Vault path (default: from config)")
     p.add_argument(
         "--profession", "-p",
-        help="Apply a profession pack (e.g., researcher). Use 'scaffold --list' to see options",
+        help="Apply a profession pack (e.g., developer, writer, student, devops, data-scientist, researcher). Use 'scaffold --list' to see all",
     )
     p.set_defaults(func=cmd_init)
 
     # scaffold
     p = sub.add_parser("scaffold", help="Apply a profession pack to an existing vault")
-    p.add_argument("profession", nargs="?", help="Profession name (e.g., researcher)")
+    p.add_argument("profession", nargs="?", help="Profession name (e.g., developer, writer, student, devops, data-scientist, researcher)")
     p.add_argument("--list", "-l", action="store_true", help="List available profession packs")
     p.set_defaults(func=cmd_scaffold)
 
@@ -1318,6 +1683,44 @@ def main():
     # status
     p = sub.add_parser("status", help="Show NeuroStack status")
     p.set_defaults(func=cmd_status)
+
+    # memories
+    p = sub.add_parser("memories", help="Manage agent-written memories")
+    mem_sub = p.add_subparsers(dest="memories_command")
+
+    mp = mem_sub.add_parser("add", help="Save a new memory")
+    mp.add_argument("content", help="Memory content")
+    mp.add_argument("--tags", "-t", help="Comma-separated tags")
+    mp.add_argument(
+        "--type", default="observation",
+        choices=["observation", "decision", "convention", "learning", "context", "bug"],
+        help="Memory type (default: observation)",
+    )
+    mp.add_argument("--source", help="Source agent name")
+    mp.add_argument("--workspace", "-w", help="Workspace scope")
+    mp.add_argument("--ttl", type=float, help="Time-to-live in hours")
+
+    mp = mem_sub.add_parser("search", help="Search memories")
+    mp.add_argument("query", help="Search query")
+    mp.add_argument("--type", help="Filter by entity type")
+    mp.add_argument("--workspace", "-w", help="Workspace scope")
+    mp.add_argument("--limit", type=int, default=20)
+
+    mp = mem_sub.add_parser("list", help="List recent memories")
+    mp.add_argument("--type", help="Filter by entity type")
+    mp.add_argument("--workspace", "-w", help="Workspace scope")
+    mp.add_argument("--limit", type=int, default=20)
+
+    mp = mem_sub.add_parser("forget", help="Delete a memory by ID")
+    mp.add_argument("id", type=int, help="Memory ID")
+
+    mp = mem_sub.add_parser("prune", help="Delete expired or old memories")
+    mp.add_argument("--older-than", type=int, help="Delete memories older than N days")
+    mp.add_argument("--expired", action="store_true", help="Delete only expired memories")
+
+    mp = mem_sub.add_parser("stats", help="Show memory statistics")
+
+    p.set_defaults(func=cmd_memories)
 
     # doctor
     p = sub.add_parser("doctor", help="Validate all subsystems")
@@ -1355,6 +1758,10 @@ def main():
         "--rerank", action="store_true", default=False,
         help="Apply cross-encoder reranking",
     )
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+    )
     p.set_defaults(func=cmd_search)
 
     # summary
@@ -1366,6 +1773,10 @@ def main():
     p = sub.add_parser("graph", help="Get note neighborhood")
     p.add_argument("note", help="Note path")
     p.add_argument("--depth", type=int, default=1)
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict neighbors to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+    )
     p.set_defaults(func=cmd_graph)
 
     # triples
@@ -1373,6 +1784,10 @@ def main():
     p.add_argument("query", help="Search query")
     p.add_argument("--top-k", type=int, default=10)
     p.add_argument("--mode", choices=["hybrid", "semantic", "keyword"], default="hybrid")
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+    )
     p.set_defaults(func=cmd_triples)
 
     # tiered
@@ -1388,6 +1803,10 @@ def main():
     p.add_argument(
         "--rerank", action="store_true", default=False,
         help="Apply cross-encoder reranking",
+    )
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_tiered)
 
@@ -1420,6 +1839,10 @@ def main():
         "--no-map-reduce", action="store_true",
         help="Return raw community hits without LLM synthesis",
     )
+    p_q.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+    )
 
     # communities list
     p_l = comm_sub.add_parser("list", help="List detected communities")
@@ -1429,6 +1852,10 @@ def main():
 
     # brief
     p = sub.add_parser("brief", help="Generate session brief")
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict brief to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+    )
     p.set_defaults(func=cmd_brief)
 
     # folder-summaries
@@ -1451,6 +1878,10 @@ def main():
     p.add_argument("--limit", type=int, default=30, help="Max results to show")
     p.add_argument("--resolve", nargs="+", metavar="NOTE_PATH",
                    help="Mark note(s) as resolved")
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict results to vault subdirectory (e.g. 'work/acme-cloud'). Also reads NEUROSTACK_WORKSPACE env var",
+    )
     p.set_defaults(func=cmd_prediction_errors)
 
     # stats

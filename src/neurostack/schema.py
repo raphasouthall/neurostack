@@ -14,7 +14,7 @@ _cfg = get_config()
 DB_DIR = _cfg.db_dir
 DB_PATH = _cfg.db_path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -181,6 +181,46 @@ CREATE INDEX IF NOT EXISTS idx_pred_errors_note ON prediction_errors(note_path);
 CREATE INDEX IF NOT EXISTS idx_pred_errors_type ON prediction_errors(error_type);
 CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved
     ON prediction_errors(resolved_at) WHERE resolved_at IS NULL;
+
+-- Agent-written memories (write-back layer)
+CREATE TABLE IF NOT EXISTS memories (
+    memory_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    tags JSON,
+    entity_type TEXT NOT NULL DEFAULT 'observation',
+    source_agent TEXT,
+    workspace TEXT,
+    embedding BLOB,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(entity_type);
+CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace);
+CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at)
+    WHERE expires_at IS NOT NULL;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    content,
+    content='memories',
+    content_rowid='memory_id'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, content) VALUES (new.memory_id, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, content)
+        VALUES('delete', old.memory_id, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, content)
+        VALUES('delete', old.memory_id, old.content);
+    INSERT INTO memories_fts(rowid, content)
+        VALUES (new.memory_id, new.content);
+END;
 """
 
 # Migration from v1 to v2: add triples tables
@@ -291,6 +331,49 @@ CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved
 """
 
 
+# Migration from v6 to v7: add memories table (agent write-back)
+MIGRATION_V7 = """
+CREATE TABLE IF NOT EXISTS memories (
+    memory_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    tags JSON,
+    entity_type TEXT NOT NULL DEFAULT 'observation',
+    source_agent TEXT,
+    workspace TEXT,
+    embedding BLOB,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(entity_type);
+CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace);
+CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at)
+    WHERE expires_at IS NOT NULL;
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    content,
+    content='memories',
+    content_rowid='memory_id'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, content) VALUES (new.memory_id, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, content)
+        VALUES('delete', old.memory_id, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, content)
+        VALUES('delete', old.memory_id, old.content);
+    INSERT INTO memories_fts(rowid, content)
+        VALUES (new.memory_id, new.content);
+END;
+"""
+
+
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
@@ -330,6 +413,13 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (6)")
         conn.commit()
         log.info("Migration to v6 complete.")
+
+    if current < 7:
+        log.info("Migrating schema v6 → v7: adding memories table...")
+        conn.executescript(MIGRATION_V7)
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (7)")
+        conn.commit()
+        log.info("Migration to v7 complete.")
 
 
 def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:

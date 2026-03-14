@@ -89,7 +89,15 @@ class TripleResult:
     title: str = ""
 
 
-def fts_search(conn: sqlite3.Connection, query: str, limit: int = 50) -> list[dict]:
+def _normalize_workspace(workspace: str | None) -> str | None:
+    """Normalize workspace path: strip leading/trailing slashes, return None if empty."""
+    if not workspace:
+        return None
+    workspace = workspace.strip("/")
+    return workspace if workspace else None
+
+
+def fts_search(conn: sqlite3.Connection, query: str, limit: int = 50, workspace: str | None = None) -> list[dict]:
     """Full-text search over chunks, returns chunk_ids and content."""
     # Escape FTS5 special characters (quote each token to prevent hyphen/dot/operator injection)
     safe_query = " ".join(
@@ -100,18 +108,34 @@ def fts_search(conn: sqlite3.Connection, query: str, limit: int = 50) -> list[di
     if not safe_query:
         return []
 
-    rows = conn.execute(
-        """
-        SELECT c.chunk_id, c.note_path, c.heading_path, c.content, c.embedding,
-               rank
-        FROM chunks_fts
-        JOIN chunks c ON c.chunk_id = chunks_fts.rowid
-        WHERE chunks_fts MATCH ?
-        ORDER BY rank
-        LIMIT ?
-        """,
-        (safe_query, limit),
-    ).fetchall()
+    workspace = _normalize_workspace(workspace)
+    if workspace:
+        rows = conn.execute(
+            """
+            SELECT c.chunk_id, c.note_path, c.heading_path, c.content, c.embedding,
+                   rank
+            FROM chunks_fts
+            JOIN chunks c ON c.chunk_id = chunks_fts.rowid
+            WHERE chunks_fts MATCH ?
+              AND c.note_path LIKE ? || '%'
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (safe_query, workspace + "/", limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT c.chunk_id, c.note_path, c.heading_path, c.content, c.embedding,
+                   rank
+            FROM chunks_fts
+            JOIN chunks c ON c.chunk_id = chunks_fts.rowid
+            WHERE chunks_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (safe_query, limit),
+        ).fetchall()
 
     return [dict(r) for r in rows]
 
@@ -120,14 +144,26 @@ def semantic_search(
     conn: sqlite3.Connection,
     query_embedding: np.ndarray,
     limit: int = 50,
+    workspace: str | None = None,
 ) -> list[dict]:
     """Pure semantic search over all chunks with embeddings."""
-    rows = conn.execute(
-        """
-        SELECT chunk_id, note_path, heading_path, content, embedding
-        FROM chunks WHERE embedding IS NOT NULL
-        """
-    ).fetchall()
+    workspace = _normalize_workspace(workspace)
+    if workspace:
+        rows = conn.execute(
+            """
+            SELECT chunk_id, note_path, heading_path, content, embedding
+            FROM chunks WHERE embedding IS NOT NULL
+              AND note_path LIKE ? || '%'
+            """,
+            (workspace + "/",),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT chunk_id, note_path, heading_path, content, embedding
+            FROM chunks WHERE embedding IS NOT NULL
+            """
+        ).fetchall()
 
     if not rows:
         return []
@@ -285,6 +321,7 @@ def hybrid_search(
     db_path=None,
     context: str = None,
     rerank: bool = False,
+    workspace: str | None = None,
 ) -> list[SearchResult]:
     """
     Hybrid search combining FTS5 and semantic similarity.
@@ -299,8 +336,10 @@ def hybrid_search(
     embed_url = embed_url or get_config().embed_url
     conn = get_db(db_path or DB_PATH)
 
+    workspace = _normalize_workspace(workspace)
+
     if mode == "keyword":
-        fts_results = fts_search(conn, query, limit=top_k)
+        fts_results = fts_search(conn, query, limit=top_k, workspace=workspace)
         return _to_search_results(conn, fts_results[:top_k])
 
     # Get query embedding — fall back to FTS5-only if embedding service unavailable
@@ -309,22 +348,22 @@ def hybrid_search(
     except (ConnectionError, OSError, Exception) as exc:
         # httpx.ConnectError is a subclass of ConnectionError
         log.warning("Embedding service unavailable, falling back to FTS5-only search: %s", exc)
-        fts_results = fts_search(conn, query, limit=top_k)
+        fts_results = fts_search(conn, query, limit=top_k, workspace=workspace)
         results = _to_search_results(conn, fts_results[:top_k])
         for r in results:
             r.snippet = "[FTS5-only] " + r.snippet
         return results
 
     if mode == "semantic":
-        sem_results = semantic_search(conn, query_embedding, limit=top_k)
+        sem_results = semantic_search(conn, query_embedding, limit=top_k, workspace=workspace)
         return _to_search_results(conn, sem_results[:top_k])
 
     # Hybrid: FTS5 pre-filter + semantic rerank
-    fts_results = fts_search(conn, query, limit=50)
+    fts_results = fts_search(conn, query, limit=50, workspace=workspace)
 
     if not fts_results:
         # Fall back to pure semantic if no FTS matches
-        sem_results = semantic_search(conn, query_embedding, limit=top_k)
+        sem_results = semantic_search(conn, query_embedding, limit=top_k, workspace=workspace)
         return _to_search_results(conn, sem_results[:top_k])
 
     # Rerank FTS results by cosine similarity
@@ -456,7 +495,7 @@ def _to_search_results(conn: sqlite3.Connection, results: list[dict]) -> list[Se
 # ---------------------------------------------------------------------------
 
 
-def triple_fts_search(conn: sqlite3.Connection, query: str, limit: int = 30) -> list[dict]:
+def triple_fts_search(conn: sqlite3.Connection, query: str, limit: int = 30, workspace: str | None = None) -> list[dict]:
     """Full-text search over triples."""
     safe_query = " ".join(
         '"' + word.replace('"', '') + '"'
@@ -466,18 +505,34 @@ def triple_fts_search(conn: sqlite3.Connection, query: str, limit: int = 30) -> 
     if not safe_query:
         return []
 
-    rows = conn.execute(
-        """
-        SELECT t.triple_id, t.note_path, t.subject, t.predicate, t.object,
-               t.triple_text, t.embedding, rank
-        FROM triples_fts
-        JOIN triples t ON t.triple_id = triples_fts.rowid
-        WHERE triples_fts MATCH ?
-        ORDER BY rank
-        LIMIT ?
-        """,
-        (safe_query, limit),
-    ).fetchall()
+    workspace = _normalize_workspace(workspace)
+    if workspace:
+        rows = conn.execute(
+            """
+            SELECT t.triple_id, t.note_path, t.subject, t.predicate, t.object,
+                   t.triple_text, t.embedding, rank
+            FROM triples_fts
+            JOIN triples t ON t.triple_id = triples_fts.rowid
+            WHERE triples_fts MATCH ?
+              AND t.note_path LIKE ? || '%'
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (safe_query, workspace + "/", limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT t.triple_id, t.note_path, t.subject, t.predicate, t.object,
+                   t.triple_text, t.embedding, rank
+            FROM triples_fts
+            JOIN triples t ON t.triple_id = triples_fts.rowid
+            WHERE triples_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (safe_query, limit),
+        ).fetchall()
 
     return [dict(r) for r in rows]
 
@@ -486,13 +541,24 @@ def triple_semantic_search(
     conn: sqlite3.Connection,
     query_embedding: np.ndarray,
     limit: int = 30,
+    workspace: str | None = None,
 ) -> list[dict]:
     """Pure semantic search over triples with embeddings."""
-    rows = conn.execute(
-        """SELECT triple_id, note_path, subject, predicate, object,
-                  triple_text, embedding
-           FROM triples WHERE embedding IS NOT NULL"""
-    ).fetchall()
+    workspace = _normalize_workspace(workspace)
+    if workspace:
+        rows = conn.execute(
+            """SELECT triple_id, note_path, subject, predicate, object,
+                      triple_text, embedding
+               FROM triples WHERE embedding IS NOT NULL
+                 AND note_path LIKE ? || '%'""",
+            (workspace + "/",),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT triple_id, note_path, subject, predicate, object,
+                      triple_text, embedding
+               FROM triples WHERE embedding IS NOT NULL"""
+        ).fetchall()
 
     if not rows:
         return []
@@ -522,6 +588,7 @@ def search_triples(
     mode: str = "hybrid",
     embed_url: str = None,
     db_path=None,
+    workspace: str | None = None,
 ) -> list[TripleResult]:
     """Search triples using hybrid FTS5 + semantic similarity.
 
@@ -531,9 +598,10 @@ def search_triples(
 
     embed_url = embed_url or get_config().embed_url
     conn = get_db(db_path or DB_PATH)
+    workspace = _normalize_workspace(workspace)
 
     if mode == "keyword":
-        fts_results = triple_fts_search(conn, query, limit=top_k)
+        fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
         return _to_triple_results(conn, fts_results[:top_k])
 
     try:
@@ -544,18 +612,18 @@ def search_triples(
             " falling back to FTS5-only triple search: %s",
             exc,
         )
-        fts_results = triple_fts_search(conn, query, limit=top_k)
+        fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
         return _to_triple_results(conn, fts_results[:top_k])
 
     if mode == "semantic":
-        sem_results = triple_semantic_search(conn, query_embedding, limit=top_k)
+        sem_results = triple_semantic_search(conn, query_embedding, limit=top_k, workspace=workspace)
         return _to_triple_results(conn, sem_results[:top_k])
 
     # Hybrid: FTS5 pre-filter + semantic rerank
-    fts_results = triple_fts_search(conn, query, limit=30)
+    fts_results = triple_fts_search(conn, query, limit=30, workspace=workspace)
 
     if not fts_results:
-        sem_results = triple_semantic_search(conn, query_embedding, limit=top_k)
+        sem_results = triple_semantic_search(conn, query_embedding, limit=top_k, workspace=workspace)
         return _to_triple_results(conn, sem_results[:top_k])
 
     embeddings = []
@@ -615,6 +683,7 @@ def tiered_search(
     db_path=None,
     context: str = None,
     rerank: bool = False,
+    workspace: str | None = None,
 ) -> dict:
     """Tiered search returning results at the appropriate compression level.
 
@@ -639,6 +708,7 @@ def tiered_search(
         triples = search_triples(
             query, top_k=top_k * 2, mode=mode,
             embed_url=embed_url, db_path=db_path,
+            workspace=workspace,
         )
         result["triples"] = [
             {"note": t.note_path, "title": t.title,
@@ -654,6 +724,7 @@ def tiered_search(
             query, top_k=top_k, mode=mode,
             embed_url=embed_url, db_path=db_path,
             context=context, rerank=rerank,
+            workspace=workspace,
         )
         seen = set()
         for r in chunk_results:
@@ -670,6 +741,7 @@ def tiered_search(
             query, top_k=top_k, mode=mode,
             embed_url=embed_url, db_path=db_path,
             context=context, rerank=rerank,
+            workspace=workspace,
         )
         result["chunks"] = [
             {"note": r.note_path, "title": r.title, "section": r.heading_path,
@@ -682,6 +754,7 @@ def tiered_search(
     triples = search_triples(
         query, top_k=top_k * 3, mode=mode,
         embed_url=embed_url, db_path=db_path,
+        workspace=workspace,
     )
     result["triples"] = [
         {"note": t.note_path, "title": t.title,
@@ -717,6 +790,7 @@ def tiered_search(
         query, top_k=top_k, mode=mode,
         embed_url=embed_url, db_path=db_path,
         context=context, rerank=rerank,
+        workspace=workspace,
     )
     result["chunks"] = [
         {"note": r.note_path, "title": r.title, "section": r.heading_path,
