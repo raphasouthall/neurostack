@@ -1395,7 +1395,7 @@ def cmd_doctor(args):
         note_count = len(list(cfg.vault_root.rglob("*.md")))
         checks.append(("Vault", "OK", f"{cfg.vault_root} ({note_count} .md files)"))
     else:
-        checks.append(("Vault", "MISSING", f"{cfg.vault_root} not found. Run: neurostack init"))
+        checks.append(("Vault", "WARN", f"{cfg.vault_root} not found. Run: neurostack init"))
 
     # Check database
     if cfg.db_path.exists():
@@ -1408,7 +1408,7 @@ def cmd_doctor(args):
         except Exception as e:
             checks.append(("Database", "ERROR", str(e)))
     else:
-        checks.append(("Database", "MISSING", "Run: neurostack index"))
+        checks.append(("Database", "WARN", "Run: neurostack index"))
 
     # Check Python version
     import platform
@@ -1532,11 +1532,13 @@ def cmd_doctor(args):
                 {"name": name, "status": status, "detail": detail}
                 for name, status, detail in checks
             ],
-            "errors": sum(1 for _, s, _ in checks if s in ("ERROR", "MISSING")),
+            "errors": sum(1 for _, s, _ in checks if s == "ERROR"),
             "warnings": sum(1 for _, s, _ in checks if s == "WARN"),
         }
         print(json.dumps(output, indent=2, default=str))
         if output["errors"]:
+            sys.exit(1)
+        if args.strict and output["warnings"]:
             sys.exit(1)
         return
 
@@ -1545,13 +1547,15 @@ def cmd_doctor(args):
         icon = {"OK": "+", "WARN": "!", "ERROR": "X", "SKIP": "-", "MISSING": "X"}[status]
         print(f"  [{icon}] {name}: {detail}")
 
-    errors = sum(1 for _, s, _ in checks if s in ("ERROR", "MISSING"))
+    errors = sum(1 for _, s, _ in checks if s == "ERROR")
     warns = sum(1 for _, s, _ in checks if s == "WARN")
     if errors:
         print(f"\n{errors} error(s) found. Fix them before proceeding.")
         sys.exit(1)
     elif warns:
         print(f"\n{warns} warning(s). Lite mode works. Install optional deps for full features.")
+        if args.strict:
+            sys.exit(1)
     else:
         print("\nAll systems operational.")
 
@@ -2035,6 +2039,10 @@ def main():
 
     # doctor
     p = sub.add_parser("doctor", help="Validate all subsystems")
+    p.add_argument(
+        "--strict", action="store_true",
+        help="Exit 1 on missing vault/database",
+    )
     p.set_defaults(func=cmd_doctor)
 
     # serve
