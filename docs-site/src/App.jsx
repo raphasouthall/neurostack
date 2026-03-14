@@ -266,7 +266,7 @@ function HowItWorks() {
               The interactive setup walks you through vault location, model selection,
               and optional profession packs.
             </p>
-            <code className="how-step-cmd">npm install -g neurostack && neurostack init</code>
+            <code className="how-step-cmd">npm install -g neurostack && neurostack install && neurostack init</code>
           </div>
           <div className="how-step">
             <span className="how-step-number">2</span>
@@ -432,6 +432,7 @@ const CLI_GROUPS = [
   {
     label: 'Core',
     commands: [
+      { cmd: 'neurostack install', desc: 'Install or upgrade mode (lite/full/community) and optionally pull Ollama models. Flags: --mode, --pull-models, --embed-model, --llm-model' },
       { cmd: 'neurostack init', desc: 'Interactive setup wizard — vault path, model, profession packs. Or: neurostack init [path] -p researcher' },
       { cmd: 'neurostack index', desc: 'Full re-index of vault — parses notes, extracts chunks, builds FTS5 and embeddings' },
       { cmd: 'neurostack watch', desc: 'Watch vault for changes and live-index on save' },
@@ -746,8 +747,8 @@ function Install() {
       <section className="section" id="install">
         <SectionHeader number="06" title="Get Started" />
         <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '60ch' }}>
-          One command. No Python, git, or curl required&mdash;the installer handles
-          all dependencies automatically. Just Node.js.
+          Bootstrap the CLI, then use <code>neurostack install</code> to choose your mode
+          and set up Ollama models. Re-run anytime to upgrade.
         </p>
         <div className="install-grid">
           <div className="install-card">
@@ -761,8 +762,9 @@ function Install() {
                 and MCP server. No GPU needed.
               </p>
               <div className="install-code">
-                <span className="comment"># Install + interactive setup</span>{'\n'}
+                <span className="comment"># Bootstrap + choose lite mode</span>{'\n'}
                 npm install -g neurostack{'\n'}
+                neurostack install --mode lite{'\n'}
                 neurostack init
               </div>
               <ul className="install-features">
@@ -794,13 +796,10 @@ function Install() {
                 and cross-encoder reranking. Requires Ollama.
               </p>
               <div className="install-code">
-                <span className="comment"># Install with ML extras</span>{'\n'}
-                NEUROSTACK_MODE=full npm install -g neurostack{'\n'}
-                neurostack init{'\n'}
-                {'\n'}
-                <span className="comment"># Pull Ollama models</span>{'\n'}
-                ollama pull nomic-embed-text{'\n'}
-                ollama pull phi3.5
+                <span className="comment"># Full mode + pull Ollama models</span>{'\n'}
+                npm install -g neurostack{'\n'}
+                neurostack install --mode full --pull-models{'\n'}
+                neurostack init
               </div>
               <ul className="install-features">
                 <li>Everything in Lite, plus:</li>
@@ -822,10 +821,11 @@ function Install() {
         <div style={{ marginTop: 'var(--space-lg)', color: 'var(--ink-light)', fontSize: 'var(--text-sm)' }}>
           <p>
             <strong>Community mode:</strong> Add topic cluster detection with{' '}
-            <code>NEUROSTACK_MODE=community</code> (+15MB, leidenalg GPL-3.0).
+            <code>neurostack install --mode community</code> (+15MB, leidenalg GPL-3.0).
           </p>
           <p style={{ marginTop: 'var(--space-sm)' }}>
-            <strong>Uninstall:</strong> <code>neurostack uninstall</code> removes everything.
+            <strong>Upgrade anytime:</strong> Re-run <code>neurostack install</code> to switch modes
+            (e.g., lite &rarr; full). <strong>Uninstall:</strong> <code>neurostack uninstall</code> removes everything.
             Config is preserved so reinstall picks up where you left off.
           </p>
         </div>

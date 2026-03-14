@@ -14,10 +14,41 @@ NeuroStack helps you start and grow a personal knowledge base — whether you ha
 
 ```bash
 npm install -g neurostack
+neurostack install
 neurostack init
 ```
 
-The interactive setup walks you through everything — vault location, LLM model, and optional profession packs. No prior config needed. No Python, git, or curl required — the installer handles all dependencies automatically.
+1. **`npm install -g neurostack`** — bootstraps the CLI (handles Python, uv, and all dependencies automatically).
+2. **`neurostack install`** — interactive wizard to choose your installation mode and optionally set up Ollama models.
+3. **`neurostack init`** — walks you through vault location, LLM config, and profession packs.
+
+No prior config needed. No Python, git, or curl required.
+
+### Installation modes
+
+| Mode | What you get | Size | GPU needed? |
+|------|-------------|------|-------------|
+| **lite** (default) | FTS5 search, wiki-link graph, stale note detection, MCP server | ~130 MB | No |
+| **full** | + semantic search, AI summaries, cross-encoder reranking | ~560 MB | No (CPU inference) |
+| **community** | + GraphRAG topic clustering (Leiden algorithm) | ~575 MB | No |
+
+The `install` command handles everything — dependency syncing via `uv`, Ollama model pulls, and config updates:
+
+```bash
+# Interactive — walks you through mode and model selection
+neurostack install
+
+# Non-interactive — specify mode directly
+neurostack install --mode full
+
+# Full mode + pull Ollama models in one shot
+neurostack install --mode full --pull-models
+
+# Custom models
+neurostack install --mode full --pull-models --embed-model nomic-embed-text --llm-model qwen3:8b
+```
+
+You can re-run `neurostack install` at any time to upgrade between modes (e.g., lite → full).
 
 <details>
 <summary><strong>Alternative install methods</strong></summary>
@@ -28,13 +59,11 @@ pipx install neurostack              # isolated environment
 pip install neurostack               # inside a venv
 uv tool install neurostack           # uv users
 
-# One-line script (lite mode — FTS5 search only, ~50MB, no GPU needed)
+# One-line script (lite mode)
 curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | bash
 
-# One-line script (full mode — ~500MB, requires Ollama)
+# One-line script (full mode)
 curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | NEUROSTACK_MODE=full bash
-ollama pull nomic-embed-text
-ollama pull qwen2.5:3b
 ```
 
 > **Note:** On Ubuntu 23.04+, Debian 12+, and Fedora 38+, bare `pip install` outside a virtual environment is blocked by [PEP 668](https://peps.python.org/pep-0668/). Use `npm`, `pipx`, `uv tool install`, or create a venv first.
@@ -179,11 +208,11 @@ Memories with a `--ttl` auto-expire after the given duration. Without TTL, they 
 
 ## What gets installed
 
-`npm install -g neurostack` installs everything automatically. Here's exactly what ends up on your machine:
+`npm install -g neurostack` bootstraps the CLI, then `neurostack install` lets you choose your mode. Here's exactly what ends up on your machine:
 
 ### Lite mode (default)
 
-Installed with `npm install -g neurostack` or `NEUROSTACK_MODE=lite npm install -g neurostack`.
+Installed with `neurostack install --mode lite` (or the default interactive selection).
 
 | Component | Location | Size | What it is |
 |-----------|----------|------|------------|
@@ -199,7 +228,7 @@ Installed with `npm install -g neurostack` or `NEUROSTACK_MODE=lite npm install 
 
 ### Full mode
 
-Installed with `NEUROSTACK_MODE=full npm install -g neurostack`. Adds ML dependencies on top of lite.
+Installed with `neurostack install --mode full`. Adds ML dependencies on top of lite.
 
 | Component | Location | Size | What it is |
 |-----------|----------|------|------------|
@@ -213,7 +242,7 @@ Installed with `NEUROSTACK_MODE=full npm install -g neurostack`. Adds ML depende
 
 ### Community mode
 
-Installed with `NEUROSTACK_MODE=community npm install -g neurostack`. Adds community detection on top of full.
+Installed with `neurostack install --mode community`. Adds community detection on top of full.
 
 | Component | Location | Size | What it is |
 |-----------|----------|------|------------|
@@ -236,6 +265,8 @@ Config at `~/.config/neurostack/` is kept so a reinstall picks up where you left
 NeuroStack is a command-line tool. Every feature is available from your terminal:
 
 ```
+neurostack install                  # Install/upgrade mode and Ollama models
+neurostack install --mode full --pull-models  # Non-interactive install
 neurostack init                     # Interactive setup wizard
 neurostack init [path] -p researcher  # Non-interactive with profession pack
 neurostack onboard ~/my-notes       # Onboard an existing folder of notes

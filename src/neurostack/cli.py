@@ -1096,6 +1096,202 @@ def _extract_first_heading(path: Path) -> str:
     return ""
 
 
+def cmd_install(args):
+    """Streamlined installation: mode selection, deps, and optional Ollama setup."""
+    import platform
+    import shutil
+    import sqlite3
+    import subprocess
+
+    cfg = get_config()
+
+    # ── Non-interactive mode ──
+    if args.mode or not sys.stdin.isatty():
+        mode = args.mode or "lite"
+        pull_models = args.pull_models
+        embed_model = args.embed_model or cfg.embed_model
+        llm_model = args.llm_model or cfg.llm_model
+    else:
+        # ── Interactive wizard ──
+        print("\n  \033[1m━━━ NeuroStack Install ━━━\033[0m\n")
+
+        # 1. Show system info
+        py_ver = platform.python_version()
+        print(f"  Python:   {py_ver}")
+        try:
+            conn = sqlite3.connect(":memory:")
+            conn.execute("CREATE VIRTUAL TABLE _t USING fts5(c)")
+            conn.close()
+            print("  FTS5:     available")
+        except Exception:
+            print("  \033[31mFTS5:     MISSING — SQLite compiled without FTS5\033[0m")
+            sys.exit(1)
+
+        uv_path = shutil.which("uv")
+        if uv_path:
+            try:
+                uv_ver = subprocess.run(
+                    ["uv", "--version"], capture_output=True, text=True, timeout=5
+                ).stdout.strip()
+                print(f"  uv:       {uv_ver}")
+            except Exception:
+                print(f"  uv:       {uv_path}")
+        else:
+            print("  \033[31muv:       NOT FOUND\033[0m")
+            print("  Install:  curl -LsSf https://astral.sh/uv/install.sh | sh")
+            sys.exit(1)
+
+        # 2. Detect current mode
+        current_mode = "lite"
+        try:
+            import numpy  # noqa: F401
+            current_mode = "full"
+            try:
+                import leidenalg  # noqa: F401
+                current_mode = "community"
+            except ImportError:
+                pass
+        except ImportError:
+            pass
+        print(f"  Current:  {current_mode} mode\n")
+
+        # 3. Choose mode
+        mode_choices = [
+            ("lite", "Lite — FTS5 search + graph, no ML (~130 MB)"),
+            ("full", "Full — + embeddings, summaries, reranking (~560 MB)"),
+            ("community", "Community — + GraphRAG Leiden detection (~575 MB)"),
+        ]
+        mode = _prompt("Installation mode", default=current_mode, choices=mode_choices)
+
+        # 4. Ollama models (only for full/community)
+        pull_models = False
+        embed_model = cfg.embed_model
+        llm_model = cfg.llm_model
+        if mode in ("full", "community"):
+            print("\n  \033[1mOllama Models\033[0m")
+            print("  Full mode uses Ollama for embeddings and summaries.")
+            pull_models = _confirm("Pull Ollama models now?", default=True)
+            if pull_models:
+                embed_model = _prompt("Embedding model", default=cfg.embed_model)
+                model_choices = [
+                    ("phi3.5", "phi3.5 — MIT, fast, 3.8B"),
+                    ("qwen3:8b", "qwen3:8b — Apache 2.0, strong reasoning"),
+                    ("llama3.1:8b", "llama3.1:8b — Meta license, popular"),
+                    ("mistral:7b", "mistral:7b — Apache 2.0, efficient"),
+                ]
+                llm_model = _prompt("LLM model", default=cfg.llm_model, choices=model_choices)
+
+        # Confirm
+        print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
+        print(f"  Mode:     {mode}")
+        if pull_models:
+            print(f"  Embed:    ollama pull {embed_model}")
+            print(f"  LLM:      ollama pull {llm_model}")
+        else:
+            print("  Models:   skip")
+        if not _confirm("\n  Proceed?", default=True):
+            print("\n  Cancelled.")
+            return
+
+    # ── Execute installation ──
+    print()
+
+    # Find project root (where pyproject.toml lives)
+    project_root = Path(__file__).resolve().parent.parent.parent
+    if not (project_root / "pyproject.toml").exists():
+        # Fallback: check standard install location
+        fallback = Path.home() / ".local" / "share" / "neurostack" / "repo"
+        if (fallback / "pyproject.toml").exists():
+            project_root = fallback
+        else:
+            print("  \033[31m✗\033[0m Cannot find project root (pyproject.toml)")
+            sys.exit(1)
+
+    # 1. uv sync
+    sync_cmd = ["uv", "sync", "--project", str(project_root)]
+    if mode == "full":
+        sync_cmd += ["--extra", "full"]
+    elif mode == "community":
+        sync_cmd += ["--extra", "full", "--extra", "community"]
+
+    print(f"  Syncing dependencies ({mode} mode)...")
+    try:
+        result = subprocess.run(
+            sync_cmd, capture_output=True, text=True, timeout=300
+        )
+        if result.returncode != 0:
+            print(f"  \033[31m✗\033[0m uv sync failed:\n{result.stderr}")
+            sys.exit(1)
+        print(f"  \033[32m✓\033[0m Dependencies synced ({mode})")
+    except FileNotFoundError:
+        print("  \033[31m✗\033[0m uv not found.")
+        print("  Install: curl -LsSf https://astral.sh/uv/install.sh | sh")
+        sys.exit(1)
+
+    # 2. Create/update wrapper script
+    wrapper = Path.home() / ".local" / "bin" / "neurostack"
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper_content = (
+        "#!/usr/bin/env bash\n"
+        f'exec uv run --project "{project_root}" python -m neurostack.cli "$@"\n'
+    )
+    wrapper.write_text(wrapper_content)
+    wrapper.chmod(0o755)
+    print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper}")
+
+    # 3. Pull Ollama models
+    if pull_models:
+        ollama = shutil.which("ollama")
+        if not ollama:
+            print("  \033[33m!\033[0m ollama not found in PATH — skipping model pull")
+            print("    Install Ollama: https://ollama.com/download")
+        else:
+            for model_name in (embed_model, llm_model):
+                print(f"  Pulling {model_name}...")
+                try:
+                    proc = subprocess.run(
+                        ["ollama", "pull", model_name],
+                        timeout=600,
+                    )
+                    if proc.returncode == 0:
+                        print(f"  \033[32m✓\033[0m {model_name} ready")
+                    else:
+                        print(f"  \033[33m!\033[0m Failed to pull {model_name}")
+                except subprocess.TimeoutExpired:
+                    print(
+                        f"  \033[33m!\033[0m Timeout pulling {model_name}"
+                        f" — try: ollama pull {model_name}"
+                    )
+
+            # Update config with chosen models
+            cfg.embed_model = embed_model
+            cfg.llm_model = llm_model
+            from .config import CONFIG_PATH
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG_PATH.write_text(
+                f'vault_root = "{cfg.vault_root}"\n'
+                f'embed_url = "{cfg.embed_url}"\n'
+                f'embed_model = "{embed_model}"\n'
+                f'llm_url = "{cfg.llm_url}"\n'
+                f'llm_model = "{llm_model}"\n'
+            )
+            print(f"  \033[32m✓\033[0m Config updated: {CONFIG_PATH}")
+
+    # 4. PATH check
+    local_bin = str(Path.home() / ".local" / "bin")
+    if local_bin not in os.environ.get("PATH", ""):
+        print("\n  \033[33m!\033[0m Add to PATH:"
+              " export PATH=\"$HOME/.local/bin:$PATH\"")
+
+    # Summary
+    print(f"\n  \033[32mInstalled!\033[0m ({mode} mode)")
+    print()
+    print("  Next steps:")
+    print("    neurostack init          # Set up vault")
+    print("    neurostack doctor        # Verify setup")
+    print()
+
+
 def cmd_doctor(args):
     """Validate all NeuroStack subsystems."""
 
@@ -1730,6 +1926,20 @@ def main():
     mp = mem_sub.add_parser("stats", help="Show memory statistics")
 
     p.set_defaults(func=cmd_memories)
+
+    # install
+    p = sub.add_parser("install", help="Install or upgrade dependencies and Ollama models")
+    p.add_argument(
+        "--mode", "-m", choices=["lite", "full", "community"],
+        help="Installation mode (lite=FTS5 only, full=+ML, community=+GraphRAG)",
+    )
+    p.add_argument(
+        "--pull-models", action="store_true", default=False,
+        help="Pull Ollama models after syncing deps",
+    )
+    p.add_argument("--embed-model", help="Embedding model (default: nomic-embed-text)")
+    p.add_argument("--llm-model", help="LLM model (default: phi3.5)")
+    p.set_defaults(func=cmd_install)
 
     # doctor
     p = sub.add_parser("doctor", help="Validate all subsystems")
