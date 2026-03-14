@@ -1131,3 +1131,70 @@
   opacity: 1;
   transform: translateY(0);
 }
+
+/* ── Sponsor Banner ──────────────────────────── */
+.sponsor-banner {
+  padding: var(--space-xl) var(--space-lg);
+}
+
+.sponsor-inner {
+  max-width: 48rem;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  padding: var(--space-lg);
+  background: var(--paper-deep);
+}
+
+.sponsor-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 0 0 var(--space-xs);
+}
+
+.sponsor-desc {
+  color: var(--ink-light);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  margin: 0;
+  max-width: 42ch;
+}
+
+.sponsor-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.6em 1.4em;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  text-decoration: none;
+  color: #fff;
+  background: oklch(0.62 0.17 350);
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sponsor-btn:hover {
+  background: oklch(0.55 0.19 350);
+}
+
+@media (max-width: 600px) {
+  .sponsor-inner {
+    flex-direction: column;
+    text-align: center;
+    align-items: stretch;
+  }
+  .sponsor-desc {
+    max-width: none;
+  }
+  .sponsor-btn {
+    justify-content: center;
+  }
+}
