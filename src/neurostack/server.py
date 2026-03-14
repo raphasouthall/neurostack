@@ -273,6 +273,39 @@ def session_brief(workspace: str = None) -> str:
 
 
 @mcp.tool()
+def vault_context(
+    task: str,
+    token_budget: int = 2000,
+    workspace: str = None,
+    include_memories: bool = True,
+    include_triples: bool = True,
+) -> str:
+    """Assemble task-scoped context for session recovery after /clear or new conversation.
+
+    Unlike session_brief (time-anchored status snapshot), this is task-anchored:
+    it retrieves memories, triples, summaries, and session history relevant to
+    a specific task description, respecting a token budget.
+
+    Args:
+        task: Description of the current task or goal
+        token_budget: Maximum approximate tokens in response (default 2000)
+        workspace: Optional vault subdirectory to scope
+        include_memories: Include relevant memories (default True)
+        include_triples: Include relevant triples (default True)
+    """
+    from .context import build_vault_context
+    from .schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    result = build_vault_context(
+        conn, task=task, token_budget=token_budget,
+        workspace=workspace, include_memories=include_memories,
+        include_triples=include_triples, embed_url=EMBED_URL,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 def vault_triples(query: str, top_k: int = 10, mode: str = "hybrid", workspace: str = None) -> str:
     """Search knowledge graph triples for structured facts.
 
@@ -374,6 +407,14 @@ def vault_stats() -> str:
         "SELECT COUNT(*) as c FROM triples WHERE embedding IS NOT NULL"
     ).fetchone()["c"]
 
+    # Excitability stats
+    from .search import get_dormancy_report
+    dormancy = get_dormancy_report(conn, threshold=0.05, limit=0)
+
+    # Memory stats
+    from .memories import get_memory_stats
+    mem_stats = get_memory_stats(conn)
+
     result = {
         "notes": notes,
         "chunks": chunks,
@@ -399,6 +440,12 @@ def vault_stats() -> str:
             "SELECT COUNT(*) as c FROM communities"
             " WHERE summary IS NOT NULL"
         ).fetchone()["c"],
+        "excitability": {
+            "active": dormancy["active_count"],
+            "dormant": dormancy["dormant_count"],
+            "never_used": dormancy["never_used_count"],
+        },
+        "memories": mem_stats,
     }
     return json.dumps(result, indent=2)
 
@@ -564,12 +611,17 @@ def vault_remember(
         session_id=session_id,
     )
 
-    return json.dumps({
+    result = {
         "saved": True,
         "memory_id": memory.memory_id,
         "entity_type": memory.entity_type,
         "expires_at": memory.expires_at,
-    }, indent=2)
+    }
+    if memory.near_duplicates:
+        result["near_duplicates"] = memory.near_duplicates
+    if memory.suggested_tags:
+        result["suggested_tags"] = memory.suggested_tags
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool()
@@ -585,6 +637,122 @@ def vault_forget(memory_id: int) -> str:
     conn = get_db(DB_PATH)
     deleted = forget_memory(conn, memory_id)
     return json.dumps({"deleted": deleted, "memory_id": memory_id})
+
+
+@mcp.tool()
+def vault_update_memory(
+    memory_id: int,
+    content: str = None,
+    tags: list[str] = None,
+    add_tags: list[str] = None,
+    remove_tags: list[str] = None,
+    entity_type: str = None,
+    workspace: str = None,
+    ttl_hours: float = None,
+) -> str:
+    """Update an existing memory. Only provided fields are changed.
+
+    Args:
+        memory_id: The memory to update
+        content: New content (re-embeds if changed)
+        tags: Replace tags entirely (pass [] to clear)
+        add_tags: Add these tags to existing set
+        remove_tags: Remove these tags from existing set
+        entity_type: Change type
+        workspace: Change workspace scope
+        ttl_hours: Set or change TTL. Pass 0 to make permanent.
+    """
+    from .memories import update_memory
+    from .schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    try:
+        memory = update_memory(
+            conn,
+            memory_id=memory_id,
+            content=content,
+            tags=tags,
+            add_tags=add_tags,
+            remove_tags=remove_tags,
+            entity_type=entity_type,
+            workspace=workspace,
+            ttl_hours=ttl_hours,
+            embed_url=EMBED_URL,
+        )
+    except ValueError as exc:
+        return json.dumps({"updated": False, "error": str(exc), "memory_id": memory_id})
+
+    if not memory:
+        return json.dumps({
+            "updated": False,
+            "error": "Memory not found",
+            "memory_id": memory_id,
+        })
+
+    # Build changed_fields list
+    changed = []
+    if content is not None:
+        changed.append("content")
+    if tags is not None or add_tags is not None or remove_tags is not None:
+        changed.append("tags")
+    if entity_type is not None:
+        changed.append("entity_type")
+    if workspace is not None:
+        changed.append("workspace")
+    if ttl_hours is not None:
+        changed.append("ttl")
+
+    return json.dumps({
+        "updated": True,
+        "memory_id": memory.memory_id,
+        "changed_fields": changed,
+        "content": memory.content,
+        "entity_type": memory.entity_type,
+        "tags": memory.tags,
+        "created_at": memory.created_at,
+        "updated_at": memory.updated_at,
+        "expires_at": memory.expires_at,
+    }, indent=2)
+
+
+@mcp.tool()
+def vault_merge(
+    target_id: int,
+    source_id: int,
+) -> str:
+    """Merge two memories. Source is folded into target; source is deleted.
+
+    Use this after vault_remember reports near_duplicates. Keeps the longer
+    content, unions tags, keeps the more specific entity type, and tracks
+    the merge in an audit trail.
+
+    Args:
+        target_id: Memory to keep (receives merged content)
+        source_id: Memory to fold in (deleted after merge)
+    """
+    from .memories import merge_memories
+    from .schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    memory = merge_memories(conn, target_id, source_id, embed_url=EMBED_URL)
+
+    if not memory:
+        return json.dumps({
+            "merged": False,
+            "error": "One or both memory IDs not found",
+            "target_id": target_id,
+            "source_id": source_id,
+        })
+
+    return json.dumps({
+        "merged": True,
+        "memory_id": memory.memory_id,
+        "content": memory.content,
+        "entity_type": memory.entity_type,
+        "tags": memory.tags,
+        "merge_count": memory.merge_count,
+        "merged_from": memory.merged_from,
+    }, indent=2)
 
 
 @mcp.tool()

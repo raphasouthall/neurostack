@@ -318,6 +318,64 @@ def hotness_score(conn: sqlite3.Connection, note_path: str, half_life_days: floa
     return freq * decay
 
 
+def get_dormancy_report(
+    conn: sqlite3.Connection,
+    threshold: float = 0.05,
+    half_life_days: float = 30.0,
+    limit: int = 50,
+) -> dict:
+    """Report notes by excitability status.
+
+    Returns dormant (hotness < threshold), active, and never-used notes
+    with their hotness scores. Uses existing hotness_score() as the
+    single source of truth - no separate status column needed.
+    """
+    all_notes = conn.execute(
+        "SELECT path, title FROM notes ORDER BY path"
+    ).fetchall()
+
+    dormant = []
+    active = []
+    never_used = []
+
+    for note in all_notes:
+        path = note["path"]
+        title = note["title"] or path
+        score = hotness_score(conn, path, half_life_days=half_life_days)
+
+        entry = {"path": path, "title": title, "hotness": round(score, 4)}
+
+        if score == 0.0:
+            # Check if it was ever used
+            usage = conn.execute(
+                "SELECT COUNT(*) as c FROM note_usage WHERE note_path = ?",
+                (path,),
+            ).fetchone()["c"]
+            if usage == 0:
+                never_used.append(entry)
+            else:
+                dormant.append(entry)
+        elif score < threshold:
+            dormant.append(entry)
+        else:
+            active.append(entry)
+
+    dormant.sort(key=lambda x: x["hotness"])
+    active.sort(key=lambda x: x["hotness"], reverse=True)
+
+    return {
+        "threshold": threshold,
+        "half_life_days": half_life_days,
+        "total_notes": len(all_notes),
+        "active_count": len(active),
+        "dormant_count": len(dormant),
+        "never_used_count": len(never_used),
+        "dormant": dormant[:limit],
+        "active": active[:limit],
+        "never_used": never_used[:limit],
+    }
+
+
 def hybrid_search(
     query: str,
     top_k: int = 5,

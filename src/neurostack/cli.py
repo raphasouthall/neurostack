@@ -2037,9 +2037,11 @@ def cmd_memories(args):
     from .memories import (
         forget_memory,
         get_memory_stats,
+        merge_memories,
         prune_memories,
         save_memory,
         search_memories,
+        update_memory,
     )
     from .schema import DB_PATH, get_db
 
@@ -2058,17 +2060,32 @@ def cmd_memories(args):
             embed_url=args.embed_url,
         )
         if args.json:
-            print(json.dumps({
+            result = {
                 "saved": True,
                 "memory_id": memory.memory_id,
                 "entity_type": memory.entity_type,
                 "created_at": memory.created_at,
                 "expires_at": memory.expires_at,
-            }, indent=2))
+            }
+            if memory.near_duplicates:
+                result["near_duplicates"] = memory.near_duplicates
+            if memory.suggested_tags:
+                result["suggested_tags"] = memory.suggested_tags
+            print(json.dumps(result, indent=2))
         else:
             print(f"  \033[32m✓\033[0m Saved memory #{memory.memory_id} ({memory.entity_type})")
             if memory.expires_at:
                 print(f"    Expires: {memory.expires_at}")
+            if memory.suggested_tags:
+                print(f"  Suggested tags: {', '.join(memory.suggested_tags)}")
+                print(f"  Apply: neurostack memories update {memory.memory_id} "
+                      f"--add-tags {','.join(memory.suggested_tags)}")
+            if memory.near_duplicates:
+                print("  \033[33m!\033[0m Near-duplicates found:")
+                for dup in memory.near_duplicates:
+                    print(f"    #{dup['memory_id']} (similarity: {dup['similarity']:.2f})")
+                    print(f"      {dup['content'][:80]}")
+                print("  Merge: neurostack memories merge <target> <source>")
 
     elif subcmd == "search":
         memories = search_memories(
@@ -2177,9 +2194,262 @@ def cmd_memories(args):
                 for t, c in sorted(stats["by_type"].items()):
                     print(f"    {t}: {c}")
 
+    elif subcmd == "update":
+        try:
+            memory = update_memory(
+                conn,
+                memory_id=args.id,
+                content=args.content,
+                tags=args.tags.split(",") if args.tags else None,
+                add_tags=args.add_tags.split(",") if args.add_tags else None,
+                remove_tags=args.remove_tags.split(",") if args.remove_tags else None,
+                entity_type=args.type,
+                workspace=_get_workspace(args) if hasattr(args, "workspace") else None,
+                ttl_hours=args.ttl,
+                embed_url=args.embed_url,
+            )
+        except ValueError as exc:
+            if args.json:
+                print(json.dumps({"updated": False, "error": str(exc)}))
+            else:
+                print(f"  \033[31m!\033[0m {exc}")
+            return
+
+        if args.json:
+            if memory:
+                print(json.dumps({
+                    "updated": True,
+                    "memory_id": memory.memory_id,
+                    "content": memory.content,
+                    "entity_type": memory.entity_type,
+                    "tags": memory.tags,
+                    "created_at": memory.created_at,
+                    "updated_at": memory.updated_at,
+                    "expires_at": memory.expires_at,
+                    "revision_count": memory.revision_count,
+                }, indent=2))
+            else:
+                print(json.dumps({"updated": False, "error": "Memory not found"}))
+        else:
+            if memory:
+                print(f"  \033[32m✓\033[0m Updated memory #{memory.memory_id}")
+            else:
+                print(f"  \033[31m✗\033[0m Memory #{args.id} not found")
+
+    elif subcmd == "merge":
+        memory = merge_memories(
+            conn, target_id=args.target, source_id=args.source,
+            embed_url=args.embed_url,
+        )
+        if args.json:
+            if memory:
+                print(json.dumps({
+                    "merged": True,
+                    "memory_id": memory.memory_id,
+                    "content": memory.content,
+                    "entity_type": memory.entity_type,
+                    "tags": memory.tags,
+                    "merge_count": memory.merge_count,
+                    "merged_from": memory.merged_from,
+                }, indent=2))
+            else:
+                print(json.dumps({"merged": False, "error": "One or both IDs not found"}))
+        else:
+            if memory:
+                print(f"  \033[32m✓\033[0m Merged into memory #{memory.memory_id}")
+                print(f"    Merge count: {memory.merge_count}")
+            else:
+                print("  \033[31m✗\033[0m One or both memory IDs not found")
+
     else:
-        print("Usage: neurostack memories {add,search,list,forget,prune,stats}")
+        print("Usage: neurostack memories {add,search,list,forget,prune,stats,update,merge}")
         print("       neurostack memories --help")
+
+
+def cmd_hooks(args):
+    """Manage neurostack automation hooks."""
+    subcmd = getattr(args, "hooks_command", None)
+
+    if subcmd == "install":
+        import subprocess
+
+        hook_type = args.type or "harvest-timer"
+
+        if hook_type == "harvest-timer":
+            # Create a systemd user timer for periodic harvest
+            timer_dir = Path.home() / ".config" / "systemd" / "user"
+            timer_dir.mkdir(parents=True, exist_ok=True)
+
+            service_content = (
+                "[Unit]\n"
+                "Description=NeuroStack harvest - extract session insights\n\n"
+                "[Service]\n"
+                "Type=oneshot\n"
+                "ExecStart=%h/.local/bin/neurostack harvest --sessions 3\n"
+                "Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin\n"
+            )
+            timer_content = (
+                "[Unit]\n"
+                "Description=Run neurostack harvest every hour\n\n"
+                "[Timer]\n"
+                "OnCalendar=hourly\n"
+                "Persistent=true\n\n"
+                "[Install]\n"
+                "WantedBy=timers.target\n"
+            )
+
+            (timer_dir / "neurostack-harvest.service").write_text(service_content)
+            (timer_dir / "neurostack-harvest.timer").write_text(timer_content)
+
+            subprocess.run(
+                ["systemctl", "--user", "daemon-reload"],
+                check=False, capture_output=True,
+            )
+            subprocess.run(
+                ["systemctl", "--user", "enable", "--now", "neurostack-harvest.timer"],
+                check=False, capture_output=True,
+            )
+
+            if args.json:
+                print(json.dumps({"installed": True, "type": hook_type}))
+            else:
+                print(f"  \033[32m✓\033[0m Installed {hook_type}")
+                print(f"    Timer: {timer_dir / 'neurostack-harvest.timer'}")
+                print("    Check: systemctl --user status neurostack-harvest.timer")
+        else:
+            print(f"  Unknown hook type: {hook_type}")
+
+    elif subcmd == "status":
+        import subprocess
+
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", "neurostack-harvest.timer"],
+            capture_output=True, text=True,
+        )
+        active = result.stdout.strip() == "active"
+        if args.json:
+            print(json.dumps({"harvest_timer": "active" if active else "inactive"}))
+        else:
+            status = "\033[32mactive\033[0m" if active else "\033[31minactive\033[0m"
+            print(f"  harvest-timer: {status}")
+
+    elif subcmd == "remove":
+        import subprocess
+
+        subprocess.run(
+            ["systemctl", "--user", "disable", "--now", "neurostack-harvest.timer"],
+            check=False, capture_output=True,
+        )
+        timer_dir = Path.home() / ".config" / "systemd" / "user"
+        for f in ("neurostack-harvest.service", "neurostack-harvest.timer"):
+            p = timer_dir / f
+            if p.exists():
+                p.unlink()
+        subprocess.run(
+            ["systemctl", "--user", "daemon-reload"],
+            check=False, capture_output=True,
+        )
+        if args.json:
+            print(json.dumps({"removed": True}))
+        else:
+            print("  \033[32m✓\033[0m Removed harvest timer")
+
+    else:
+        print("Usage: neurostack hooks {install,status,remove}")
+        print("       neurostack hooks --help")
+
+
+def cmd_context(args):
+    """Assemble task-scoped context for session recovery."""
+    from .context import build_vault_context
+    from .schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    result = build_vault_context(
+        conn,
+        task=args.task,
+        token_budget=args.budget,
+        workspace=_get_workspace(args) if hasattr(args, "workspace") else None,
+        include_memories=not args.no_memories,
+        include_triples=not args.no_triples,
+        embed_url=args.embed_url,
+    )
+
+    if args.json:
+        print(json.dumps(result, indent=2))
+        return
+
+    print(f"\n  Context for: {result['task']}")
+    print(f"  Tokens used: ~{result['tokens_used']}")
+    if result.get("workspace"):
+        print(f"  Workspace: {result['workspace']}")
+
+    ctx = result.get("context", {})
+
+    if ctx.get("memories"):
+        print(f"\n  \033[1mMemories ({len(ctx['memories'])}):\033[0m")
+        for m in ctx["memories"]:
+            tags = f" [{', '.join(m['tags'])}]" if m.get("tags") else ""
+            print(f"    [{m['entity_type']}] {m['content'][:100]}{tags}")
+
+    if ctx.get("triples"):
+        print(f"\n  \033[1mTriples ({len(ctx['triples'])}):\033[0m")
+        for t in ctx["triples"]:
+            print(f"    {t['s']} -> {t['p']} -> {t['o']}")
+
+    if ctx.get("summaries"):
+        print(f"\n  \033[1mRelevant notes ({len(ctx['summaries'])}):\033[0m")
+        for s in ctx["summaries"]:
+            print(f"    {s['path']} ({s['score']:.4f})")
+            if s.get("summary"):
+                print(f"      {s['summary'][:120]}")
+
+    if ctx.get("session_history"):
+        print(f"\n  \033[1mRecent sessions ({len(ctx['session_history'])}):\033[0m")
+        for s in ctx["session_history"]:
+            print(f"    #{s['session_id']} ({s['started_at']}): {s['summary']}")
+
+
+def cmd_decay(args):
+    """Report note excitability and dormancy status."""
+    from .schema import DB_PATH, get_db
+    from .search import get_dormancy_report
+
+    conn = get_db(DB_PATH)
+    report = get_dormancy_report(
+        conn,
+        threshold=args.threshold,
+        half_life_days=args.half_life,
+        limit=args.limit,
+    )
+
+    if args.json:
+        print(json.dumps(report, indent=2))
+        return
+
+    print(f"\n  Excitability Report (threshold={report['threshold']}, "
+          f"half-life={report['half_life_days']}d)")
+    print(f"  Total: {report['total_notes']} notes | "
+          f"Active: {report['active_count']} | "
+          f"Dormant: {report['dormant_count']} | "
+          f"Never used: {report['never_used_count']}")
+
+    if report["dormant"]:
+        print(f"\n  \033[33mDormant notes (hotness < {report['threshold']}):\033[0m")
+        for n in report["dormant"]:
+            print(f"    {n['hotness']:.4f}  {n['path']}")
+
+    if report["never_used"]:
+        print("\n  \033[90mNever-used notes:\033[0m")
+        for n in report["never_used"][:20]:
+            print(f"    -  {n['path']}")
+        if report["never_used_count"] > 20:
+            print(f"    ... and {report['never_used_count'] - 20} more")
+
+    if report["active"]:
+        print("\n  \033[32mTop active notes:\033[0m")
+        for n in report["active"][:10]:
+            print(f"    {n['hotness']:.4f}  {n['path']}")
 
 
 def cmd_harvest(args):
@@ -2321,6 +2591,20 @@ def main():
     mp.add_argument("--expired", action="store_true", help="Delete only expired memories")
 
     mp = mem_sub.add_parser("stats", help="Show memory statistics")
+
+    mp = mem_sub.add_parser("update", help="Update an existing memory")
+    mp.add_argument("id", type=int, help="Memory ID to update")
+    mp.add_argument("--content", "-c", help="New content")
+    mp.add_argument("--tags", "-t", help="Replace tags (comma-separated)")
+    mp.add_argument("--add-tags", help="Add tags (comma-separated)")
+    mp.add_argument("--remove-tags", help="Remove tags (comma-separated)")
+    mp.add_argument("--type", help="New entity type")
+    mp.add_argument("--workspace", "-w", help="New workspace scope")
+    mp.add_argument("--ttl", type=float, help="New TTL in hours (0 = permanent)")
+
+    mp = mem_sub.add_parser("merge", help="Merge source memory into target")
+    mp.add_argument("target", type=int, help="Target memory ID (kept)")
+    mp.add_argument("source", type=int, help="Source memory ID (deleted after merge)")
 
     p.set_defaults(func=cmd_memories)
 
@@ -2618,6 +2902,38 @@ def main():
         "note_paths", nargs="+", help="Note paths to mark as used"
     )
     p.set_defaults(func=cmd_record_usage)
+
+    # hooks
+    p = sub.add_parser("hooks", help="Manage automation hooks (harvest timer)")
+    hooks_sub = p.add_subparsers(dest="hooks_command")
+    hp = hooks_sub.add_parser("install", help="Install automation hooks")
+    hp.add_argument("--type", default="harvest-timer",
+                    help="Hook type (default: harvest-timer)")
+    hooks_sub.add_parser("status", help="Show hook status")
+    hooks_sub.add_parser("remove", help="Remove automation hooks")
+    p.set_defaults(func=cmd_hooks)
+
+    # context
+    p = sub.add_parser("context", help="Assemble task-scoped context for session recovery")
+    p.add_argument("task", help="Description of the current task or goal")
+    p.add_argument("--budget", type=int, default=2000,
+                   help="Token budget (default: 2000)")
+    p.add_argument("--workspace", "-w", help="Workspace scope")
+    p.add_argument("--no-memories", action="store_true",
+                   help="Exclude memories from context")
+    p.add_argument("--no-triples", action="store_true",
+                   help="Exclude triples from context")
+    p.set_defaults(func=cmd_context)
+
+    # decay
+    p = sub.add_parser("decay", help="Report note excitability and dormancy")
+    p.add_argument("--threshold", type=float, default=0.05,
+                   help="Hotness threshold below which notes are dormant (default: 0.05)")
+    p.add_argument("--half-life", type=float, default=30.0,
+                   help="Half-life in days for hotness decay (default: 30)")
+    p.add_argument("--limit", type=int, default=50,
+                   help="Max notes to show per category (default: 50)")
+    p.set_defaults(func=cmd_decay)
 
     # harvest
     p = sub.add_parser("harvest", help="Extract insights from recent Claude Code sessions")
