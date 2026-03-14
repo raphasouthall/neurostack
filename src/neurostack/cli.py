@@ -1096,6 +1096,89 @@ def _extract_first_heading(path: Path) -> str:
     return ""
 
 
+def _install_ollama(subprocess):
+    """Attempt to install Ollama via the official installer."""
+    import platform as _plat
+
+    system = _plat.system()
+    if system == "Linux":
+        print("  Installing Ollama (Linux)...")
+        proc = subprocess.run(
+            ["bash", "-c",
+             "curl -fsSL https://ollama.com/install.sh | sh"],
+            timeout=120,
+        )
+        if proc.returncode == 0:
+            print("  \033[32m✓\033[0m Ollama installed")
+        else:
+            print("  \033[31m✗\033[0m Ollama install failed")
+            print(
+                "    Try manually:"
+                " https://ollama.com/download"
+            )
+    elif system == "Darwin":
+        print(
+            "  \033[33m!\033[0m On macOS, download Ollama from:"
+            " https://ollama.com/download"
+        )
+    else:
+        print(
+            "  \033[33m!\033[0m Install Ollama from:"
+            " https://ollama.com/download"
+        )
+
+
+def _get_ollama_models(ollama_bin, subprocess):
+    """Return set of locally available Ollama model names."""
+    try:
+        proc = subprocess.run(
+            [ollama_bin, "list"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode != 0:
+            return set()
+        models = set()
+        for line in proc.stdout.strip().splitlines()[1:]:
+            name = line.split()[0] if line.split() else ""
+            if name:
+                models.add(name)
+                # Also add without :latest tag
+                if ":" in name:
+                    models.add(name.split(":")[0])
+        return models
+    except Exception:
+        return set()
+
+
+def _pull_ollama_models(ollama_bin, embed_model, llm_model, subprocess):
+    """Pull Ollama models, skipping any already available."""
+    available = _get_ollama_models(ollama_bin, subprocess)
+
+    for model_name in (embed_model, llm_model):
+        base = model_name.split(":")[0] if ":" in model_name else model_name
+        if model_name in available or base in available:
+            print(f"  \033[32m✓\033[0m {model_name} already available")
+            continue
+        print(f"  Pulling {model_name}...")
+        try:
+            proc = subprocess.run(
+                [ollama_bin, "pull", model_name],
+                timeout=600,
+            )
+            if proc.returncode == 0:
+                print(f"  \033[32m✓\033[0m {model_name} ready")
+            else:
+                print(
+                    f"  \033[33m!\033[0m Failed to pull"
+                    f" {model_name}"
+                )
+        except subprocess.TimeoutExpired:
+            print(
+                f"  \033[33m!\033[0m Timeout pulling {model_name}"
+                f" — try: ollama pull {model_name}"
+            )
+
+
 def cmd_install(args):
     """Streamlined installation: mode selection, deps, and optional Ollama setup."""
     import platform
@@ -1239,29 +1322,38 @@ def cmd_install(args):
     wrapper.chmod(0o755)
     print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper}")
 
-    # 3. Pull Ollama models
-    if pull_models:
+    # 3. Ollama setup (full/community modes)
+    if pull_models or (mode in ("full", "community") and not pull_models
+                       and not args.mode):
+        # Check if Ollama is installed
         ollama = shutil.which("ollama")
         if not ollama:
-            print("  \033[33m!\033[0m ollama not found in PATH — skipping model pull")
-            print("    Install Ollama: https://ollama.com/download")
-        else:
-            for model_name in (embed_model, llm_model):
-                print(f"  Pulling {model_name}...")
-                try:
-                    proc = subprocess.run(
-                        ["ollama", "pull", model_name],
-                        timeout=600,
-                    )
-                    if proc.returncode == 0:
-                        print(f"  \033[32m✓\033[0m {model_name} ready")
-                    else:
-                        print(f"  \033[33m!\033[0m Failed to pull {model_name}")
-                except subprocess.TimeoutExpired:
+            if mode in ("full", "community"):
+                print("  \033[33m!\033[0m Ollama not found")
+                if sys.stdin.isatty() and _confirm(
+                    "Install Ollama now?", default=True
+                ):
+                    _install_ollama(subprocess)
+                    ollama = shutil.which("ollama")
+                    if not ollama:
+                        print(
+                            "  \033[33m!\033[0m Ollama install"
+                            " may need a shell restart"
+                        )
+                        print(
+                            "    Then run:"
+                            " neurostack install --pull-models"
+                        )
+                else:
                     print(
-                        f"  \033[33m!\033[0m Timeout pulling {model_name}"
-                        f" — try: ollama pull {model_name}"
+                        "    Install later:"
+                        " https://ollama.com/download"
                     )
+
+        if ollama and pull_models:
+            _pull_ollama_models(
+                ollama, embed_model, llm_model, subprocess
+            )
 
             # Update config with chosen models
             cfg.embed_model = embed_model
