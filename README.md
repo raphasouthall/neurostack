@@ -27,6 +27,8 @@ neurostack init
 
 No prior config needed. No Python, git, or curl required.
 
+<img src="docs/demo.gif" alt="NeuroStack demo — stats, search, graph, and daily brief" width="720">
+
 ### Installation modes
 
 | Mode | What you get | Size | GPU needed? |
