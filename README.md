@@ -203,6 +203,19 @@ neurostack memories stats
 
 Memories with a `--ttl` auto-expire after the given duration. Without TTL, they persist until explicitly forgotten or pruned.
 
+### Session harvest
+
+Extract insights from your Claude Code session transcripts automatically. NeuroStack scans the JSONL transcripts for decisions, bugs, conventions, and learnings, deduplicates against existing memories, and saves them.
+
+```bash
+neurostack harvest                  # Harvest from the latest session
+neurostack harvest --sessions 5     # Scan the last 5 sessions
+neurostack harvest --dry-run        # Preview what would be saved
+neurostack harvest --json           # Machine-readable output
+```
+
+**MCP tool:** `vault_harvest` - call from your AI assistant to extract and save insights from the current session.
+
 ## Features at a glance
 
 | Feature | Lite (no GPU) | Full (local AI) |
@@ -211,6 +224,7 @@ Memories with a `--ttl` auto-expire after the given duration. Without TTL, they 
 | Wiki-link graph + PageRank | Yes | Yes |
 | Stale note detection | Yes | Yes |
 | Session transcript search | Yes | Yes |
+| Session insight harvesting | Yes | Yes |
 | Semantic search (by meaning) | — | Yes |
 | AI-generated summaries & triples | — | Yes |
 | Cross-encoder reranking | — | Yes |
@@ -286,6 +300,7 @@ neurostack scaffold --list          # List available profession packs
 neurostack index                    # Build the knowledge graph
 neurostack search "query"           # Search by meaning or keywords
 neurostack search -w "work/" "query"  # Search scoped to a workspace path
+neurostack harvest                   # Extract insights from recent sessions
 neurostack memories list              # List agent write-back memories
 neurostack graph "note.md"          # See a note's connections
 neurostack prediction-errors        # Find stale or misleading notes
@@ -312,6 +327,8 @@ neurostack backfill [summaries|triples|all]  # Fill gaps in AI-generated data
 neurostack reembed-chunks           # Re-embed all chunks
 neurostack folder-summaries         # Build folder-level context summaries
 neurostack sessions search "query"  # Search session transcripts
+neurostack harvest                             # Extract session insights as memories
+neurostack harvest --sessions 5 --dry-run      # Preview without saving
 neurostack memories add "text" --type observation  # Store a memory
 neurostack memories search "query"  # Search memories
 neurostack memories list            # List all memories
