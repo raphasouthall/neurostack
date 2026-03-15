@@ -1,4 +1,4 @@
-name: Publish to PyPI
+name: Publish to PyPI & npm
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   id-token: write
 
 jobs:
-  publish:
+  publish-pypi:
     runs-on: ubuntu-latest
     environment: pypi
     steps:
@@ -18,3 +18,22 @@ jobs:
       - run: uv build
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Sync version from tag
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          cd npm
+          npm version "$VERSION" --no-git-tag-version
+      - name: Publish to npm
+        run: npm publish
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
