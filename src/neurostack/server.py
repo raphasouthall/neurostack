@@ -859,16 +859,20 @@ def vault_session_start(
 def vault_session_end(
     session_id: int,
     summarize: bool = True,
+    auto_harvest: bool = True,
 ) -> str:
     """End a memory session and optionally generate a summary.
 
     Call at the end of a work session. If summarize=True, uses
     the LLM to produce a 2-3 sentence summary of all memories
-    recorded during the session.
+    recorded during the session. If auto_harvest=True, extracts
+    insights from the most recent session transcript and saves
+    them as memories.
 
     Args:
         session_id: The session ID returned by vault_session_start
         summarize: Generate LLM summary of session (default True)
+        auto_harvest: Run harvest on the latest session (default True)
     """
     from .memories import end_session, summarize_session
     from .schema import DB_PATH, get_db
@@ -878,6 +882,18 @@ def vault_session_end(
     if summarize:
         summary = summarize_session(conn, session_id)
     result = end_session(conn, session_id, summary=summary)
+
+    if auto_harvest:
+        try:
+            from .harvest import harvest_sessions
+            harvest_report = harvest_sessions(n_sessions=1)
+            result["harvest"] = {
+                "saved": len(harvest_report.get("saved", [])),
+                "skipped": len(harvest_report.get("skipped", [])),
+            }
+        except Exception as e:
+            result["harvest"] = {"error": str(e)}
+
     return json.dumps(result, indent=2)
 
 
