@@ -15,6 +15,28 @@ jobs:
       - run: uv sync --extra dev
       - run: uv run ruff check src/ tests/
 
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version consistency
+        run: |
+          PYPROJECT=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          INIT=$(grep '__version__' src/neurostack/__init__.py | sed 's/.*"\(.*\)"/\1/')
+          NPM=$(node -p "require('./npm/package.json').version")
+          echo "pyproject.toml: $PYPROJECT"
+          echo "__init__.py:    $INIT"
+          echo "npm/package.json: $NPM"
+          if [ "$PYPROJECT" != "$INIT" ]; then
+            echo "::error::Version mismatch: pyproject.toml ($PYPROJECT) != __init__.py ($INIT)"
+            exit 1
+          fi
+          if [ "$PYPROJECT" != "$NPM" ]; then
+            echo "::error::Version mismatch: pyproject.toml ($PYPROJECT) != npm/package.json ($NPM)"
+            exit 1
+          fi
+          echo "All versions match: $PYPROJECT"
+
   test:
     runs-on: ubuntu-latest
     strategy:
