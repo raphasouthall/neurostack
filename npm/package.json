@@ -1,6 +1,6 @@
 {
   "name": "neurostack",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "Build, maintain, and search your knowledge vault with AI",
   "bin": {
     "neurostack": "bin/neurostack.js"
