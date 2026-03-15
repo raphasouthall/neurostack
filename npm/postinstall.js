@@ -144,7 +144,7 @@ async function main() {
   info("Source: ok");
 
   // ── Step 4: Install Python dependencies ──
-  const mode = process.env.NEUROSTACK_MODE || "lite";
+  const mode = process.env.NEUROSTACK_MODE || "full";
   const extraArgs = mode === "community" ? "--extra full --extra community"
                  : mode === "full" ? "--extra full"
                  : "";

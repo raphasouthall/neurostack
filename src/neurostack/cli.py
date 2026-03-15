@@ -1428,8 +1428,18 @@ def cmd_install(args):
             print("  \033[31m✗\033[0m Cannot find project root (pyproject.toml)")
             sys.exit(1)
 
-    # 1. uv sync
-    sync_cmd = ["uv", "sync", "--project", str(project_root)]
+    # 1. uv sync — find uv on PATH or at ~/.local/bin/uv
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        fallback_uv = Path.home() / ".local" / "bin" / "uv"
+        if fallback_uv.exists():
+            uv_bin = str(fallback_uv)
+    if not uv_bin:
+        print("  \033[31m✗\033[0m uv not found.")
+        print("  Install: curl -LsSf https://astral.sh/uv/install.sh | sh")
+        sys.exit(1)
+
+    sync_cmd = [uv_bin, "sync", "--project", str(project_root)]
     if mode == "full":
         sync_cmd += ["--extra", "full"]
     elif mode == "community":
@@ -1445,8 +1455,7 @@ def cmd_install(args):
             sys.exit(1)
         print(f"  \033[32m✓\033[0m Dependencies synced ({mode})")
     except FileNotFoundError:
-        print("  \033[31m✗\033[0m uv not found.")
-        print("  Install: curl -LsSf https://astral.sh/uv/install.sh | sh")
+        print(f"  \033[31m✗\033[0m Failed to run: {uv_bin}")
         sys.exit(1)
 
     # 2. Create/update wrapper script
