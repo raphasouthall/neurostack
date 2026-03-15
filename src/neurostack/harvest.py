@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""Extract insights from Claude Code session transcripts and save as memories."""
+"""Extract insights from Claude Code session transcripts and save as memories.
+
+Two-tier approach:
+  1. Broad regex pre-filter selects candidate messages
+  2. Local LLM (Ollama) classifies and summarizes candidates
+Falls back to regex-only if Ollama is unavailable.
+"""
 
 from __future__ import annotations
 
@@ -11,24 +17,41 @@ from pathlib import Path
 
 log = logging.getLogger("neurostack")
 
-_PATTERNS: dict[str, list[re.Pattern]] = {
+# Broad pre-filter patterns - these select CANDIDATES for LLM review.
+# False positives are fine (LLM filters them); false negatives are not.
+_PREFILTER: dict[str, list[re.Pattern]] = {
     "bug": [re.compile(
-        r"\b(root cause|fixed by|bug fix|traceback"
-        r"|stack trace|the fix was|error was)\b", re.I,
+        r"\b(root cause|fixed by|bug fix|traceback|stack trace|the fix was"
+        r"|error was|the issue was|broke because|failed because"
+        r"|workaround|regression|the problem was)\b", re.I,
     )],
     "decision": [re.compile(
-        r"\b(decided to|switched from .+ to|chose .+ over"
-        r"|going with .+ because|opting for .+ instead)\b", re.I,
+        r"\b(decided to|switched from|chose .+ over|going with|opting for"
+        r"|approach:|architecture:|design:|we.ll use|plan is to"
+        r"|recommended|the flow is|pipeline:|strategy:)\b", re.I,
     )],
     "convention": [re.compile(
-        r"(always use|never use|rule:|convention:"
-        r"|must always|must never)\b", re.I,
+        r"\b(always use|never use|rule:|convention:|must always|must never"
+        r"|important:|careful:|warning:|don.t forget"
+        r"|make sure to|remember to)\b", re.I,
     )],
     "learning": [re.compile(
-        r"\b(discovered that|turns out that|TIL:"
-        r"|learned that|found that .+ because|the reason is)\b", re.I,
+        r"\b(discovered that|turns out|TIL:|learned that|found that"
+        r"|the reason is|key finding|it.s actually|didn.t know"
+        r"|wasn.t aware|interesting)\b", re.I,
+    )],
+    "observation": [re.compile(
+        r"\b(credential|api.?key|endpoint|connection.?string"
+        r"|host(name)?:|port:|url:|stored at|located at"
+        r"|config\.toml|\.env\b)\b", re.I,
     )],
 }
+# User correction patterns - high signal, scan user messages only
+_USER_CORRECTION = re.compile(
+    r"^(wait|no[,. !]|don.t|stop|wrong|instead|actually|not that"
+    r"|I said|I meant|that.s not)", re.I,
+)
+
 _MIN_LEN = 40
 _MAX_SUMMARY = 200
 
@@ -91,11 +114,14 @@ def _extract_text(entry: dict) -> str | None:
     return None
 
 
-def _classify(text: str) -> str | None:
-    """Classify text into an entity type. Returns None if no signal."""
+def _prefilter_classify(text: str, role: str) -> str | None:
+    """Pre-filter classify text. Returns candidate entity type or None."""
     if len(text) < _MIN_LEN:
         return None
-    for etype, patterns in _PATTERNS.items():
+    # User corrections are high signal
+    if role == "user" and _USER_CORRECTION.search(text):
+        return "convention"
+    for etype, patterns in _PREFILTER.items():
         for pat in patterns:
             if pat.search(text):
                 return etype
@@ -145,17 +171,114 @@ def _is_duplicate(conn, content: str, entity_type: str) -> bool:
         return False
 
 
+def _llm_classify(
+    candidates: list[dict],
+    llm_url: str,
+    llm_model: str,
+) -> list[dict]:
+    """Use local Ollama to classify and summarize candidate insights.
+
+    Sends a batch prompt with candidates. Returns only those the LLM
+    judges as genuinely worth remembering long-term.
+    """
+    import httpx
+
+    if not candidates:
+        return []
+
+    # Process in batches of 10
+    results = []
+    for batch_start in range(0, len(candidates), 10):
+        batch = candidates[batch_start:batch_start + 10]
+        numbered = []
+        for i, c in enumerate(batch):
+            role = c.get("role", "assistant")
+            text = c["text"][:800]
+            numbered.append(f"[{i + 1}] ({role}) {text}")
+
+        batch_text = "\n---\n".join(numbered)
+
+        prompt = (
+            "You are analyzing an AI coding session transcript. "
+            "For each numbered message below, decide if it contains a "
+            "genuinely useful insight worth remembering long-term. "
+            "Insights include: architectural decisions, bug root causes, "
+            "tool configurations, user corrections/preferences, "
+            "discovered facts about infrastructure.\n\n"
+            "Skip boilerplate, status updates, and routine tool output.\n\n"
+            "For each message, respond with EXACTLY one line:\n"
+            "[N] KEEP type=<bug|decision|convention|learning|observation> "
+            "summary=<one sentence summary>\n"
+            "OR:\n"
+            "[N] SKIP\n\n"
+            "Messages:\n" + batch_text + "\n\nAnalysis:"
+        )
+
+        try:
+            resp = httpx.post(
+                f"{llm_url}/api/generate",
+                json={
+                    "model": llm_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.1, "num_predict": 500},
+                    "think": False,
+                },
+                timeout=60.0,
+            )
+            resp.raise_for_status()
+            response = resp.json().get("response", "")
+            # Strip think tags if present
+            response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
+        except Exception as exc:
+            log.warning("LLM classify failed: %s - falling back to regex", exc)
+            # Fallback: keep all candidates with regex classification
+            for c in batch:
+                c["summary"] = _make_summary(c["text"])
+                c["entity_type"] = c["prefilter_type"]
+                results.append(c)
+            continue
+
+        for line in response.strip().splitlines():
+            m = re.match(
+                r"\[(\d+)\]\s+KEEP\s+type=(\w+)\s+summary=(.+)",
+                line.strip(),
+            )
+            if not m:
+                continue
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(batch):
+                c = batch[idx].copy()
+                etype = m.group(2).strip()
+                valid = {"bug", "decision", "convention", "learning", "observation"}
+                if etype in valid:
+                    c["entity_type"] = etype
+                else:
+                    c["entity_type"] = c["prefilter_type"]
+                c["summary"] = m.group(3).strip()
+                results.append(c)
+
+    return results
+
+
 def harvest_sessions(
     n_sessions: int = 1,
     dry_run: bool = False,
     embed_url: str | None = None,
+    use_llm: bool = True,
 ) -> dict:
-    """Extract insights from recent sessions. Returns report dict."""
+    """Extract insights from recent sessions. Returns report dict.
+
+    Two-tier approach:
+      1. Broad regex pre-filter selects candidate messages
+      2. Local LLM classifies and summarizes (falls back to regex-only)
+    """
     from .config import get_config
     from .memories import save_memory
     from .schema import DB_PATH, get_db
 
-    url = embed_url or get_config().embed_url
+    cfg = get_config()
+    url = embed_url or cfg.embed_url
     conn = get_db(DB_PATH)
 
     sessions = find_recent_sessions(n_sessions)
@@ -166,46 +289,74 @@ def harvest_sessions(
     counts: dict[str, int] = {}
 
     for session_file in sessions:
-        for entry in _parse_jsonl(session_file):
-                role = entry.get("message", {}).get("role", entry.get("type", ""))
-                if role not in ("assistant", "tool_result"):
-                    continue
-                text = _extract_text(entry)
-                if not text:
-                    continue
-                etype = _classify(text)
-                if not etype:
-                    continue
-                summary = _make_summary(text)
-                if len(summary) < _MIN_LEN:
-                    continue
+        entries = _parse_jsonl(session_file)
+        candidates = []
 
-                tags = _extract_tags(text)
-                ttl = 168.0 if etype == "context" else None
-                item = {"content": summary, "entity_type": etype, "tags": tags, "ttl_hours": ttl}
+        for entry in entries:
+            role = entry.get("message", {}).get("role", entry.get("type", ""))
+            if role not in ("assistant", "user"):
+                continue
+            text = _extract_text(entry)
+            if not text or len(text) < _MIN_LEN:
+                continue
+            # Skip user messages that are system XML or very long pastes
+            if role == "user" and (len(text) > 1000 or text.startswith("<")):
+                continue
 
-                if _is_duplicate(conn, summary, etype):
-                    item["status"] = "skipped (duplicate)"
-                    skipped.append(item)
-                    continue
+            prefilter_type = _prefilter_classify(text, role)
+            if not prefilter_type:
+                continue
 
-                if dry_run:
-                    item["status"] = "would save"
-                    saved.append(item)
-                else:
-                    try:
-                        mem = save_memory(
-                            conn, content=summary, tags=tags, entity_type=etype,
-                            source_agent="harvest", ttl_hours=ttl, embed_url=url,
-                        )
-                        item["memory_id"] = mem.memory_id
-                        item["status"] = "saved"
-                        saved.append(item)
-                    except Exception as exc:
-                        item["status"] = f"error: {exc}"
-                        skipped.append(item)
-                        continue
-                counts[etype] = counts.get(etype, 0) + 1
+            candidates.append({
+                "text": text,
+                "role": role,
+                "prefilter_type": prefilter_type,
+            })
+
+        # Tier 2: LLM classification
+        if use_llm and candidates:
+            classified = _llm_classify(candidates, cfg.llm_url, cfg.llm_model)
+        else:
+            # Fallback: regex classification + naive summary
+            classified = []
+            for c in candidates:
+                c["entity_type"] = c["prefilter_type"]
+                c["summary"] = _make_summary(c["text"])
+                classified.append(c)
+
+        # Save classified insights
+        for item in classified:
+            summary = item.get("summary", _make_summary(item["text"]))
+            etype = item.get("entity_type", item.get("prefilter_type", "observation"))
+
+            if len(summary) < _MIN_LEN:
+                continue
+
+            tags = _extract_tags(item["text"])
+            ttl = 168.0 if etype == "context" else None
+            record = {"content": summary, "entity_type": etype, "tags": tags, "ttl_hours": ttl}
+
+            if _is_duplicate(conn, summary, etype):
+                record["status"] = "skipped (duplicate)"
+                skipped.append(record)
+                continue
+
+            if dry_run:
+                record["status"] = "would save"
+                saved.append(record)
+            else:
+                try:
+                    mem = save_memory(
+                        conn, content=summary, tags=tags, entity_type=etype,
+                        source_agent="harvest", ttl_hours=ttl, embed_url=url,
+                    )
+                    record["memory_id"] = mem.memory_id
+                    record["status"] = "saved"
+                    saved.append(record)
+                except Exception as exc:
+                    record["status"] = f"error: {exc}"
+                    skipped.append(record)
+            counts[etype] = counts.get(etype, 0) + 1
 
     return {
         "sessions_scanned": len(sessions),
