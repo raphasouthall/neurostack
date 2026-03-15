@@ -1898,6 +1898,19 @@ def cmd_sessions(args):
         if "error" in result:
             print(f"  Error: {result['error']}")
             return
+
+        # Auto-harvest unless --no-harvest
+        if not getattr(args, "no_harvest", False):
+            try:
+                from .harvest import harvest_sessions
+                harvest_report = harvest_sessions(n_sessions=1)
+                result["harvest"] = {
+                    "saved": len(harvest_report.get("saved", [])),
+                    "skipped": len(harvest_report.get("skipped", [])),
+                }
+            except Exception as e:
+                result["harvest"] = {"error": str(e)}
+
         if args.json:
             print(json.dumps(result, indent=2))
             return
@@ -1907,6 +1920,12 @@ def cmd_sessions(args):
         )
         if result.get("summary"):
             print(f"  Summary: {result['summary']}")
+        harvest_info = result.get("harvest", {})
+        if "error" not in harvest_info:
+            saved = harvest_info.get("saved", 0)
+            skipped = harvest_info.get("skipped", 0)
+            if saved or skipped:
+                print(f"  Harvest: {saved} saved, {skipped} skipped")
         return
 
     if sessions_cmd == "list":
@@ -2678,6 +2697,10 @@ def main():
     sp.add_argument(
         "--summarize", action="store_true",
         help="Generate LLM summary of session memories",
+    )
+    sp.add_argument(
+        "--no-harvest", action="store_true",
+        help="Skip auto-harvest of session insights",
     )
 
     # sessions list
