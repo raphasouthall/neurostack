@@ -406,7 +406,7 @@ const FEATURES = [
   {
     label: 'Protocol',
     name: 'MCP Server',
-    desc: '12-tool Model Context Protocol server. Works with Claude Code, Codex, Gemini CLI, Cursor, Windsurf — any MCP-compatible client. Provider-agnostic by design.',
+    desc: '14-tool Model Context Protocol server. Works with Claude Code, Codex, Gemini CLI, Cursor, Windsurf - any MCP-compatible client. Provider-agnostic by design.',
     ref: 'Standard transport: stdio or SSE'
   },
   {
@@ -419,7 +419,19 @@ const FEATURES = [
     label: 'Scoping',
     name: 'Workspace Scoping',
     desc: 'Scope search and memory to subdirectories with --workspace flag or NEUROSTACK_WORKSPACE env var. Keeps project context isolated without separate databases.',
-    ref: 'Contextual binding — Howard & Kahana 2002'
+    ref: 'Contextual binding - Howard & Kahana 2002'
+  },
+  {
+    label: 'Lifecycle',
+    name: 'Session Tracking',
+    desc: 'Track AI coding sessions with start/end lifecycle hooks. Sessions group memories, enable summaries, and auto-clean orphaned sessions after crashes.',
+    ref: 'Episodic boundary detection - Zacks et al. 2007'
+  },
+  {
+    label: 'Extraction',
+    name: 'LLM-Assisted Harvest',
+    desc: 'Two-tier insight extraction from session transcripts. Broad regex pre-filter selects candidates, then local LLM classifies and summarizes. Falls back to regex-only if Ollama is unavailable.',
+    ref: 'Consolidation during offline periods - Diekelmann & Born 2010'
   },
 ]
 
@@ -541,7 +553,12 @@ const CLI_GROUPS = [
     label: 'Server & Sessions',
     commands: [
       { cmd: 'neurostack serve', desc: 'Start MCP server. Flag: --transport [stdio|sse]' },
+      { cmd: 'neurostack sessions start', desc: 'Start a new memory session. Flags: --source, --workspace' },
+      { cmd: 'neurostack sessions end <id>', desc: 'End a session. Flags: --summarize (LLM summary), --no-harvest (skip auto-harvest)' },
+      { cmd: 'neurostack sessions list', desc: 'List recent sessions with status and memory counts' },
+      { cmd: 'neurostack sessions show <id>', desc: 'Show session details and associated memories' },
       { cmd: 'neurostack sessions search "q"', desc: 'Search session transcripts via FTS5' },
+      { cmd: 'neurostack harvest', desc: 'Extract insights from recent sessions using two-tier regex + LLM classification. Flags: --sessions N, --dry-run' },
       { cmd: 'neurostack brief', desc: 'Generate a compact ~500-token session context brief', gif: 'brief.gif' },
     ]
   },
@@ -707,10 +724,28 @@ const MCP_TOOLS = [
     useCase: 'Reviewing what an agent has remembered — auditing conventions, checking for stale context.'
   },
   {
+    name: 'vault_session_start',
+    purpose: 'Start a new memory session. Sessions group memories and enable lifecycle tracking with auto-harvest on end.',
+    params: [
+      { name: 'source_agent', type: 'str', desc: 'Agent identifier (e.g. "claude-code"). Optional' },
+      { name: 'workspace', type: 'str', desc: 'Working directory scope. Optional' },
+    ],
+    useCase: 'Called at the start of an AI coding session to begin tracking memories and insights.'
+  },
+  {
+    name: 'vault_session_end',
+    purpose: 'End a memory session. Optionally generates an LLM summary of session memories and auto-harvests insights from the transcript.',
+    params: [
+      { name: 'session_id', type: 'int', desc: 'Session ID to end (required)' },
+      { name: 'summarize', type: 'bool', desc: 'Generate LLM summary of session memories. Default: false' },
+    ],
+    useCase: 'Called at session end to close lifecycle, summarize work, and harvest insights.'
+  },
+  {
     name: 'session_brief',
     purpose: 'Compact ~500-token session context combining recent vault changes, git commits, external memories, top connected notes, and time context.',
     params: [],
-    useCase: 'Lightweight context injection at session start — get up to speed fast.'
+    useCase: 'Lightweight context injection at session start - get up to speed fast.'
   },
 ]
 
@@ -752,7 +787,7 @@ function MCPTools() {
       <section className="section" id="mcp">
         <SectionHeader number="05" title="MCP Server Tools" />
         <p style={{ marginBottom: 'var(--space-lg)', color: 'var(--ink-light)', maxWidth: '60ch' }}>
-          NeuroStack exposes a Model Context Protocol server with 12 tools.
+          NeuroStack exposes a Model Context Protocol server with 14 tools.
           Works with{' '}
           <a href="https://docs.anthropic.com/en/docs/claude-code/cli-usage" target="_blank" rel="noopener noreferrer">Claude Code</a>,{' '}
           <a href="https://developers.openai.com/codex/mcp/" target="_blank" rel="noopener noreferrer">Codex</a>,{' '}
@@ -958,6 +993,8 @@ const COMPARISON = [
   { feature: 'CLI',                    lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'Yes',      notion: 'No' },
   { feature: 'MCP server',             lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
   { feature: 'Agent memory',           lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
+  { feature: 'Session lifecycle',     lite: 'Yes',        full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
+  { feature: 'LLM harvest',          lite: 'No',         full: 'Yes',        obs: 'No',        khoj: 'No',       notion: 'No' },
   { feature: 'Open source',            lite: 'Apache-2.0', full: 'Apache-2.0', obs: 'Core only', khoj: 'Yes',      notion: 'No' },
   { feature: 'Install size',           lite: '~130MB',     full: '~560MB',     obs: '~250MB',    khoj: '~500MB',   notion: 'Cloud' },
   { feature: 'GPU required',           lite: 'No',         full: 'Optional',   obs: 'No',        khoj: 'Optional', notion: 'No' },
