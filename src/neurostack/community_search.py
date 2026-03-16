@@ -24,12 +24,13 @@ from .schema import DB_PATH, get_db
 
 log = logging.getLogger("neurostack")
 
-from .config import get_config
+from .config import _auth_headers, get_config
 
 _cfg = get_config()
 SUMMARIZE_URL = _cfg.llm_url
 EMBED_URL = _cfg.embed_url
 SUMMARIZE_MODEL = _cfg.llm_model
+_LLM_HEADERS = _auth_headers(_cfg.llm_api_key)
 
 _MAP_PROMPT = """You are analyzing a knowledge community summary to answer a question.
 
@@ -197,18 +198,20 @@ def global_query(
         )
         try:
             resp = httpx.post(
-                f"{summarize_url}/api/generate",
+                f"{summarize_url}/v1/chat/completions",
+                headers=_LLM_HEADERS,
                 json={
                     "model": model,
-                    "prompt": prompt,
+                    "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 256},
-                    "think": False,
+                    "reasoning_effort": "none",
+                    "temperature": 0.1,
+                    "max_tokens": 256,
                 },
                 timeout=60.0,
             )
             resp.raise_for_status()
-            finding = resp.json().get("response", "").strip()
+            finding = resp.json()["choices"][0]["message"]["content"].strip()
             if finding:
                 findings.append(f"[{hit['title']}]\n{finding}")
         except Exception as e:
@@ -228,18 +231,19 @@ def global_query(
     )
     try:
         resp = httpx.post(
-            f"{summarize_url}/api/generate",
+            f"{summarize_url}/v1/chat/completions",
             json={
                 "model": model,
-                "prompt": reduce_prompt,
+                "messages": [{"role": "user", "content": reduce_prompt}],
                 "stream": False,
-                "options": {"temperature": 0.3, "num_predict": 1024},
-                "think": False,
+                "reasoning_effort": "none",
+                "temperature": 0.3,
+                "max_tokens": 1024,
             },
             timeout=120.0,
         )
         resp.raise_for_status()
-        answer = resp.json().get("response", "").strip()
+        answer = resp.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
         log.warning(f"Reduce step failed: {e}")
         answer = "\n\n".join(findings)

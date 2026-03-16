@@ -29,12 +29,13 @@ from .schema import DB_PATH, get_db
 
 log = logging.getLogger("neurostack")
 
-from .config import get_config
+from .config import _auth_headers, get_config
 
 _cfg = get_config()
 SUMMARIZE_URL = _cfg.llm_url
 EMBED_URL = _cfg.embed_url
 SUMMARIZE_MODEL = _cfg.llm_model
+_LLM_HEADERS = _auth_headers(_cfg.llm_api_key)
 
 COMMUNITY_PROMPT = (
     "You are summarizing a cluster of thematically"
@@ -134,29 +135,26 @@ def _generate_community_summary(
         note_summaries=notes_str or "(none)",
     )
 
-    schema = {
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "summary": {"type": "string"},
-        },
-        "required": ["title", "summary"],
-    }
-
     resp = httpx.post(
-        f"{base_url}/api/generate",
+        f"{base_url}/v1/chat/completions",
+        headers=_LLM_HEADERS,
         json={
             "model": model,
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "format": schema,
-            "options": {"temperature": 0.3, "num_predict": 512},
-            "think": False,
+            "reasoning_effort": "none",
+            "temperature": 0.3,
+            "max_tokens": 512,
         },
         timeout=120.0,
     )
     resp.raise_for_status()
-    raw = resp.json().get("response", "").strip()
+    raw = resp.json()["choices"][0]["message"]["content"].strip()
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        import re
+        raw = re.sub(r"^```\w*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw).strip()
 
     try:
         parsed = json.loads(raw)

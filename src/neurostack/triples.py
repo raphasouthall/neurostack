@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""Knowledge graph triple extraction using Ollama.
+"""Knowledge graph triple extraction (OpenAI-compatible /v1/ endpoints).
 
 Extracts Subject-Predicate-Object triples from vault notes for
 token-efficient structured retrieval (~10-20 tokens per fact vs
@@ -9,16 +9,18 @@ token-efficient structured retrieval (~10-20 tokens per fact vs
 
 import json
 import logging
+import re
 
 import httpx
 
-from .config import get_config
+from .config import _auth_headers, get_config
 
 log = logging.getLogger("neurostack")
 
 _cfg = get_config()
 DEFAULT_SUMMARIZE_URL = _cfg.llm_url
 TRIPLE_MODEL = _cfg.llm_model
+_LLM_HEADERS = _auth_headers(_cfg.llm_api_key)
 
 TRIPLE_PROMPT = """Extract knowledge graph triples from this note. \
 Each triple is a (subject, predicate, object) fact.
@@ -60,37 +62,26 @@ def extract_triples(
 
     prompt = TRIPLE_PROMPT.format(title=title, content=content)
 
-    triple_schema = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "s": {"type": "string"},
-                "p": {"type": "string"},
-                "o": {"type": "string"},
-            },
-            "required": ["s", "p", "o"],
-        },
-    }
-
     resp = httpx.post(
-        f"{base_url}/api/generate",
+        f"{base_url}/v1/chat/completions",
+        headers=_LLM_HEADERS,
         json={
             "model": model,
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "format": triple_schema,
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 2048,
-            },
-            "think": False,
+            "reasoning_effort": "none",
+            "temperature": 0.2,
+            "max_tokens": 2048,
         },
         timeout=180.0,
     )
     resp.raise_for_status()
     data = resp.json()
-    raw = data.get("response", "").strip()
+    raw = data["choices"][0]["message"]["content"].strip()
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        raw = re.sub(r"^```\w*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw).strip()
 
     try:
         triples = json.loads(raw)
