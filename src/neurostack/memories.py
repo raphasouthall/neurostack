@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -42,6 +43,8 @@ class Memory:
     revision_count: int = 1
     merge_count: int = 0
     merged_from: list[int] | None = None
+    uuid: str | None = None
+    file_path: str | None = None
     near_duplicates: list[dict] | None = None
     score: float = 0.0
     suggested_tags: list[str] | None = None
@@ -176,16 +179,19 @@ def save_memory(
         log.debug("Could not embed memory (non-fatal): %s", exc)
 
     tags_json = json.dumps(tags or [])
+    memory_uuid = str(uuid.uuid4())
 
     cursor = conn.execute(
         """
-        INSERT INTO memories (content, tags, entity_type, source_agent,
-                              workspace, embedding, expires_at,
-                              session_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO memories (content, tags, entity_type,
+                              source_agent, workspace,
+                              embedding, expires_at,
+                              session_id, uuid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (content, tags_json, entity_type, source_agent,
-         workspace, embedding_blob, expires_at, session_id),
+         workspace, embedding_blob, expires_at,
+         session_id, memory_uuid),
     )
     conn.commit()
 
@@ -227,8 +233,11 @@ def save_memory(
         created_at=created_at,
         expires_at=expires_at,
         session_id=session_id,
+        uuid=memory_uuid,
         near_duplicates=near_duplicates,
-        suggested_tags=_suggest_tags_for_save(conn, content, tags, entity_type),
+        suggested_tags=_suggest_tags_for_save(
+            conn, content, tags, entity_type
+        ),
     )
 
 
@@ -403,14 +412,18 @@ def find_similar_memories(
     try:
         rows = conn.execute(
             f"""
-            SELECT m.memory_id, m.content, m.tags, m.entity_type,
-                   m.source_agent, m.workspace, m.created_at, m.expires_at,
-                   m.session_id, m.embedding, m.updated_at, m.revision_count,
-                   m.merge_count, m.merged_from
+            SELECT m.memory_id, m.content, m.tags,
+                   m.entity_type, m.source_agent,
+                   m.workspace, m.created_at,
+                   m.expires_at, m.session_id,
+                   m.embedding, m.updated_at,
+                   m.revision_count, m.merge_count,
+                   m.merged_from, m.uuid, m.file_path
             FROM memories_fts
             JOIN memories m ON m.memory_id = memories_fts.rowid
             WHERE memories_fts MATCH ?{where_extra}
-              AND (m.expires_at IS NULL OR m.expires_at > datetime('now'))
+              AND (m.expires_at IS NULL
+                   OR m.expires_at > datetime('now'))
             LIMIT ?
             """,
             params + [limit * 3],
@@ -605,8 +618,11 @@ def search_memories(
 
     rows = conn.execute(
         f"""
-        SELECT memory_id, content, tags, entity_type, source_agent,
-               workspace, created_at, expires_at
+        SELECT memory_id, content, tags, entity_type,
+               source_agent, workspace, created_at,
+               expires_at, session_id, updated_at,
+               revision_count, merge_count,
+               merged_from, uuid, file_path
         FROM memories
         {where}
         ORDER BY created_at DESC
@@ -651,9 +667,14 @@ def _hybrid_memory_search(
 
         rows = conn.execute(
             f"""
-            SELECT m.memory_id, m.content, m.tags, m.entity_type,
-                   m.source_agent, m.workspace, m.created_at, m.expires_at,
-                   m.embedding, rank
+            SELECT m.memory_id, m.content, m.tags,
+                   m.entity_type, m.source_agent,
+                   m.workspace, m.created_at,
+                   m.expires_at, m.embedding,
+                   m.session_id, m.updated_at,
+                   m.revision_count, m.merge_count,
+                   m.merged_from, m.uuid,
+                   m.file_path, rank
             FROM memories_fts
             JOIN memories m ON m.memory_id = memories_fts.rowid
             WHERE memories_fts MATCH ?{where_extra}
@@ -713,8 +734,13 @@ def _hybrid_memory_search(
 
             rows = conn.execute(
                 f"""
-                SELECT memory_id, content, tags, entity_type, source_agent,
-                       workspace, created_at, expires_at, embedding
+                SELECT memory_id, content, tags,
+                       entity_type, source_agent,
+                       workspace, created_at,
+                       expires_at, embedding,
+                       session_id, updated_at,
+                       revision_count, merge_count,
+                       merged_from, uuid, file_path
                 FROM memories
                 WHERE {' AND '.join(where_parts)}
                 """,
@@ -879,8 +905,8 @@ def get_session(
     memories = conn.execute(
         """
         SELECT memory_id, content, tags, entity_type,
-               source_agent, workspace, created_at, expires_at,
-               session_id
+               source_agent, workspace, created_at,
+               expires_at, session_id, uuid, file_path
         FROM memories
         WHERE session_id = ?
         ORDER BY created_at ASC
@@ -1067,5 +1093,7 @@ def _row_to_memory(row: dict | sqlite3.Row, score: float = 0.0) -> Memory:
         revision_count=row.get("revision_count") or 1,
         merge_count=row.get("merge_count") or 0,
         merged_from=merged_from,
+        uuid=row.get("uuid"),
+        file_path=row.get("file_path"),
         score=score,
     )

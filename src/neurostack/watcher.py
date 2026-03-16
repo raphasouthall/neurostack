@@ -38,17 +38,28 @@ DEBOUNCE_SECONDS = 2.0
 class DebouncedHandler(FileSystemEventHandler):
     """Debounces file changes and triggers indexing."""
 
-    def __init__(self, vault_root: Path, embed_url: str, summarize_url: str):
+    def __init__(
+        self,
+        vault_root: Path,
+        embed_url: str,
+        summarize_url: str,
+        exclude_dirs: list[str] | None = None,
+    ):
         self.vault_root = vault_root
         self.embed_url = embed_url
         self.summarize_url = summarize_url
         self._timers: dict[str, Timer] = {}
+        self._exclude_dirs = set(
+            exclude_dirs or [],
+        )
 
     def _should_process(self, path: str) -> bool:
         p = Path(path)
         if not p.suffix == ".md":
             return False
-        if ".git" in p.parts or ".obsidian" in p.parts or ".trash" in p.parts:
+        skip = {".git", ".obsidian", ".trash"}
+        skip.update(self._exclude_dirs)
+        if skip.intersection(p.parts):
             return False
         return True
 
@@ -249,6 +260,7 @@ def full_index(
     summarize_url: str = None,
     skip_summary: bool = False,
     skip_triples: bool = False,
+    exclude_dirs: list[str] | None = None,
 ):
     """Full re-index of the entire vault."""
     embed_url = embed_url or _cfg.embed_url
@@ -277,10 +289,12 @@ def full_index(
 
     conn = get_db(DB_PATH)
     md_files = sorted(vault_root.rglob("*.md"))
-    # Filter out .git, .obsidian, .trash
+    # Filter out .git, .obsidian, .trash, and any extra exclude dirs
+    skip_parts = {".git", ".obsidian", ".trash"}
+    skip_parts.update(exclude_dirs or [])
     md_files = [
         f for f in md_files
-        if ".git" not in f.parts and ".obsidian" not in f.parts and ".trash" not in f.parts
+        if not skip_parts.intersection(f.parts)
     ]
 
     total = len(md_files)
@@ -550,13 +564,17 @@ def run_watcher(
     vault_root: Path = VAULT_ROOT,
     embed_url: str = None,
     summarize_url: str = None,
+    exclude_dirs: list[str] | None = None,
 ):
     """Run the watchdog file watcher."""
     embed_url = embed_url or _cfg.embed_url
     summarize_url = summarize_url or _cfg.llm_url
     log.info(f"Watching {vault_root} for changes...")
 
-    handler = DebouncedHandler(vault_root, embed_url, summarize_url)
+    handler = DebouncedHandler(
+        vault_root, embed_url, summarize_url,
+        exclude_dirs=exclude_dirs,
+    )
     observer = Observer()
     observer.schedule(handler, str(vault_root), recursive=True)
     observer.start()
