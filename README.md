@@ -34,8 +34,8 @@ No prior config needed. No Python, git, or curl required.
 
 | Mode | What you get | Size | GPU needed? |
 |------|-------------|------|-------------|
-| **lite** (default) | FTS5 search, wiki-link graph, stale note detection, MCP server | ~130 MB | No |
-| **full** | + semantic search, AI summaries, cross-encoder reranking | ~560 MB | No (CPU inference) |
+| **lite** | FTS5 search, wiki-link graph, stale note detection, MCP server | ~130 MB | No |
+| **full** (default) | + semantic search, AI summaries, cross-encoder reranking | ~560 MB | No (CPU inference) |
 | **community** | + GraphRAG topic clustering (Leiden algorithm) | ~575 MB | No |
 
 The `install` command handles everything — dependency syncing via `uv`, Ollama installation, model pulls, and config updates. It detects what's already installed and skips unnecessary work:
@@ -58,7 +58,7 @@ When choosing full or community mode:
 - **Ollama not installed?** — offers to install it automatically (Linux) or shows the download link (macOS).
 - **Models already pulled?** — skips the download and moves on.
 
-You can re-run `neurostack install` at any time to upgrade between modes (e.g., lite → full).
+You can re-run `neurostack install` at any time to switch modes (e.g., full -> community, or downgrade to lite).
 
 <details>
 <summary><strong>Alternative install methods</strong></summary>
@@ -69,11 +69,11 @@ pipx install neurostack              # isolated environment
 pip install neurostack               # inside a venv
 uv tool install neurostack           # uv users
 
-# One-line script (lite mode)
+# One-line script (full mode, default)
 curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | bash
 
-# One-line script (full mode)
-curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | NEUROSTACK_MODE=full bash
+# One-line script (lite mode - FTS5 only, no ML deps)
+curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/install.sh | NEUROSTACK_MODE=lite bash
 ```
 
 > **Note:** On Ubuntu 23.04+, Debian 12+, and Fedora 38+, bare `pip install` outside a virtual environment is blocked by [PEP 668](https://peps.python.org/pep-0668/). Use `npm`, `pipx`, `uv tool install`, or create a venv first.
@@ -316,11 +316,11 @@ neurostack decay --json                       # Machine-readable
 
 ## What gets installed
 
-`npm install -g neurostack` bootstraps the CLI, then `neurostack install` lets you choose your mode. Here's exactly what ends up on your machine:
+`npm install -g neurostack` bootstraps the CLI with full mode by default (semantic search, summaries, reranking). Use `neurostack install` to switch modes. Here's exactly what ends up on your machine:
 
-### Lite mode (default)
+### Lite mode
 
-Installed with `neurostack install --mode lite` (or the default interactive selection).
+Installed with `NEUROSTACK_MODE=lite npm install -g neurostack` or `neurostack install --mode lite`.
 
 | Component | Location | Size | What it is |
 |-----------|----------|------|------------|
@@ -334,9 +334,9 @@ Installed with `neurostack install --mode lite` (or the default interactive sele
 
 **Total: ~130 MB.** No GPU needed. Keyword search, wiki-link graph, stale note detection, and MCP server all work in lite mode.
 
-### Full mode
+### Full mode (default)
 
-Installed with `neurostack install --mode full`. Adds ML dependencies on top of lite.
+Installed automatically by `npm install -g neurostack`, or with `neurostack install --mode full`. Adds ML dependencies on top of lite.
 
 | Component | Location | Size | What it is |
 |-----------|----------|------|------------|

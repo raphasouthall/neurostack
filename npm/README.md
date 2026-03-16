@@ -24,14 +24,19 @@ npx neurostack search "what do I know about deployment?"
 
 The installer handles everything else automatically (installs `uv`, clones the repo, sets up a virtual environment).
 
-## Full mode
+## Modes
 
-For semantic search and AI summaries, install with [Ollama](https://ollama.ai):
+Full mode (semantic search, AI summaries, reranking) is installed by default. For Ollama-powered features, also pull the models:
 
 ```bash
-NEUROSTACK_MODE=full npm install -g neurostack
 ollama pull nomic-embed-text
 ollama pull qwen2.5:3b
+```
+
+For a minimal install without ML dependencies:
+
+```bash
+NEUROSTACK_MODE=lite npm install -g neurostack
 ```
 
 ## Links
