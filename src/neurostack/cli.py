@@ -1361,6 +1361,54 @@ def _pull_ollama_models(ollama_bin, embed_model, llm_model, subprocess):
             )
 
 
+def cmd_skills(args):
+    """Manage agent skill files (.md slash commands)."""
+    import shutil
+
+    skills_dir = Path(__file__).resolve().parent / "skills"
+    subcmd = getattr(args, "skills_command", None)
+
+    if subcmd == "list":
+        if not skills_dir.exists():
+            print("No skills directory found.")
+            return
+        files = sorted(skills_dir.glob("*.md"))
+        if not files:
+            print("No skill files found.")
+            return
+        for f in files:
+            print(f"  {f.stem}")
+        print(f"\n{len(files)} skill(s) available.")
+        return
+
+    if subcmd == "install":
+        if not skills_dir.exists():
+            print("No skills directory found in package.")
+            sys.exit(1)
+
+        target = Path.home() / ".claude" / "commands"
+        target.mkdir(parents=True, exist_ok=True)
+
+        files = sorted(skills_dir.glob("*.md"))
+        if not files:
+            print("No skill files found.")
+            return
+
+        for f in files:
+            dest = target / f.name
+            shutil.copy2(f, dest)
+            print(f"  Installed {f.name} -> {dest}")
+        print(
+            f"\n{len(files)} skill(s) installed to {target}"
+        )
+        return
+
+    # No subcommand - show help
+    print("Usage: neurostack skills {install,list}")
+    print("  install  Copy skill files to ~/.claude/commands/")
+    print("  list     List available skills")
+
+
 def cmd_update(args):
     """Pull latest source from GitHub and re-sync dependencies."""
     import shutil
@@ -2794,6 +2842,18 @@ def main():
     p.add_argument("--embed-model", help="Embedding model (default: nomic-embed-text)")
     p.add_argument("--llm-model", help="LLM model (default: phi3.5)")
     p.set_defaults(func=cmd_install)
+
+    # skills
+    p = sub.add_parser(
+        "skills",
+        help="Manage agent skill files (.md slash commands)",
+    )
+    skills_sub = p.add_subparsers(dest="skills_command")
+    skills_sub.add_parser(
+        "install", help="Copy skill files to ~/.claude/commands/",
+    )
+    skills_sub.add_parser("list", help="List available skills")
+    p.set_defaults(func=cmd_skills)
 
     # update
     p = sub.add_parser(
