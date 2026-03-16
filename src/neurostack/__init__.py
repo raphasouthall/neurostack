@@ -2,4 +2,4 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """NeuroStack — AI-provider-agnostic, neuroscience-grounded knowledge management."""
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
