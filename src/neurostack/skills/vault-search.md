@@ -18,6 +18,7 @@ NeuroStack has multiple retrieval tools. Pick the right one:
 | vault_ask | RAG Q&A with citations | Expensive (LLM) |
 | vault_graph | Wiki-link neighborhood of a specific note | Cheap |
 | vault_related | Semantically similar notes | Moderate |
+| vault_memories | Search agent-written memories | Cheap |
 
 ## Decision tree
 

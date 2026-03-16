@@ -37,6 +37,14 @@ vault_forget(memory_id=42)
 vault_memories(query="terraform", entity_type="decision", workspace="work/acme")
 ```
 
+## Write-back
+
+With write-back enabled (`[writeback] enabled = true` in config.toml),
+qualifying memories (decision, convention, learning, bug) are automatically
+persisted as markdown files in `memories/{entity_type}/{YYYY-MM}/{uuid}.md`.
+
+Migrate existing memories: `neurostack writeback migrate`
+
 ## Memory types guide
 - **decision**: Architectural or strategic choices made
 - **convention**: Patterns or rules established

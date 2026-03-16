@@ -24,7 +24,8 @@ Entity types: observation, decision, convention, learning, context, bug
 ```
 vault_session_end(session_id=<id>)
 ```
-This ends the session, generates a summary, and optionally runs harvest.
+This ends the session, generates a summary, optionally runs harvest,
+and clears the LLM result cache (vault_communities/vault_ask).
 
 ## Review past sessions
 ```
