@@ -6,13 +6,10 @@
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/sponsor-NeuroStack-ea4aaa?logo=githubsponsors)](https://github.com/sponsors/raphasouthall)
-[![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-support-yellow?logo=buymeacoffee)](https://buymeacoffee.com/raphasouthall)
 
-> **Looking for sponsors** — NeuroStack is built and maintained by a single developer. If it's useful to you, consider [sponsoring the project](https://github.com/sponsors/raphasouthall) or [buying me a coffee](https://buymeacoffee.com/raphasouthall) to help fund development, hosting, and new features.
+**Long-term memory for your AI tools.** A self-hosted MCP server and CLI that indexes your Markdown vault by meaning, gives AI agents persistent memory across sessions, and flags notes that have gone stale - using techniques from memory neuroscience. Works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-usage), [Codex](https://developers.openai.com/codex/mcp/), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), Cursor, Windsurf, or any MCP-compatible client. Fully local. Your vault files are never modified or uploaded.
 
-**Your second brain, starting today.** Install one command, answer a few questions, and you have a knowledge vault that gets smarter every day you use it.
-
-NeuroStack helps you start and grow a personal knowledge base — whether you have thousands of notes or none at all. It scaffolds a vault, indexes everything by meaning, surfaces what needs attention, and gives your AI tools long-term memory. It works with **any AI provider** — use it as an [MCP server](https://modelcontextprotocol.io), as a [CLI tool alongside Claude](https://docs.anthropic.com/en/docs/claude-code/cli-usage), or pipe its output into any LLM workflow. Everything runs locally. Your notes never leave your machine.
+<img src="docs/demo.gif" alt="NeuroStack demo - stats, search, graph, and daily brief" width="720">
 
 ## Get started
 
@@ -22,13 +19,23 @@ neurostack install
 neurostack init
 ```
 
-1. **`npm install -g neurostack`** — bootstraps the CLI (handles Python, uv, and all dependencies automatically).
-2. **`neurostack install`** — interactive wizard to choose your installation mode and optionally set up Ollama models.
-3. **`neurostack init`** — walks you through vault location, LLM config, and profession packs.
+No prior config needed. No Python, git, or curl required - the npm package bootstraps everything.
 
-No prior config needed. No Python, git, or curl required.
+> **Lite mode** works without a GPU or Ollama. **Full mode** (default) requires [Ollama](https://ollama.ai) running locally for semantic search and AI summaries - the install wizard handles setup.
 
-<img src="docs/demo.gif" alt="NeuroStack demo — stats, search, graph, and daily brief" width="720">
+## Why NeuroStack?
+
+| | NeuroStack | Obsidian + Smart Connections | Mem0 | Raw RAG pipeline |
+|---|---|---|---|---|
+| **MCP server** (Claude, Codex, Gemini) | Yes - 16 typed tools | No | Yes | Build your own |
+| **Agent write-back memory** | Yes - memories persist across sessions | No | Yes | No |
+| **Stale note detection** | Yes - flags misleading notes before they pollute results | No | No | No |
+| **Session harvest** | Yes - extracts decisions/bugs/learnings from transcripts | No | No | No |
+| **Runs fully local** | Yes - SQLite + Ollama, nothing leaves your machine | Plugin-dependent | Cloud-hosted | Depends |
+| **Works with existing vaults** | Yes - any Markdown folder, never modifies your files | Obsidian only | No vault concept | Depends |
+| **Token-efficient retrieval** | Tiered: triples (~15 tok) -> summaries (~75 tok) -> full (~300 tok) | Full chunks | Full chunks | Full chunks |
+
+NeuroStack is not an Obsidian replacement - it's the indexing, retrieval, and maintenance layer that sits alongside your editor and gives AI tools structured access to your knowledge.
 
 ### Installation modes
 
@@ -38,13 +45,13 @@ No prior config needed. No Python, git, or curl required.
 | **full** (default) | + semantic search, AI summaries, cross-encoder reranking | ~560 MB | No (CPU inference) |
 | **community** | + GraphRAG topic clustering (Leiden algorithm) | ~575 MB | No |
 
-The `install` command handles everything — dependency syncing via `uv`, Ollama installation, model pulls, and config updates. It detects what's already installed and skips unnecessary work:
+The `install` command handles everything -dependency syncing via `uv`, Ollama installation, model pulls, and config updates. It detects what's already installed and skips unnecessary work:
 
 ```bash
-# Interactive — walks you through mode, Ollama, and model selection
+# Interactive -walks you through mode, Ollama, and model selection
 neurostack install
 
-# Non-interactive — specify mode directly
+# Non-interactive -specify mode directly
 neurostack install --mode full
 
 # Full mode + pull Ollama models in one shot
@@ -55,8 +62,8 @@ neurostack install --mode full --pull-models --embed-model nomic-embed-text --ll
 ```
 
 When choosing full or community mode:
-- **Ollama not installed?** — offers to install it automatically (Linux) or shows the download link (macOS).
-- **Models already pulled?** — skips the download and moves on.
+- **Ollama not installed?** -offers to install it automatically (Linux) or shows the download link (macOS).
+- **Models already pulled?** -skips the download and moves on.
 
 You can re-run `neurostack install` at any time to switch modes (e.g., full -> community, or downgrade to lite).
 
@@ -88,22 +95,19 @@ neurostack uninstall
 
 ## What it does
 
-### Build — start your second brain in minutes
-- **Interactive setup** — `neurostack init` walks you through vault location, model selection, and profession packs. No docs to read first.
-- **Scaffolds your vault** — profession-ready templates and folder structures so you're not staring at an empty folder.
-- **Onboards existing notes** — point it at any folder of Markdown files and it adds frontmatter, generates indexes, and sets up the vault structure. No manual migration.
-- **Works with what you have** — connects to any Markdown vault. Use [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
+### Build - start in minutes, not hours
+- **No blank-page problem** - `neurostack init` scaffolds a vault with profession-specific templates and seed notes so you're productive immediately.
+- **Bring your existing notes** - point it at any folder of Markdown files. NeuroStack indexes them without modifying a single file. Keep using [Obsidian](https://obsidian.md), [Logseq](https://logseq.com), or plain `.md` files.
 
-### Maintain — your vault gets better every day
-- **Finds stale notes** — surfaces notes that keep appearing in searches where they don't belong. The signal to review before they mislead you or your AI.
-- **Remembers what matters** — recent, active notes get priority. Old, unused notes fade — just like real memory.
-- **Maps your knowledge** — reveals hidden connections and topic clusters you never planned.
-- **Watches for changes** — auto-indexes new and updated notes so your vault is always current.
+### Maintain - stop your AI from citing outdated notes
+- **Stale note detection** - surfaces notes that keep appearing in the wrong search contexts before they mislead you or your AI. Based on prediction error signals from memory neuroscience (Sinclair & Bhatt 2022).
+- **Excitability decay** - recently active notes get priority. Old, unused notes fade naturally, just like biological memory (Han et al. 2007).
+- **Auto-indexing** - watches your vault for changes and re-indexes in the background.
 
-### Search — find anything by meaning, not just keywords
-- **Searches by meaning** — finds notes by what they say, not just what they're titled. Ask a question, get an answer.
-- **Works with any AI tool** — use as an MCP server with [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-usage), [Codex](https://developers.openai.com/codex/mcp/), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), Cursor, Windsurf, or any MCP-compatible client. Or pipe CLI output into any LLM workflow.
-- **Saves tokens** — tiered retrieval sends your AI key facts first, full notes only when needed. 96% fewer tokens per query than naive RAG.
+### Search - find anything by meaning
+- **Semantic + keyword hybrid** - finds notes by what they mean, not just what they're titled. Ask a question, get an answer.
+- **Token-efficient** - tiered retrieval sends your AI key facts first (~15 tokens), escalating to summaries (~75 tokens) or full content (~300 tokens) only when needed. Most queries resolve at the cheapest tier.
+- **Agent memory** - your AI can write back observations, decisions, and conventions that surface automatically in future searches.
 
 <img src="docs/screenshots/prediction-errors.svg" alt="NeuroStack surfacing stale notes" width="720">
 
@@ -142,7 +146,7 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 ## Profession packs
 
-NeuroStack ships with profession-specific starter packs — domain templates, seed notes, and workflow guidance so you're not starting from a blank vault.
+NeuroStack ships with profession-specific starter packs -domain templates, seed notes, and workflow guidance so you're not starting from a blank vault.
 
 ```bash
 # The interactive setup offers profession packs automatically
@@ -156,19 +160,19 @@ neurostack scaffold --list
 ```
 
 Each pack adds:
-- **Templates** — domain-specific note formats (e.g., experiment logs, synthesis notes)
-- **Seed research notes** — interconnected examples showing the vault in action
-- **Extra directories** — folder structure tailored to the workflow
-- **CLAUDE.md guidance** — workflow instructions for your AI assistant
+- **Templates** -domain-specific note formats (e.g., experiment logs, synthesis notes)
+- **Seed research notes** -interconnected examples showing the vault in action
+- **Extra directories** -folder structure tailored to the workflow
+- **CLAUDE.md guidance** -workflow instructions for your AI assistant
 
 | Pack | Description | Templates | Seed Notes |
 |------|-------------|-----------|------------|
-| **researcher** | Academic or independent researcher — literature reviews, experiments, thesis work | synthesis-note, experiment-log, method-note, paper-project | 6 |
-| **developer** | Software developer or engineer — architecture decisions, code reviews, debugging | architecture-decision, code-review-note, debugging-log, technical-spec | 6 |
-| **writer** | Writer or content creator — fiction, articles, worldbuilding, craft notes | article-draft, character-profile, story-outline, world-building-note | 5 |
-| **student** | Student or lifelong learner — lectures, study guides, courses, exam prep | assignment-tracker, course-overview, lecture-note, study-guide | 5 |
-| **devops** | DevOps engineer or SRE — runbooks, incidents, infrastructure, change management | change-request, incident-report, infrastructure-note, runbook | 6 |
-| **data-scientist** | Data scientist or ML engineer — analyses, models, datasets, experiment tracking | analysis-note, dataset-note, model-card, pipeline-note | 6 |
+| **researcher** | Academic or independent researcher -literature reviews, experiments, thesis work | synthesis-note, experiment-log, method-note, paper-project | 6 |
+| **developer** | Software developer or engineer -architecture decisions, code reviews, debugging | architecture-decision, code-review-note, debugging-log, technical-spec | 6 |
+| **writer** | Writer or content creator -fiction, articles, worldbuilding, craft notes | article-draft, character-profile, story-outline, world-building-note | 5 |
+| **student** | Student or lifelong learner -lectures, study guides, courses, exam prep | assignment-tracker, course-overview, lecture-note, study-guide | 5 |
+| **devops** | DevOps engineer or SRE -runbooks, incidents, infrastructure, change management | change-request, incident-report, infrastructure-note, runbook | 6 |
+| **data-scientist** | Data scientist or ML engineer -analyses, models, datasets, experiment tracking | analysis-note, dataset-note, model-card, pipeline-note | 6 |
 
 Contributions of new profession packs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -178,11 +182,11 @@ NeuroStack's tiered retrieval sends your AI only what it needs:
 
 | Depth | Tokens per result | When it's used |
 |-------|-------------------|----------------|
-| **Triples** | ~15 tokens | Quick factual lookups — 80% of queries resolve here |
+| **Triples** | ~15 tokens | Quick factual lookups - 80% of queries resolve here |
 | **Summaries** | ~75 tokens | When you need more context |
 | **Full content** | ~300 tokens | Deep dives into specific notes |
 
-Compared to naive RAG (dumping full document chunks at ~750 tokens each), NeuroStack uses **96% fewer tokens** per query. That means lower API costs, faster responses, and more of your AI's attention on actually answering your question instead of processing background noise.
+In a typical RAG setup, every query sends full document chunks (~750 tokens each) to the model. NeuroStack resolves most queries at the triples tier (~15 tokens), escalating only when needed. The result: significantly fewer tokens per query, lower API costs, and more of your AI's attention on actually answering your question.
 
 ## Agent memories
 
@@ -309,140 +313,108 @@ neurostack decay --json                       # Machine-readable
 | Stale note detection | Yes | Yes |
 | Session transcript search | Yes | Yes |
 | Session insight harvesting | Yes | Yes |
-| Semantic search (by meaning) | — | Yes |
-| AI-generated summaries & triples | — | Yes |
-| Cross-encoder reranking | — | Yes |
-| Topic clustering (Leiden) | — | +community |
+| Semantic search (by meaning) | -- | Yes |
+| AI-generated summaries & triples | -- | Yes |
+| Cross-encoder reranking | -- | Yes |
+| Topic clustering (Leiden) | -- | +community |
 
-## What gets installed
+<details>
+<summary><strong>What gets installed</strong></summary>
 
-`npm install -g neurostack` bootstraps the CLI with full mode by default (semantic search, summaries, reranking). Use `neurostack install` to switch modes. Here's exactly what ends up on your machine:
+`npm install -g neurostack` bootstraps the CLI with full mode by default. Use `neurostack install` to switch modes.
 
-### Lite mode
+| Mode | Total size | Key additions |
+|------|-----------|---------------|
+| **lite** | ~130 MB | npm wrapper, uv, Python 3.12, NeuroStack source, SQLite + FTS5 |
+| **full** (default) | ~560 MB + Ollama | + numpy, sentence-transformers, PyTorch (CPU) |
+| **community** | ~575 MB + Ollama | + leidenalg (GPL-3.0), python-igraph (GPL-2.0+) |
 
-Installed with `NEUROSTACK_MODE=lite npm install -g neurostack` or `neurostack install --mode lite`.
-
-| Component | Location | Size | What it is |
-|-----------|----------|------|------------|
-| npm wrapper | `$(npm root -g)/neurostack/` | ~20 KB | Node.js bin + install scripts |
-| uv | `~/.local/bin/uv` | ~30 MB | Python package manager (auto-installed) |
-| Python 3.12 | `~/.local/share/uv/python/` | ~50 MB | Standalone Python managed by uv (not your system Python) |
-| NeuroStack source | `~/.local/share/neurostack/repo/` | ~2 MB | Python source + vault templates |
-| Python venv + deps | `~/.local/share/neurostack/repo/.venv/` | ~50 MB | pyyaml, watchdog, mcp, httpx |
-| Config | `~/.config/neurostack/config.toml` | ~200 B | Vault path, Ollama endpoints, model name |
-| Database | `~/.local/share/neurostack/neurostack.db` | Grows with vault | SQLite + FTS5 knowledge graph |
-
-**Total: ~130 MB.** No GPU needed. Keyword search, wiki-link graph, stale note detection, and MCP server all work in lite mode.
-
-### Full mode (default)
-
-Installed automatically by `npm install -g neurostack`, or with `neurostack install --mode full`. Adds ML dependencies on top of lite.
-
-| Component | Location | Size | What it is |
-|-----------|----------|------|------------|
-| Everything from lite | (see above) | ~130 MB | |
-| numpy | in `.venv/` | ~30 MB | Numerical computing |
-| sentence-transformers | in `.venv/` | ~100 MB | Embedding and reranking models |
-| PyTorch (CPU) | in `.venv/` | ~300 MB | ML runtime (CPU-only, pulled by sentence-transformers) |
-| Ollama (external) | User-installed | ~1 GB+ | Required for embeddings and summaries — [install separately](https://ollama.ai) |
-
-**Total: ~560 MB** + Ollama. Adds semantic search, AI-generated summaries/triples, and cross-encoder reranking.
-
-### Community mode
-
-Installed with `neurostack install --mode community`. Adds community detection on top of full.
-
-| Component | Location | Size | What it is |
-|-----------|----------|------|------------|
-| Everything from full | (see above) | ~560 MB | |
-| leidenalg | in `.venv/` | ~5 MB | Leiden community detection (GPL-3.0) |
-| python-igraph | in `.venv/` | ~10 MB | Graph analysis library (GPL-2.0+) |
-
-**Total: ~575 MB** + Ollama. Adds topic cluster detection across your vault.
-
-### Clean removal
+Everything installs to `~/.local/share/neurostack/`. Config at `~/.config/neurostack/config.toml`. Database at `~/.local/share/neurostack/neurostack.db`.
 
 ```bash
-neurostack uninstall    # Removes source, venv, database — preserves config
+neurostack uninstall    # Removes source, venv, database - preserves config
 ```
 
-Config at `~/.config/neurostack/` is kept so a reinstall picks up where you left off. To remove everything: `rm -rf ~/.config/neurostack`.
+</details>
 
 ## CLI
 
-NeuroStack is a command-line tool. Every feature is available from your terminal:
+Every feature is available from the terminal. All query commands support `--json` for machine-readable output and `-w "path/"` for workspace scoping.
 
 ```
-neurostack install                  # Install/upgrade mode and Ollama models
-neurostack install --mode full --pull-models  # Non-interactive install
-neurostack init                     # Interactive setup wizard
-neurostack init [path] -p researcher  # Non-interactive with profession pack
-neurostack onboard ~/my-notes       # Onboard an existing folder of notes
-neurostack onboard ~/my-notes -n    # Dry run — preview changes first
-neurostack scaffold researcher      # Apply a profession pack to existing vault
-neurostack scaffold --list          # List available profession packs
-neurostack index                    # Build the knowledge graph
-neurostack search "query"           # Search by meaning or keywords
-neurostack search -w "work/" "query"  # Search scoped to a workspace path
-neurostack harvest                   # Extract insights from recent sessions
+neurostack search "query"             # Hybrid semantic + keyword search
+neurostack brief                      # Morning briefing - what needs attention
+neurostack prediction-errors          # Find stale or misleading notes
 neurostack memories list              # List agent write-back memories
-neurostack memories update <id> --content "new text"  # Update in place
-neurostack memories merge <target> <source>  # Merge two memories
-neurostack context "task description"  # Task-scoped context recovery
-neurostack decay                     # Excitability report - dormant vs active notes
-neurostack graph "note.md"          # See a note's connections
-neurostack prediction-errors        # Find stale or misleading notes
-neurostack communities query "topic"  # Explore topic clusters
-neurostack brief                    # Morning briefing - what needs attention
-neurostack record-usage note.md     # Mark notes as used (drives hotness scoring)
-neurostack hooks install            # Set up automatic harvest timer
-neurostack stats                    # Index health overview (includes excitability)
-neurostack doctor                   # Validate all subsystems
-neurostack watch                    # Watch vault for changes, re-index automatically
-neurostack serve                    # Start as MCP server for AI tools
-neurostack update                   # Pull latest source + re-sync dependencies
-neurostack uninstall                # Complete removal — data, deps, and npm package
+neurostack harvest                    # Extract insights from recent sessions
+neurostack context "task description" # Task-scoped context recovery
+neurostack graph "note.md"            # See a note's connections
+neurostack stats                      # Index health overview
+neurostack serve                      # Start as MCP server
+neurostack doctor                     # Validate all subsystems
 ```
 
 <details>
-<summary><strong>More commands</strong></summary>
+<summary><strong>Full command reference</strong></summary>
 
 ```
-neurostack tiered "query"           # Tiered search: triples → summaries → full
-neurostack triples "query"          # Search structured knowledge triples
-neurostack summary "note.md"        # Get a note's AI-generated summary
-neurostack communities build        # Run Leiden detection + generate summaries
-neurostack communities list         # List detected topic clusters
-neurostack backfill [summaries|triples|all]  # Fill gaps in AI-generated data
-neurostack reembed-chunks           # Re-embed all chunks
-neurostack folder-summaries         # Build folder-level context summaries
-neurostack sessions search "query"  # Search session transcripts
-neurostack harvest                             # Extract session insights as memories
-neurostack harvest --sessions 5 --dry-run      # Preview without saving
-neurostack memories add "text" --type observation  # Store a memory
-neurostack memories search "query"  # Search memories
-neurostack memories list            # List all memories
-neurostack memories update <id> --content "revised"  # Update in place
-neurostack memories update <id> --add-tags "new-tag"  # Add tags
-neurostack memories merge <target> <source>  # Merge two memories
-neurostack memories forget <id>     # Remove a memory
-neurostack memories prune           # Remove expired memories
-neurostack memories stats           # Memory store overview
+# Setup
+neurostack install                    # Install/upgrade mode and Ollama models
+neurostack init [path] -p researcher  # Interactive setup wizard
+neurostack onboard ~/my-notes         # Onboard existing Markdown notes
+neurostack scaffold researcher        # Apply a profession pack
+neurostack update                     # Pull latest source + re-sync deps
+neurostack uninstall                  # Complete removal
+
+# Search & retrieval
+neurostack search "query"             # Hybrid search (--mode hybrid|semantic|keyword)
+neurostack tiered "query"             # Tiered: triples -> summaries -> full
+neurostack triples "query"            # Search knowledge graph triples
+neurostack summary "note.md"          # AI-generated note summary
+neurostack communities query "topic"  # GraphRAG across topic clusters
 neurostack context "task" --budget 2000  # Task-scoped context recovery
-neurostack decay                    # Excitability report
-neurostack decay --threshold 0.1    # Custom dormancy threshold
-neurostack hooks install            # Set up hourly harvest timer
-neurostack hooks status             # Check automation status
-neurostack hooks remove             # Remove automation hooks
-neurostack demo                     # Interactive demo with sample vault
-neurostack status                   # Overview of your vault and config
+
+# Maintenance
+neurostack index                      # Build/rebuild knowledge graph
+neurostack watch                      # Auto-index on vault changes
+neurostack decay                      # Excitability report (--threshold, --half-life)
+neurostack prediction-errors          # Stale note detection
+neurostack backfill [summaries|triples|all]  # Fill gaps in AI data
+neurostack reembed-chunks             # Re-embed all chunks
+
+# Memories
+neurostack memories add "text" --type observation  # Store a memory (--ttl 7d)
+neurostack memories search "query"    # Search memories
+neurostack memories list              # List all memories
+neurostack memories update <id> --content "revised"  # Update in place
+neurostack memories merge <target> <source>  # Merge two memories
+neurostack memories forget <id>       # Remove a memory
+neurostack memories prune             # Remove expired memories
+
+# Sessions & harvest
+neurostack harvest --sessions 5       # Extract session insights
+neurostack sessions search "query"    # Search session transcripts
+neurostack hooks install              # Set up hourly harvest timer
+
+# Graph & clusters
+neurostack graph "note.md"            # Wiki-link neighborhood
+neurostack communities build          # Run Leiden detection
+neurostack communities list           # List topic clusters
+neurostack record-usage note.md       # Track note hotness
+
+# Diagnostics
+neurostack brief                      # Morning briefing
+neurostack stats                      # Index health (includes excitability)
+neurostack doctor                     # Validate all subsystems
+neurostack status                     # Current config overview
+neurostack demo                       # Interactive demo with sample vault
 ```
 
 </details>
 
 ## Use with any AI provider
 
-NeuroStack is provider-agnostic. Your vault is a local SQLite database with a CLI and MCP interface — use it however fits your workflow.
+NeuroStack is provider-agnostic. Your vault is a local SQLite database with a CLI and MCP interface -use it however fits your workflow.
 
 ### MCP server (Claude Code, Codex, Gemini CLI, Cursor, Windsurf, etc.)
 
@@ -466,14 +438,14 @@ Add to your MCP config and your AI assistant gets long-term memory from your vau
 
 ### CLI (works with everything)
 
-The CLI outputs plain text — pipe it into any AI tool or workflow:
+The CLI outputs plain text -pipe it into any AI tool or workflow:
 
 ```bash
 # Use with Claude Code as a CLI tool
 # See: https://docs.anthropic.com/en/docs/claude-code/cli-usage
 neurostack search "deployment checklist"
 
-# JSON output for scripting — all query commands support --json
+# JSON output for scripting -all query commands support --json
 neurostack --json search "query" | jq '.[] | .title'
 
 # Scope to a workspace path (or set NEUROSTACK_WORKSPACE env var)
@@ -540,27 +512,45 @@ Every setting has a `NEUROSTACK_*` env var override.
 
 NeuroStack **never modifies your vault files**. All data (indexes, memories, sessions) lives in its own databases.
 
+## FAQ
+
+**Does NeuroStack modify my vault files?**
+No. All data (indexes, embeddings, memories, sessions) lives in NeuroStack's own SQLite databases. Your Markdown files are read-only.
+
+**Do I need a GPU?**
+No. Lite mode has zero ML dependencies. Full mode uses PyTorch CPU and Ollama for local inference - a GPU helps but is not required.
+
+**Does it work with non-English notes?**
+Embedding quality depends on your Ollama model. `nomic-embed-text` handles common European languages reasonably well but is optimized for English. For other languages, swap in a multilingual embedding model via config.
+
+**How large a vault can it handle?**
+Tested with vaults up to ~5,000 notes. FTS5 keyword search stays fast at any size. Semantic search and community detection scale with note count - a full re-index on 1,000 notes takes a few minutes on CPU.
+
+**What happens if Ollama is unavailable?**
+Lite mode features (FTS5 search, wiki-link graph, stale detection) work without Ollama. Full mode features (semantic search, summaries, triples) gracefully degrade - `neurostack doctor` reports which subsystems are available.
+
+**Can I use this without MCP?**
+Yes. The CLI works standalone. Pipe output into any LLM or use it in scripts. MCP is one interface, not a requirement.
+
 ## Requirements
 
 - Linux or macOS
-- **npm install**: Just Node.js — everything else is installed automatically
+- **npm install**: Just Node.js - everything else is installed automatically
 - **Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and a summary model (e.g., `phi3.5`)
 
-## Links
+## Get involved
+
+```bash
+npm install -g neurostack && neurostack install && neurostack init
+```
 
 - **Website**: [neurostack.sh](https://neurostack.sh)
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Contact**: [hello@neurostack.sh](mailto:hello@neurostack.sh)
+- **Sponsor**: If NeuroStack is useful to you, consider [sponsoring the project](https://github.com/sponsors/raphasouthall) or [buying me a coffee](https://buymeacoffee.com/raphasouthall)
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0 - see [LICENSE](LICENSE).
 
-### Community detection extra
-
-The optional `neurostack[community]` extra installs [leidenalg](https://github.com/vtraag/leidenalg) (GPL-3.0) and [python-igraph](https://github.com/igraph/python-igraph) (GPL-2.0+). These are **not** installed by default and are isolated behind a runtime import guard.
-
-If you install `neurostack[community]`, you are responsible for complying with GPL terms when redistributing. The core NeuroStack package remains Apache-2.0 and contains no GPL code.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+The optional `neurostack[community]` extra installs [leidenalg](https://github.com/vtraag/leidenalg) (GPL-3.0) and [python-igraph](https://github.com/igraph/python-igraph) (GPL-2.0+). These are not installed by default and are isolated behind a runtime import guard. If you install `neurostack[community]`, you are responsible for complying with GPL terms when redistributing.
