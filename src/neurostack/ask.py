@@ -8,7 +8,7 @@ import re
 
 import httpx
 
-from .config import get_config
+from .config import _auth_headers, get_config
 from .search import hybrid_search
 
 ASK_PROMPT = """You are a knowledge assistant answering questions \
@@ -68,23 +68,22 @@ def ask_vault(
     sources_text = "\n\n---\n\n".join(source_blocks)
     prompt = ASK_PROMPT.format(sources=sources_text, question=question)
 
-    # Call Ollama LLM
+    # Call LLM (OpenAI-compatible endpoint)
     resp = httpx.post(
-        f"{llm_url}/api/generate",
+        f"{llm_url}/v1/chat/completions",
+        headers=_auth_headers(cfg.llm_api_key),
         json={
             "model": llm_model,
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 500,
-            },
-            "think": False,
+            "reasoning_effort": "none",
+            "temperature": 0.3,
+            "max_tokens": 500,
         },
         timeout=180.0,
     )
     resp.raise_for_status()
-    answer = resp.json().get("response", "").strip()
+    answer = resp.json()["choices"][0]["message"]["content"].strip()
 
     # Strip think tags if model includes them
     answer = re.sub(r"<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
