@@ -4,6 +4,7 @@
 
 import logging
 import sqlite3
+import uuid
 from pathlib import Path
 
 from .config import get_config
@@ -14,7 +15,7 @@ _cfg = get_config()
 DB_DIR = _cfg.db_dir
 DB_PATH = _cfg.db_path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -197,7 +198,9 @@ CREATE TABLE IF NOT EXISTS memories (
     merge_count INTEGER NOT NULL DEFAULT 0,
     merged_from JSON,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    expires_at TEXT
+    expires_at TEXT,
+    uuid TEXT,
+    file_path TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(entity_type);
@@ -208,6 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_session
     ON memories(session_id) WHERE session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_memories_embedded ON memories(memory_id)
     WHERE embedding IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_uuid ON memories(uuid);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     content,
@@ -428,6 +432,15 @@ CREATE INDEX IF NOT EXISTS idx_memories_embedded ON memories(memory_id)
 """
 
 
+# Migration from v9 to v10: add uuid and file_path to memories
+MIGRATION_V10 = """
+ALTER TABLE memories ADD COLUMN uuid TEXT;
+ALTER TABLE memories ADD COLUMN file_path TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_uuid
+    ON memories(uuid);
+"""
+
+
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
@@ -548,6 +561,50 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v9 complete.")
+
+    if current < 10:
+        log.info(
+            "Migrating schema v9 -> v10: "
+            "adding uuid and file_path to memories..."
+        )
+        # ALTER TABLE doesn't support IF NOT EXISTS -
+        # check column existence first
+        cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(memories)"
+            ).fetchall()
+        }
+        if "uuid" not in cols:
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN uuid TEXT"
+            )
+        if "file_path" not in cols:
+            conn.execute(
+                "ALTER TABLE memories"
+                " ADD COLUMN file_path TEXT"
+            )
+        # Backfill existing rows with UUID4 values
+        rows = conn.execute(
+            "SELECT memory_id FROM memories"
+            " WHERE uuid IS NULL"
+        ).fetchall()
+        for r in rows:
+            conn.execute(
+                "UPDATE memories SET uuid = ?"
+                " WHERE memory_id = ?",
+                (str(uuid.uuid4()), r[0]),
+            )
+        # Recreate index after backfill
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS"
+            " idx_memories_uuid ON memories(uuid)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (10)"
+        )
+        conn.commit()
+        log.info("Migration to v10 complete.")
 
 
 def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:

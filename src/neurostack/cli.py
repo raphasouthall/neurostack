@@ -16,12 +16,17 @@ from .config import CONFIG_PATH, get_config
 def cmd_index(args):
     from .schema import DB_PATH, get_db
     from .watcher import full_index
+    cfg = get_config()
+    exclude = []
+    if cfg.writeback_enabled:
+        exclude.append(cfg.writeback_path)
     full_index(
         vault_root=Path(args.vault),
         embed_url=args.embed_url,
         summarize_url=args.summarize_url,
         skip_summary=args.skip_summary,
         skip_triples=args.skip_triples,
+        exclude_dirs=exclude or None,
     )
     db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", DB_PATH))
     conn = get_db(db_path)
@@ -654,10 +659,15 @@ def cmd_record_usage(args):
 
 def cmd_watch(args):
     from .watcher import run_watcher
+    cfg = get_config()
+    exclude = []
+    if cfg.writeback_enabled:
+        exclude.append(cfg.writeback_path)
     run_watcher(
         vault_root=Path(args.vault),
         embed_url=args.embed_url,
         summarize_url=args.summarize_url,
+        exclude_dirs=exclude or None,
     )
 
 
@@ -747,13 +757,18 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
             idx.write_text(f"# {label}\n\n")
 
     # Write config
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(
+    wb_enabled = str(cfg.writeback_enabled).lower()
+    config_text = (
         f'vault_root = "{vault_root}"\n'
         f'embed_url = "{cfg.embed_url}"\n'
         f'llm_url = "{cfg.llm_url}"\n'
         f'llm_model = "{cfg.llm_model}"\n'
+        f'\n[writeback]\n'
+        f'enabled = {wb_enabled}\n'
+        f'path = "{cfg.writeback_path}"\n'
     )
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(config_text)
 
     # Create DB directory
     cfg.db_dir.mkdir(parents=True, exist_ok=True)
@@ -835,16 +850,25 @@ def cmd_init(args):
     ]
     llm_model = _prompt("LLM model for summaries", default=cfg.llm_model, choices=model_choices)
 
-    # 4. Index after init?
+    # 4. Write-back
+    print(
+        "\n  Enable memory write-back? Memories will be"
+        " saved as browsable\n  markdown files in your vault."
+    )
+    writeback = _confirm("Enable write-back?", default=False)
+
+    # 5. Index after init?
     run_index = _confirm("Index vault after setup?", default=False)
 
     # Show summary
+    wb_label = "yes" if writeback else "no"
     print("\n  \033[1m━━━ Summary ━━━\033[0m\n")
     print(f"  Vault:      {vault_root}")
     print(f"  Profession: {profession}")
     print(f"  Embed URL:  {embed_url}")
     print(f"  LLM URL:    {llm_url}")
     print(f"  LLM model:  {llm_model}")
+    print(f"  Write-back: {wb_label}")
     print(f"  Index now:  {'yes' if run_index else 'no'}")
 
     if not _confirm("\n  Proceed?", default=True):
@@ -856,8 +880,12 @@ def cmd_init(args):
     cfg.embed_url = embed_url
     cfg.llm_url = llm_url
     cfg.llm_model = llm_model
+    cfg.writeback_enabled = writeback
 
-    _do_init(vault_root, cfg, profession_name=profession, run_index=run_index)
+    _do_init(
+        vault_root, cfg,
+        profession_name=profession, run_index=run_index,
+    )
 
     print("\n  \033[1mNext steps:\033[0m")
     if not run_index:
@@ -866,6 +894,108 @@ def cmd_init(args):
     print("    neurostack doctor         # Check health")
     print("    neurostack serve          # Start MCP server")
     print()
+
+
+def cmd_writeback(args):
+    """Manage vault write-back for memories."""
+    cfg = get_config()
+    subcmd = getattr(args, "writeback_command", None)
+
+    if subcmd == "status":
+        state = "enabled" if cfg.writeback_enabled else "disabled"
+        wb_dir = cfg.vault_root / cfg.writeback_path
+        if wb_dir.exists():
+            md_count = sum(
+                1 for _ in wb_dir.rglob("*.md")
+            )
+        else:
+            md_count = 0
+        print(f"  Write-back: {state}")
+        print(f"  Path:       {wb_dir}")
+        print(f"  Files:      {md_count}")
+
+    elif subcmd == "migrate":
+        from .memories import Memory
+        from .schema import DB_PATH, get_db
+        from .vault_writer import VaultWriter
+
+        dry_run = getattr(args, "dry_run", False)
+        conn = get_db(DB_PATH)
+
+        qualifying = (
+            "decision", "convention", "learning", "bug",
+        )
+        placeholders = ", ".join("?" for _ in qualifying)
+        rows = conn.execute(
+            f"SELECT memory_id, content, tags,"
+            f" entity_type, source_agent,"
+            f" workspace, created_at,"
+            f" expires_at, updated_at, uuid"
+            f" FROM memories"
+            f" WHERE entity_type IN ({placeholders})"
+            f" AND (expires_at IS NULL"
+            f"  OR expires_at > datetime('now'))",
+            qualifying,
+        ).fetchall()
+
+        if not rows:
+            print("No qualifying memories to migrate.")
+            return
+
+        if dry_run:
+            print(
+                f"[dry-run] Would write {len(rows)}"
+                f" memories to"
+                f" {cfg.vault_root / cfg.writeback_path}"
+            )
+            for row in rows:
+                etype = row["entity_type"]
+                mid = row["memory_id"]
+                snippet = row["content"][:60]
+                print(f"  #{mid} ({etype}): {snippet}")
+            return
+
+        writer = VaultWriter(
+            cfg.vault_root, cfg.writeback_path,
+        )
+        wrote = 0
+        for row in rows:
+            tags_raw = row["tags"]
+            if tags_raw:
+                try:
+                    tags = json.loads(tags_raw)
+                except (ValueError, TypeError):
+                    tags = []
+            else:
+                tags = []
+            mem = Memory(
+                memory_id=row["memory_id"],
+                content=row["content"],
+                tags=tags,
+                entity_type=row["entity_type"],
+                source_agent=row["source_agent"],
+                workspace=row["workspace"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+                updated_at=row["updated_at"],
+                uuid=row["uuid"],
+            )
+            result = writer.write(mem)
+            if result:
+                wrote += 1
+
+        wb_path = cfg.vault_root / cfg.writeback_path
+        print(
+            f"Wrote {wrote} files to {wb_path}."
+            f" Add to .gitignore if you don't"
+            f" want them versioned."
+        )
+
+    else:
+        print("Usage: neurostack writeback <status|migrate>")
+        print("  status   - Show write-back status")
+        print("  migrate  - Write files for existing memories")
+        sys.exit(1)
 
 
 def cmd_scaffold(args):
@@ -3004,6 +3134,23 @@ def main():
     # watch
     p = sub.add_parser("watch", help="Watch vault for changes")
     p.set_defaults(func=cmd_watch)
+
+    # writeback
+    p = sub.add_parser(
+        "writeback",
+        help="Manage vault write-back for memories",
+    )
+    wb_sub = p.add_subparsers(dest="writeback_command")
+    wb_sub.add_parser("status", help="Show write-back status")
+    wp = wb_sub.add_parser(
+        "migrate",
+        help="Write files for all existing qualifying memories",
+    )
+    wp.add_argument(
+        "--dry-run", "-n", action="store_true",
+        help="Show what would be written without writing",
+    )
+    p.set_defaults(func=cmd_writeback)
 
     args = parser.parse_args()
     if not args.command:

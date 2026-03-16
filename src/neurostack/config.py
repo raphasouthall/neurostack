@@ -32,6 +32,8 @@ class Config:
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     api_key: str = ""
+    writeback_enabled: bool = False
+    writeback_path: str = "memories"
 
     @property
     def db_path(self) -> Path:
@@ -63,6 +65,13 @@ def load_config() -> Config:
         if "api_port" in data:
             cfg.api_port = int(data["api_port"])
 
+        # [writeback] section
+        wb = data.get("writeback", {})
+        if "enabled" in wb:
+            cfg.writeback_enabled = bool(wb["enabled"])
+        if "path" in wb:
+            cfg.writeback_path = str(wb["path"])
+
     # Env var overrides (NEUROSTACK_ prefix)
     env_map = {
         "NEUROSTACK_VAULT_ROOT": ("vault_root", Path),
@@ -76,13 +85,17 @@ def load_config() -> Config:
         "NEUROSTACK_API_HOST": ("api_host", str),
         "NEUROSTACK_API_PORT": ("api_port", int),
         "NEUROSTACK_API_KEY": ("api_key", str),
+        "NEUROSTACK_WRITEBACK_ENABLED": ("writeback_enabled", bool),
+        "NEUROSTACK_WRITEBACK_PATH": ("writeback_path", str),
     }
 
     for env_key, (attr, typ) in env_map.items():
         val = os.environ.get(env_key)
         if val is not None:
-            if typ == Path:
+            if typ is Path:
                 setattr(cfg, attr, Path(os.path.expanduser(val)))
+            elif typ is bool:
+                setattr(cfg, attr, val.lower() in ("1", "true", "yes"))
             else:
                 setattr(cfg, attr, typ(val))
 

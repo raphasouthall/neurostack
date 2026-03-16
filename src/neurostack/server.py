@@ -4,16 +4,28 @@
 """NeuroStack MCP server — tools for pre-computed vault context."""
 
 import json
+import logging
 
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("neurostack")
 
 from .config import get_config
+from .vault_writer import VaultWriter
+
+log = logging.getLogger("neurostack")
 
 _cfg = get_config()
 VAULT_ROOT = _cfg.vault_root
 EMBED_URL = _cfg.embed_url
+
+# Initialize write-back (None if disabled)
+_writer: VaultWriter | None = None
+if _cfg.writeback_enabled:
+    try:
+        _writer = VaultWriter(_cfg.vault_root, _cfg.writeback_path)
+    except ValueError as e:
+        log.warning("Write-back disabled: %s", e)
 
 
 @mcp.tool()
@@ -611,6 +623,12 @@ def vault_remember(
         session_id=session_id,
     )
 
+    if _writer:
+        _writer.write(memory)
+        log.debug(
+            "Write-back: wrote memory %s", memory.memory_id,
+        )
+
     result = {
         "saved": True,
         "memory_id": memory.memory_id,
@@ -631,11 +649,29 @@ def vault_forget(memory_id: int) -> str:
     Args:
         memory_id: The ID of the memory to delete (from vault_remember or vault_memories)
     """
-    from .memories import forget_memory
+    from .memories import _row_to_memory, forget_memory
     from .schema import DB_PATH, get_db
 
     conn = get_db(DB_PATH)
+
+    # Fetch memory before deletion for file cleanup
+    mem_to_delete = None
+    if _writer:
+        row = conn.execute(
+            "SELECT * FROM memories WHERE memory_id = ?",
+            (memory_id,),
+        ).fetchone()
+        if row:
+            mem_to_delete = _row_to_memory(row)
+
     deleted = forget_memory(conn, memory_id)
+
+    if _writer and mem_to_delete and deleted:
+        _writer.delete(mem_to_delete)
+        log.debug(
+            "Write-back: deleted memory %s", memory_id,
+        )
+
     return json.dumps({"deleted": deleted, "memory_id": memory_id})
 
 
@@ -689,6 +725,12 @@ def vault_update_memory(
             "memory_id": memory_id,
         })
 
+    if _writer:
+        _writer.overwrite(memory)
+        log.debug(
+            "Write-back: updated memory %s", memory.memory_id,
+        )
+
     # Build changed_fields list
     changed = []
     if content is not None:
@@ -730,11 +772,36 @@ def vault_merge(
         target_id: Memory to keep (receives merged content)
         source_id: Memory to fold in (deleted after merge)
     """
-    from .memories import merge_memories
+    from .memories import _row_to_memory, merge_memories
     from .schema import DB_PATH, get_db
 
     conn = get_db(DB_PATH)
-    memory = merge_memories(conn, target_id, source_id, embed_url=EMBED_URL)
+
+    # Fetch source memory before merge for file cleanup
+    source_mem = None
+    if _writer:
+        row = conn.execute(
+            "SELECT * FROM memories WHERE memory_id = ?",
+            (source_id,),
+        ).fetchone()
+        if row:
+            source_mem = _row_to_memory(row)
+
+    memory = merge_memories(
+        conn, target_id, source_id, embed_url=EMBED_URL,
+    )
+
+    if _writer and memory:
+        _writer.overwrite(memory)
+        log.debug(
+            "Write-back: overwrote merged memory %s",
+            memory.memory_id,
+        )
+    if _writer and source_mem:
+        _writer.delete(source_mem)
+        log.debug(
+            "Write-back: deleted merged source %s", source_id,
+        )
 
     if not memory:
         return json.dumps({
