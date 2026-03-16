@@ -1001,7 +1001,7 @@ def summarize_session(
 
     import httpx
 
-    from .config import get_config
+    from .config import _auth_headers, get_config
 
     cfg = get_config()
     llm_url = llm_url or cfg.llm_url
@@ -1031,21 +1031,20 @@ def summarize_session(
     )
 
     resp = httpx.post(
-        f"{llm_url}/api/generate",
+        f"{llm_url}/v1/chat/completions",
+        headers=_auth_headers(cfg.llm_api_key),
         json={
             "model": llm_model,
-            "prompt": prompt,
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 200,
-            },
-            "think": False,
+            "reasoning_effort": "none",
+            "temperature": 0.3,
+            "max_tokens": 200,
         },
         timeout=120.0,
     )
     resp.raise_for_status()
-    summary = resp.json().get("response", "").strip()
+    summary = resp.json()["choices"][0]["message"]["content"].strip()
 
     # Strip think tags if model includes them
     summary = re.sub(

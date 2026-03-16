@@ -215,19 +215,22 @@ def _llm_classify(
         )
 
         try:
+            from .config import _auth_headers, get_config
             resp = httpx.post(
-                f"{llm_url}/api/generate",
+                f"{llm_url}/v1/chat/completions",
+                headers=_auth_headers(get_config().llm_api_key),
                 json={
                     "model": llm_model,
-                    "prompt": prompt,
+                    "messages": [{"role": "user", "content": prompt}],
                     "stream": False,
-                    "options": {"temperature": 0.1, "num_predict": 500},
-                    "think": False,
+                    "reasoning_effort": "none",
+                    "temperature": 0.1,
+                    "max_tokens": 500,
                 },
                 timeout=60.0,
             )
             resp.raise_for_status()
-            response = resp.json().get("response", "")
+            response = resp.json()["choices"][0]["message"]["content"]
             # Strip think tags if present
             response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
         except Exception as exc:

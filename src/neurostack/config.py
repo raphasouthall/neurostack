@@ -28,6 +28,8 @@ class Config:
     # NOTE: Verify the license of any model you configure here.
     # phi3.5 is MIT licensed.
     llm_model: str = "phi3.5"
+    llm_api_key: str = ""
+    embed_api_key: str = ""
     session_dir: Path = field(default_factory=lambda: Path.home() / ".claude" / "projects")
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -57,7 +59,7 @@ def load_config() -> Config:
             if key in data:
                 setattr(cfg, key, Path(os.path.expanduser(data[key])))
         for key in ("embed_url", "embed_model", "llm_url", "llm_model",
-                    "api_host", "api_key"):
+                    "llm_api_key", "embed_api_key", "api_host", "api_key"):
             if key in data:
                 setattr(cfg, key, data[key])
         if "embed_dim" in data:
@@ -81,6 +83,8 @@ def load_config() -> Config:
         "NEUROSTACK_EMBED_DIM": ("embed_dim", int),
         "NEUROSTACK_LLM_URL": ("llm_url", str),
         "NEUROSTACK_LLM_MODEL": ("llm_model", str),
+        "NEUROSTACK_LLM_API_KEY": ("llm_api_key", str),
+        "NEUROSTACK_EMBED_API_KEY": ("embed_api_key", str),
         "NEUROSTACK_SESSION_DIR": ("session_dir", Path),
         "NEUROSTACK_API_HOST": ("api_host", str),
         "NEUROSTACK_API_PORT": ("api_port", int),
@@ -100,6 +104,13 @@ def load_config() -> Config:
                 setattr(cfg, attr, typ(val))
 
     return cfg
+
+
+def _auth_headers(api_key: str) -> dict[str, str]:
+    """Build Authorization header dict if an API key is set."""
+    if api_key:
+        return {"Authorization": f"Bearer {api_key}"}
+    return {}
 
 
 # Module-level singleton

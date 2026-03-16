@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""Ollama embedding client."""
+"""Embedding client (OpenAI-compatible /v1/ endpoints)."""
 
 import json
 from typing import Optional
@@ -13,12 +13,13 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
-from .config import get_config
+from .config import _auth_headers, get_config
 
 _cfg = get_config()
 DEFAULT_EMBED_URL = _cfg.embed_url
 EMBED_MODEL = _cfg.embed_model
 EMBED_DIM = _cfg.embed_dim
+_EMBED_HEADERS = _auth_headers(_cfg.embed_api_key)
 
 
 def get_embedding(
@@ -33,13 +34,14 @@ def get_embedding(
             "Install with: pip install neurostack[full]"
         )
     resp = httpx.post(
-        f"{base_url}/api/embed",
+        f"{base_url}/v1/embeddings",
+        headers=_EMBED_HEADERS,
         json={"model": model, "input": text},
         timeout=30.0,
     )
     resp.raise_for_status()
     data = resp.json()
-    return np.array(data["embeddings"][0], dtype=np.float32)
+    return np.array(data["data"][0]["embedding"], dtype=np.float32)
 
 
 def get_embeddings_batch(
@@ -58,14 +60,15 @@ def get_embeddings_batch(
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
         resp = httpx.post(
-            f"{base_url}/api/embed",
+            f"{base_url}/v1/embeddings",
+            headers=_EMBED_HEADERS,
             json={"model": model, "input": batch},
             timeout=60.0,
         )
         resp.raise_for_status()
         data = resp.json()
-        for emb in data["embeddings"]:
-            all_embeddings.append(np.array(emb, dtype=np.float32))
+        for item in data["data"]:
+            all_embeddings.append(np.array(item["embedding"], dtype=np.float32))
     return all_embeddings
 
 
