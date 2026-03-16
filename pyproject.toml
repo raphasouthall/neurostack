@@ -1,6 +1,6 @@
 [project]
 name = "neurostack"
-version = "0.3.3"
+version = "0.4.0"
 description = "Build, maintain, and search your knowledge vault. CLI + MCP server with stale note detection, semantic search, and neuroscience-grounded memory."
 readme = "README.md"
 license = "Apache-2.0"
@@ -50,6 +50,12 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
 ]
+# OpenAI-compatible HTTP API
+api = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sse-starlette>=2.0",
+]
 
 [project.scripts]
 neurostack = "neurostack.cli:main"
@@ -80,6 +86,7 @@ select = ["E", "F", "I", "W"]
 "src/neurostack/search.py" = ["E402"]
 "src/neurostack/server.py" = ["E402"]
 "src/neurostack/watcher.py" = ["E402"]
+"src/neurostack/api.py" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
