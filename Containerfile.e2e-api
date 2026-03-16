@@ -1,0 +1,31 @@
+FROM docker.io/library/python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash tester
+USER tester
+WORKDIR /home/tester
+
+# Install uv
+RUN pip install --user uv
+ENV PATH="/home/tester/.local/bin:$PATH"
+
+# Copy project
+COPY --chown=tester:tester . /home/tester/neurostack
+WORKDIR /home/tester/neurostack
+
+# Install with api + full extras
+RUN uv venv --clear .venv && uv pip install -e ".[api,full]"
+
+# Copy vault DB from host (mounted at runtime)
+# Copy config (mounted at runtime)
+
+# Default: start API server, run tests, report
+CMD ["bash", "-c", "\
+    echo '--- Starting NeuroStack API server ---' && \
+    uv run neurostack api --port 8199 & \
+    sleep 3 && \
+    echo '--- Running e2e API tests ---' && \
+    uv run python tests/e2e_api.py \
+"]

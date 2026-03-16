@@ -1860,6 +1860,21 @@ def cmd_serve(args):
     mcp.run(transport=args.transport)
 
 
+def cmd_api(args):
+    """Start the OpenAI-compatible HTTP API server."""
+    try:
+        from .api import create_app, run_server
+    except ImportError:
+        print(
+            "API dependencies not installed. "
+            "Install with: pip install neurostack[api]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"Starting NeuroStack API on {args.host}:{args.port}")
+    run_server(host=args.host, port=args.port)
+
+
 def cmd_sessions(args):
     """Manage memory sessions and search session transcripts."""
     sessions_cmd = getattr(args, "sessions_command", None)
@@ -2669,6 +2684,12 @@ def main():
     p = sub.add_parser("serve", help="Start MCP server")
     p.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
     p.set_defaults(func=cmd_serve)
+
+    # api
+    p = sub.add_parser("api", help="Start OpenAI-compatible HTTP API server")
+    p.add_argument("--host", default=cfg.api_host, help="Bind host (default: 127.0.0.1)")
+    p.add_argument("--port", type=int, default=cfg.api_port, help="Bind port (default: 8000)")
+    p.set_defaults(func=cmd_api)
 
     # sessions
     p = sub.add_parser(
