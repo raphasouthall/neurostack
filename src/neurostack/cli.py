@@ -1386,7 +1386,20 @@ def cmd_skills(args):
             print("No skills directory found in package.")
             sys.exit(1)
 
-        target = Path.home() / ".claude" / "commands"
+        provider = getattr(args, "provider", "claude")
+        provider_paths = {
+            "claude": Path.home() / ".claude" / "commands",
+            "codex": Path.home() / ".codex" / "commands",
+            "gemini": Path.home() / ".gemini" / "commands",
+        }
+        target = provider_paths.get(provider)
+        if not target:
+            print(
+                f"Unknown provider: {provider}. "
+                f"Supported: {', '.join(provider_paths)}"
+            )
+            sys.exit(1)
+
         target.mkdir(parents=True, exist_ok=True)
 
         files = sorted(skills_dir.glob("*.md"))
@@ -1399,14 +1412,16 @@ def cmd_skills(args):
             shutil.copy2(f, dest)
             print(f"  Installed {f.name} -> {dest}")
         print(
-            f"\n{len(files)} skill(s) installed to {target}"
+            f"\n{len(files)} skill(s) installed"
+            f" to {target} ({provider})"
         )
         return
 
     # No subcommand - show help
     print("Usage: neurostack skills {install,list}")
-    print("  install  Copy skill files to ~/.claude/commands/")
-    print("  list     List available skills")
+    print("  install [provider]  Install skills"
+          " (claude, codex, gemini)")
+    print("  list                List available skills")
 
 
 def cmd_update(args):
@@ -2849,8 +2864,13 @@ def main():
         help="Manage agent skill files (.md slash commands)",
     )
     skills_sub = p.add_subparsers(dest="skills_command")
-    skills_sub.add_parser(
-        "install", help="Copy skill files to ~/.claude/commands/",
+    install_p = skills_sub.add_parser(
+        "install", help="Install skills for an AI provider",
+    )
+    install_p.add_argument(
+        "provider", nargs="?", default="claude",
+        choices=["claude", "codex", "gemini"],
+        help="Target provider (default: claude)",
     )
     skills_sub.add_parser("list", help="List available skills")
     p.set_defaults(func=cmd_skills)
