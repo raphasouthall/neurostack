@@ -1863,7 +1863,7 @@ def cmd_serve(args):
 def cmd_api(args):
     """Start the OpenAI-compatible HTTP API server."""
     try:
-        from .api import create_app, run_server
+        from .api import run_server
     except ImportError:
         print(
             "API dependencies not installed. "

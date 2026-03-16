@@ -3,9 +3,7 @@
 """E2E tests for OpenAI-compatible API endpoints."""
 
 import json
-import subprocess
 import sys
-import time
 
 import httpx
 
@@ -111,8 +109,8 @@ def test_chat_stream():
     # SSE lines may use \r\n; normalize and extract data: lines
     lines = r.text.replace("\r\n", "\n").strip().split("\n")
     data_lines = [
-        l.removeprefix("data:").strip()
-        for l in lines if l.startswith("data:")
+        ln.removeprefix("data:").strip()
+        for ln in lines if ln.startswith("data:")
     ]
     check("has data lines", len(data_lines) >= 3,
           f"got {len(data_lines)} data lines")
