@@ -763,6 +763,12 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
         f'embed_url = "{cfg.embed_url}"\n'
         f'llm_url = "{cfg.llm_url}"\n'
         f'llm_model = "{cfg.llm_model}"\n'
+    )
+    if cfg.llm_api_key:
+        config_text += f'llm_api_key = "{cfg.llm_api_key}"\n'
+    if cfg.embed_api_key:
+        config_text += f'embed_api_key = "{cfg.embed_api_key}"\n'
+    config_text += (
         f'\n[writeback]\n'
         f'enabled = {wb_enabled}\n'
         f'path = "{cfg.writeback_path}"\n'
@@ -836,8 +842,9 @@ def cmd_init(args):
     profession = _prompt("Profession pack", default="none", choices=prof_choices)
 
     # 3. LLM configuration
-    print("\n  \033[1mOllama Configuration\033[0m")
-    print("  NeuroStack uses Ollama for embeddings and summaries.\n")
+    print("\n  \033[1mLLM Configuration\033[0m")
+    print("  NeuroStack works with any OpenAI-compatible endpoint")
+    print("  (Ollama, vLLM, Together AI, Groq, OpenRouter, etc.)\n")
 
     embed_url = _prompt("Embedding endpoint", default=cfg.embed_url)
     llm_url = _prompt("LLM endpoint", default=cfg.llm_url)
@@ -849,6 +856,22 @@ def cmd_init(args):
         ("mistral:7b", "mistral:7b — Apache 2.0, efficient"),
     ]
     llm_model = _prompt("LLM model for summaries", default=cfg.llm_model, choices=model_choices)
+
+    # 3b. API keys (optional — only needed for cloud providers)
+    llm_api_key = ""
+    embed_api_key = ""
+    is_local = any(h in llm_url for h in ("localhost", "127.0.0.1", "0.0.0.0"))
+    if not is_local:
+        print("\n  \033[1mAPI Authentication\033[0m")
+        print("  Cloud providers require an API key.\n")
+        llm_api_key = _prompt("LLM API key", default="")
+        if embed_url != llm_url:
+            embed_api_key = _prompt("Embedding API key", default="")
+        else:
+            embed_api_key = llm_api_key
+    elif _confirm("\n  Configure API keys? (only needed for cloud providers)", default=False):
+        llm_api_key = _prompt("LLM API key", default="")
+        embed_api_key = _prompt("Embedding API key", default=llm_api_key)
 
     # 4. Write-back
     print(
@@ -862,12 +885,14 @@ def cmd_init(args):
 
     # Show summary
     wb_label = "yes" if writeback else "no"
+    auth_label = "yes" if (llm_api_key or embed_api_key) else "no"
     print("\n  \033[1m━━━ Summary ━━━\033[0m\n")
     print(f"  Vault:      {vault_root}")
     print(f"  Profession: {profession}")
     print(f"  Embed URL:  {embed_url}")
     print(f"  LLM URL:    {llm_url}")
     print(f"  LLM model:  {llm_model}")
+    print(f"  API auth:   {auth_label}")
     print(f"  Write-back: {wb_label}")
     print(f"  Index now:  {'yes' if run_index else 'no'}")
 
@@ -880,6 +905,8 @@ def cmd_init(args):
     cfg.embed_url = embed_url
     cfg.llm_url = llm_url
     cfg.llm_model = llm_model
+    cfg.llm_api_key = llm_api_key
+    cfg.embed_api_key = embed_api_key
     cfg.writeback_enabled = writeback
 
     _do_init(
