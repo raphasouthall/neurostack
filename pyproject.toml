@@ -1,6 +1,6 @@
 [project]
 name = "neurostack"
-version = "0.5.0"
+version = "0.5.1"
 description = "Build, maintain, and search your knowledge vault. CLI + MCP server with stale note detection, semantic search, and neuroscience-grounded memory."
 readme = "README.md"
 license = "Apache-2.0"
@@ -72,6 +72,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/neurostack"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/neurostack/skills" = "neurostack/skills"
 
 [tool.ruff]
 target-version = "py311"

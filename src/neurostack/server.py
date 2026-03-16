@@ -5,6 +5,7 @@
 
 import json
 import logging
+import time as _time
 
 from mcp.server.fastmcp import FastMCP
 
@@ -14,6 +15,31 @@ from .config import get_config
 from .vault_writer import VaultWriter
 
 log = logging.getLogger("neurostack")
+
+# -- In-memory TTL cache for expensive LLM-backed tools -----------
+_tool_cache: dict[str, tuple[float, str]] = {}
+_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _cache_get(key: str) -> str | None:
+    """Return cached result if fresh, else None."""
+    entry = _tool_cache.get(key)
+    if entry and (_time.time() - entry[0]) < _CACHE_TTL:
+        return entry[1]
+    if entry:
+        del _tool_cache[key]
+    return None
+
+
+def _cache_set(key: str, value: str) -> None:
+    """Store result with current timestamp."""
+    _tool_cache[key] = (_time.time(), value)
+
+
+def _cache_clear() -> None:
+    """Clear all cached tool results."""
+    _tool_cache.clear()
+
 
 _cfg = get_config()
 VAULT_ROOT = _cfg.vault_root
@@ -119,6 +145,12 @@ def vault_ask(
         workspace: Optional vault subdirectory prefix to restrict
             results (e.g. "work/nyk-europe-azure")
     """
+    cache_key = f"ask:{question}:{top_k}:{workspace}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        log.debug("Cache hit for %s", cache_key)
+        return cached
+
     from .ask import ask_vault
 
     result = ask_vault(
@@ -127,7 +159,9 @@ def vault_ask(
         embed_url=EMBED_URL,
         workspace=workspace,
     )
-    return json.dumps(result, indent=2)
+    out = json.dumps(result, indent=2)
+    _cache_set(cache_key, out)
+    return out
 
 
 def _search_memories_for_results(query: str, workspace: str = None, limit: int = 3) -> list[dict]:
@@ -375,6 +409,15 @@ def vault_communities(
         workspace: Optional vault subdirectory prefix to restrict
             results (e.g. "work/nyk-europe-azure")
     """
+    cache_key = (
+        f"communities:{query}:{top_k}:{level}"
+        f":{map_reduce}:{workspace}"
+    )
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        log.debug("Cache hit for %s", cache_key)
+        return cached
+
     from .community_search import global_query
 
     result = global_query(
@@ -385,7 +428,9 @@ def vault_communities(
         embed_url=EMBED_URL,
         workspace=workspace,
     )
-    return json.dumps(result, indent=2)
+    out = json.dumps(result, indent=2)
+    _cache_set(cache_key, out)
+    return out
 
 
 @mcp.tool()
@@ -943,6 +988,9 @@ def vault_session_end(
     """
     from .memories import end_session, summarize_session
     from .schema import DB_PATH, get_db
+
+    _cache_clear()
+    log.debug("LLM tool cache cleared on session end")
 
     conn = get_db(DB_PATH)
     summary = None
