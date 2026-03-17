@@ -464,6 +464,14 @@ def vault_stats() -> str:
     from .memories import get_memory_stats
     mem_stats = get_memory_stats(conn)
 
+    # Run excitability demotion as a periodic side-effect
+    demotion_result = None
+    try:
+        from .search import run_excitability_demotion
+        demotion_result = run_excitability_demotion(conn)
+    except Exception as exc:
+        log.debug("Excitability demotion failed: %s", exc)
+
     result = {
         "notes": notes,
         "chunks": chunks,
@@ -496,6 +504,8 @@ def vault_stats() -> str:
         },
         "memories": mem_stats,
     }
+    if demotion_result and demotion_result["demoted"] > 0:
+        result["demotion"] = demotion_result
     return json.dumps(result)
 
 

@@ -378,6 +378,63 @@ def get_dormancy_report(
     }
 
 
+def run_excitability_demotion(
+    conn: sqlite3.Connection,
+    threshold: float = 0.05,
+    half_life_days: float = 30.0,
+) -> dict:
+    """Demote notes with decayed hotness below threshold from active to dormant.
+
+    Updates note_metadata.status — vault files are NEVER modified.
+    Also demotes never-used notes older than 90 days.
+
+    Returns {"demoted": N, "paths": [...]}.
+    """
+    demoted_paths = []
+
+    # Get dormancy report for notes below threshold (large limit to get all)
+    report = get_dormancy_report(
+        conn, threshold=threshold, half_life_days=half_life_days, limit=999999,
+    )
+
+    # Demote dormant notes (used but decayed below threshold)
+    for entry in report["dormant"]:
+        path = entry["path"]
+        changed = conn.execute(
+            "UPDATE note_metadata SET status = 'dormant'"
+            " WHERE note_path = ? AND status = 'active'",
+            (path,),
+        ).rowcount
+        if changed:
+            demoted_paths.append(path)
+
+    # Demote never-used notes older than 90 days
+    for entry in report["never_used"]:
+        path = entry["path"]
+        row = conn.execute(
+            "SELECT updated_at FROM notes WHERE path = ?", (path,)
+        ).fetchone()
+        if not row:
+            continue
+        age = conn.execute(
+            "SELECT (julianday('now') - julianday(?)) as age",
+            (row["updated_at"],),
+        ).fetchone()
+        if age and float(age["age"]) > 90:
+            changed = conn.execute(
+                "UPDATE note_metadata SET status = 'dormant'"
+                " WHERE note_path = ? AND status = 'active'",
+                (path,),
+            ).rowcount
+            if changed:
+                demoted_paths.append(path)
+
+    if demoted_paths:
+        conn.commit()
+
+    return {"demoted": len(demoted_paths), "paths": demoted_paths}
+
+
 def hybrid_search(
     query: str,
     top_k: int = 5,
@@ -520,6 +577,18 @@ def hybrid_search(
     if rerank:
         from .reranker import rerank as cross_rerank
         deduped = cross_rerank(query, deduped, text_key="content", top_k=top_k)
+
+    # Auto-record usage for returned results (drives hotness scoring)
+    returned_paths = [r["note_path"] for r in deduped[:top_k]]
+    if returned_paths:
+        try:
+            conn.executemany(
+                "INSERT INTO note_usage (note_path) VALUES (?)",
+                [(p,) for p in returned_paths],
+            )
+            conn.commit()
+        except Exception:
+            pass  # Never let usage recording disrupt search
 
     # Prediction error detection — check top result for high semantic distance
     if deduped:

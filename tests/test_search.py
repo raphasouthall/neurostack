@@ -6,6 +6,7 @@ from neurostack.search import (
     fts_search,
     hotness_score,
     log_prediction_error,
+    run_excitability_demotion,
 )
 
 
@@ -118,6 +119,132 @@ class TestPredictionError:
 
     def test_threshold_constant(self):
         assert 0.0 < PREDICTION_ERROR_SIM_THRESHOLD < 1.0
+
+
+class TestAutoRecordUsage:
+    def test_usage_recording_inserts_rows(self, in_memory_db):
+        """Auto-record usage logic should insert note_usage rows."""
+        conn = in_memory_db
+        before = conn.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0]
+        assert before == 0
+
+        paths = ["research/predictive-coding.md", "research/memory-consolidation.md"]
+        conn.executemany(
+            "INSERT INTO note_usage (note_path) VALUES (?)",
+            [(p,) for p in paths],
+        )
+        conn.commit()
+        after = conn.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0]
+        assert after == 2
+
+    def test_usage_accumulates(self, in_memory_db):
+        """Multiple searches should accumulate usage rows."""
+        conn = in_memory_db
+        for _ in range(3):
+            conn.execute(
+                "INSERT INTO note_usage (note_path) VALUES (?)",
+                ("test.md",),
+            )
+        conn.commit()
+        count = conn.execute(
+            "SELECT COUNT(*) FROM note_usage WHERE note_path = ?",
+            ("test.md",),
+        ).fetchone()[0]
+        assert count == 3
+
+
+class TestExcitabilityDemotion:
+    def test_demotes_dormant_notes(self, in_memory_db):
+        """Notes with decayed hotness should be demoted to dormant."""
+        conn = in_memory_db
+        # Insert a note and its metadata as active
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("old.md", "Old Note", "h", "2025-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO note_metadata (note_path, status) VALUES (?, ?)",
+            ("old.md", "active"),
+        )
+        # Add old usage so hotness decays below threshold
+        conn.execute(
+            "INSERT INTO note_usage (note_path, used_at) VALUES (?, ?)",
+            ("old.md", "2024-01-01 00:00:00"),
+        )
+        conn.commit()
+
+        result = run_excitability_demotion(conn)
+        assert result["demoted"] >= 1
+        assert "old.md" in result["paths"]
+
+        status = conn.execute(
+            "SELECT status FROM note_metadata WHERE note_path = ?",
+            ("old.md",),
+        ).fetchone()["status"]
+        assert status == "dormant"
+
+    def test_does_not_demote_active_notes(self, in_memory_db):
+        """Notes with recent usage should NOT be demoted."""
+        conn = in_memory_db
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("hot.md", "Hot Note", "h", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO note_metadata (note_path, status) VALUES (?, ?)",
+            ("hot.md", "active"),
+        )
+        # Add very recent usage
+        conn.execute(
+            "INSERT INTO note_usage (note_path, used_at) VALUES (?, datetime('now'))",
+            ("hot.md",),
+        )
+        conn.commit()
+
+        result = run_excitability_demotion(conn)
+        assert "hot.md" not in result["paths"]
+
+        status = conn.execute(
+            "SELECT status FROM note_metadata WHERE note_path = ?",
+            ("hot.md",),
+        ).fetchone()["status"]
+        assert status == "active"
+
+    def test_demotes_never_used_old_notes(self, in_memory_db):
+        """Never-used notes older than 90 days should be demoted."""
+        conn = in_memory_db
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("ancient.md", "Ancient", "h", "2024-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO note_metadata (note_path, status) VALUES (?, ?)",
+            ("ancient.md", "active"),
+        )
+        conn.commit()
+
+        result = run_excitability_demotion(conn)
+        assert "ancient.md" in result["paths"]
+
+    def test_skips_already_dormant(self, in_memory_db):
+        """Notes already dormant should not be re-demoted."""
+        conn = in_memory_db
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("dormant.md", "Dormant", "h", "2024-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO note_metadata (note_path, status) VALUES (?, ?)",
+            ("dormant.md", "dormant"),
+        )
+        conn.commit()
+
+        result = run_excitability_demotion(conn)
+        assert "dormant.md" not in result["paths"]
 
 
 class TestExcitabilityBoost:
