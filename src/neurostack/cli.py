@@ -2716,13 +2716,19 @@ def cmd_decay(args):
 
 
 def cmd_harvest(args):
-    """Extract insights from recent Claude Code sessions."""
-    from .harvest import harvest_sessions
+    """Extract insights from recent AI coding sessions."""
+    from .harvest import get_provider_names, harvest_sessions
+
+    if getattr(args, "list_providers", False):
+        for name in get_provider_names():
+            print(f"  {name}")
+        return
 
     result = harvest_sessions(
         n_sessions=args.sessions,
         dry_run=args.dry_run,
         embed_url=args.embed_url,
+        provider=getattr(args, "provider", None),
     )
 
     if args.json:
@@ -2734,7 +2740,9 @@ def cmd_harvest(args):
         return
 
     mode = "DRY RUN" if result.get("dry_run") else "Harvest"
-    print(f"\n  {mode} - scanned {result['sessions_scanned']} session(s)\n")
+    providers = ", ".join(result.get("providers", []))
+    print(f"\n  {mode} - scanned {result['sessions_scanned']} session(s)"
+          + (f" [{providers}]" if providers else "") + "\n")
 
     if result["counts"]:
         print("  Counts by type:")
@@ -3226,10 +3234,18 @@ def main():
     p.set_defaults(func=cmd_decay)
 
     # harvest
-    p = sub.add_parser("harvest", help="Extract insights from recent Claude Code sessions")
+    p = sub.add_parser("harvest", help="Extract insights from recent AI coding sessions")
     p.add_argument(
         "--sessions", type=int, default=1,
         help="Number of recent sessions to harvest (default: 1)",
+    )
+    p.add_argument(
+        "--provider", type=str, default=None,
+        help="Restrict to a single provider (e.g. claude-code, vscode-chat, codex-cli, aider)",
+    )
+    p.add_argument(
+        "--list-providers", action="store_true",
+        help="List available session providers and exit",
     )
     p.add_argument(
         "--dry-run", "-n", action="store_true",
