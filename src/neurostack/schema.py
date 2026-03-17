@@ -2,6 +2,7 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """SQLite schema and database management for NeuroStack."""
 
+import json
 import logging
 import sqlite3
 import uuid
@@ -15,7 +16,7 @@ _cfg = get_config()
 DB_DIR = _cfg.db_dir
 DB_PATH = _cfg.db_path
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -235,6 +236,21 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
         VALUES (new.memory_id, new.content);
 END;
 
+-- NeuroStack-managed note metadata (read-only vault guarantee)
+-- Source of truth for status/tags/type — vault .md files are never modified.
+-- Populated from file frontmatter on first index; overrides persist across re-indexes.
+CREATE TABLE IF NOT EXISTS note_metadata (
+    note_path TEXT PRIMARY KEY REFERENCES notes(path) ON DELETE CASCADE,
+    status TEXT DEFAULT 'active',
+    tags JSON,
+    note_type TEXT DEFAULT 'permanent',
+    actionable INTEGER DEFAULT 0,
+    compositional INTEGER DEFAULT 0,
+    date_added TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_metadata_status ON note_metadata(status);
+
 -- Session lifecycle tracking for memories
 CREATE TABLE IF NOT EXISTS memory_sessions (
     session_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -441,6 +457,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_uuid
 """
 
 
+# Migration from v10 to v11: add note_metadata table (read-only vault guarantee)
+MIGRATION_V11 = """
+CREATE TABLE IF NOT EXISTS note_metadata (
+    note_path TEXT PRIMARY KEY REFERENCES notes(path) ON DELETE CASCADE,
+    status TEXT DEFAULT 'active',
+    tags JSON,
+    note_type TEXT DEFAULT 'permanent',
+    actionable INTEGER DEFAULT 0,
+    compositional INTEGER DEFAULT 0,
+    date_added TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_note_metadata_status ON note_metadata(status);
+"""
+
+
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
@@ -605,6 +637,43 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v10 complete.")
+
+    if current < 11:
+        log.info(
+            "Migrating schema v10 -> v11: "
+            "adding note_metadata table (read-only vault)..."
+        )
+        conn.executescript(MIGRATION_V11)
+        # Backfill from existing notes.frontmatter
+        rows = conn.execute(
+            "SELECT path, frontmatter FROM notes"
+            " WHERE frontmatter IS NOT NULL"
+        ).fetchall()
+        for r in rows:
+            try:
+                fm = json.loads(r["frontmatter"])
+            except (json.JSONDecodeError, TypeError):
+                fm = {}
+            status = fm.get("status", "active")
+            tags = json.dumps(fm.get("tags", []))
+            note_type = fm.get("type", "permanent")
+            actionable = 1 if fm.get("actionable") else 0
+            compositional = 1 if fm.get("compositional") else 0
+            date_added = fm.get("date", "")
+            conn.execute(
+                "INSERT OR IGNORE INTO note_metadata"
+                " (note_path, status, tags, note_type,"
+                "  actionable, compositional, date_added)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (r["path"], status, tags, note_type,
+                 actionable, compositional, date_added),
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (11)"
+        )
+        conn.commit()
+        log.info("Migration to v11 complete.")
 
 
 def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
