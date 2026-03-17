@@ -15,6 +15,20 @@ const UV_INSTALL_URL = "https://astral.sh/uv/install.sh";
 const UV_BIN_DIR = path.join(os.homedir(), ".local", "bin");
 const PYTHON_VERSION = "3.12";
 
+/** Build the direct uv binary download URL for this platform */
+function uvDirectUrl() {
+  const arch = os.arch();
+  const platform = os.platform();
+  const archMap = { x64: "x86_64", arm64: "aarch64" };
+  const platMap = { linux: "unknown-linux-gnu", darwin: "apple-darwin" };
+  const a = archMap[arch];
+  const p = platMap[platform];
+  if (!a || !p) return null;
+  // Use musl on Linux for maximum compatibility (static binary)
+  const target = platform === "linux" ? `${a}-unknown-linux-musl` : `${a}-${p}`;
+  return `https://github.com/astral-sh/uv/releases/latest/download/uv-${target}.tar.gz`;
+}
+
 function info(msg) { console.log(`  \x1b[36m▸\x1b[0m ${msg}`); }
 function warn(msg) { console.error(`  \x1b[33m▸\x1b[0m ${msg}`); }
 function die(msg) {
@@ -70,19 +84,45 @@ async function main() {
   // ── Step 1: Install uv (the only external dependency) ──
   if (!uvCmd()) {
     info("Installing uv (Python package manager)...");
-    try {
-      const script = await download(UV_INSTALL_URL);
-      const tmpFile = path.join(os.tmpdir(), `uv-install-${Date.now()}.sh`);
-      fs.writeFileSync(tmpFile, script, { mode: 0o755 });
-      run(`sh "${tmpFile}"`, { env: { ...process.env, UV_UNMANAGED_INSTALL: UV_BIN_DIR } });
-      fs.unlinkSync(tmpFile);
-      process.env.PATH = `${UV_BIN_DIR}:${process.env.PATH}`;
-    } catch (e) {
-      die(
-        `Failed to install uv: ${e.message}\n` +
-        `      Install manually: https://docs.astral.sh/uv/getting-started/installation/\n` +
-        `      Then re-run: npm rebuild neurostack`
-      );
+    let installed = false;
+
+    // Try direct binary download first (no curl/wget needed)
+    const directUrl = uvDirectUrl();
+    if (directUrl) {
+      try {
+        const tarFile = path.join(os.tmpdir(), `uv-${Date.now()}.tar.gz`);
+        await download(directUrl, tarFile);
+        fs.mkdirSync(UV_BIN_DIR, { recursive: true });
+        run(`tar xzf "${tarFile}" --strip-components=1 -C "${UV_BIN_DIR}"`);
+        fs.unlinkSync(tarFile);
+        // Ensure executable
+        for (const bin of ["uv", "uvx"]) {
+          const p = path.join(UV_BIN_DIR, bin);
+          if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+        }
+        process.env.PATH = `${UV_BIN_DIR}:${process.env.PATH}`;
+        installed = true;
+      } catch (e) {
+        warn(`Direct download failed (${e.message}), trying install script...`);
+      }
+    }
+
+    // Fallback: official install script (needs curl or wget)
+    if (!installed) {
+      try {
+        const script = await download(UV_INSTALL_URL);
+        const tmpFile = path.join(os.tmpdir(), `uv-install-${Date.now()}.sh`);
+        fs.writeFileSync(tmpFile, script, { mode: 0o755 });
+        run(`sh "${tmpFile}"`, { env: { ...process.env, UV_UNMANAGED_INSTALL: UV_BIN_DIR } });
+        fs.unlinkSync(tmpFile);
+        process.env.PATH = `${UV_BIN_DIR}:${process.env.PATH}`;
+      } catch (e) {
+        die(
+          `Failed to install uv: ${e.message}\n` +
+          `      Install manually: https://docs.astral.sh/uv/getting-started/installation/\n` +
+          `      Then re-run: npm rebuild neurostack`
+        );
+      }
     }
   }
   const uv = uvCmd();
