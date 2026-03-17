@@ -1,0 +1,36 @@
+description: "Update an existing memory. Only provided fields are changed."
+handler: "./handler.ts"
+inputs:
+  memory_id:
+    type: int
+    description: "The memory to update"
+  content:
+    type: string
+    description: "New content (re-embeds if changed)"
+    optional: true
+  tags:
+    type: string
+    description: "Replace tags entirely (comma-separated). Pass empty string to clear."
+    optional: true
+  add_tags:
+    type: string
+    description: "Comma-separated tags to add to existing set"
+    optional: true
+  remove_tags:
+    type: string
+    description: "Comma-separated tags to remove from existing set"
+    optional: true
+  entity_type:
+    type: string
+    description: "Change type"
+    optional: true
+  workspace:
+    type: string
+    description: "Change workspace scope"
+    optional: true
+  ttl_hours:
+    type: float
+    description: "Set or change TTL. Pass 0 to make permanent."
+    optional: true
+auth:
+  plugin: allow_all

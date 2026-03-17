@@ -1,0 +1,23 @@
+description: |
+  Extract insights from recent AI coding sessions and save as memories.
+  Scans session transcripts for decisions, bugs, conventions, and learnings.
+  Deduplicates against existing memories before saving.
+  Supports multiple providers: claude-code, vscode-chat, codex-cli, aider.
+handler: "./handler.ts"
+inputs:
+  sessions:
+    type: int
+    description: "Number of recent sessions to scan (default 1)"
+    optional: true
+    default: "1"
+  dry_run:
+    type: boolean
+    description: "If true, show what would be saved without saving"
+    optional: true
+    default: "false"
+  provider:
+    type: string
+    description: "Restrict to a single provider name, or omit for all"
+    optional: true
+auth:
+  plugin: allow_all

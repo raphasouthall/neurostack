@@ -1,0 +1,11 @@
+name: neurostack
+
+server:
+  port: 8080
+  log_level: 3
+
+root: app
+
+tools:
+  directory: tools
+

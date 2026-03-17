@@ -1,0 +1,25 @@
+description: |
+  Return notes flagged as prediction errors — high semantic distance at retrieval time.
+  These are notes that "surprised" during retrieval, signalling they may be
+  outdated, miscategorised, or poorly linked. Can also resolve flagged notes.
+handler: "./handler.ts"
+inputs:
+  error_type:
+    type: string
+    description: 'Filter by type — "low_overlap" or "contextual_mismatch". Omit for all.'
+    optional: true
+  limit:
+    type: int
+    description: "Max errors to return (default 20)"
+    optional: true
+    default: "20"
+  resolve:
+    type: string
+    description: "Comma-separated or JSON array of note paths to mark as resolved"
+    optional: true
+  workspace:
+    type: string
+    description: "Optional vault subdirectory prefix to restrict results"
+    optional: true
+auth:
+  plugin: allow_all

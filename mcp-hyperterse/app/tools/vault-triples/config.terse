@@ -1,0 +1,25 @@
+description: |
+  Search knowledge graph triples for structured facts.
+  Returns compact Subject-Predicate-Object facts (~10-20 tokens each).
+  Use this for quick factual lookups instead of reading full notes.
+handler: "./handler.ts"
+inputs:
+  query:
+    type: string
+    description: "Natural language search query"
+  top_k:
+    type: int
+    description: "Number of triples to return (default 10)"
+    optional: true
+    default: "10"
+  mode:
+    type: string
+    description: 'Search mode — "hybrid" (default), "semantic", or "keyword"'
+    optional: true
+    default: "hybrid"
+  workspace:
+    type: string
+    description: "Optional vault subdirectory prefix to restrict results"
+    optional: true
+auth:
+  plugin: allow_all

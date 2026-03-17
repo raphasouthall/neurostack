@@ -1,0 +1,31 @@
+description: |
+  Assemble task-scoped context for session recovery after /clear or new conversation.
+  Unlike session-brief (time-anchored status snapshot), this is task-anchored:
+  it retrieves memories, triples, summaries, and session history relevant to
+  a specific task description, respecting a token budget.
+handler: "./handler.ts"
+inputs:
+  task:
+    type: string
+    description: "Description of the current task or goal"
+  token_budget:
+    type: int
+    description: "Maximum approximate tokens in response (default 2000)"
+    optional: true
+    default: "2000"
+  workspace:
+    type: string
+    description: "Optional vault subdirectory to scope"
+    optional: true
+  include_memories:
+    type: boolean
+    description: "Include relevant memories (default true)"
+    optional: true
+    default: "true"
+  include_triples:
+    type: boolean
+    description: "Include relevant triples (default true)"
+    optional: true
+    default: "true"
+auth:
+  plugin: allow_all

@@ -1,0 +1,4 @@
+description: "Get index health: note count, embedding coverage, graph stats, triple stats, excitability, and memory stats."
+handler: "./handler.ts"
+auth:
+  plugin: allow_all

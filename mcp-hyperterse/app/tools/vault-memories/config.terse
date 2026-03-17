@@ -1,0 +1,25 @@
+description: |
+  Search or list agent-written memories.
+  Without a query, lists recent memories. With a query, searches by
+  content using FTS5 + semantic similarity.
+handler: "./handler.ts"
+inputs:
+  query:
+    type: string
+    description: "Optional search query (FTS5 + semantic). Omit to list recent."
+    optional: true
+  entity_type:
+    type: string
+    description: 'Filter by type — "observation", "decision", "convention", "learning", "context", or "bug"'
+    optional: true
+  workspace:
+    type: string
+    description: "Optional vault subdirectory to scope results"
+    optional: true
+  limit:
+    type: int
+    description: "Max results (default 20)"
+    optional: true
+    default: "20"
+auth:
+  plugin: allow_all

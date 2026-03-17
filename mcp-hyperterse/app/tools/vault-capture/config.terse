@@ -1,0 +1,15 @@
+description: |
+  Quick-capture a thought into the vault inbox.
+  Zero-friction way to dump a thought without creating a full note.
+  Creates a timestamped markdown file in the vault's inbox/ folder.
+handler: "./handler.ts"
+inputs:
+  content:
+    type: string
+    description: "The thought or idea to capture"
+  tags:
+    type: string
+    description: 'Optional comma-separated tags for the capture (e.g. "idea,research")'
+    optional: true
+auth:
+  plugin: allow_all

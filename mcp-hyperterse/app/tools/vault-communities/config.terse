@@ -1,0 +1,31 @@
+description: |
+  Answer global queries using GraphRAG community summaries.
+  Unlike vault-search (which retrieves specific chunks), this answers thematic
+  questions like "what topics dominate my vault?" by running Leiden community
+  detection summaries through a map-reduce synthesis.
+handler: "./handler.ts"
+inputs:
+  query:
+    type: string
+    description: "Natural language question about vault themes/topics"
+  top_k:
+    type: int
+    description: "Number of communities to retrieve (default 6)"
+    optional: true
+    default: "6"
+  level:
+    type: int
+    description: "Community hierarchy level — 0=coarse themes, 1=fine sub-themes"
+    optional: true
+    default: "0"
+  map_reduce:
+    type: boolean
+    description: "Use LLM map-reduce synthesis (true) or raw hits (false)"
+    optional: true
+    default: "true"
+  workspace:
+    type: string
+    description: "Optional vault subdirectory prefix to restrict results"
+    optional: true
+auth:
+  plugin: allow_all

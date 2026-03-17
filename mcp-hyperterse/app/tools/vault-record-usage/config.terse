@@ -1,0 +1,11 @@
+description: |
+  Record that specific notes were retrieved and used in this session.
+  Call this after vault-search when you actually consumed the returned notes.
+  Drives hotness scoring — frequently used notes score higher in future searches.
+handler: "./handler.ts"
+inputs:
+  note_paths:
+    type: string
+    description: 'Comma-separated or JSON array of note paths that were used (e.g. "research/foo.md,work/bar.md")'
+auth:
+  plugin: allow_all

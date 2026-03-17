@@ -1,0 +1,36 @@
+description: |
+  Save a memory — persist an observation, decision, or learning for future retrieval.
+  Memories are searchable alongside vault notes. Use this to record architecture
+  decisions, bug root causes, conventions, or context that should survive across sessions.
+handler: "./handler.ts"
+inputs:
+  content:
+    type: string
+    description: "The memory content to save (1-2 sentences recommended)"
+  tags:
+    type: string
+    description: 'Optional comma-separated tags for filtering (e.g. "auth,refactor")'
+    optional: true
+  entity_type:
+    type: string
+    description: 'Type — "observation", "decision", "convention", "learning", "context", or "bug"'
+    optional: true
+    default: "observation"
+  source_agent:
+    type: string
+    description: 'Name of the agent writing this (e.g. "claude-code", "cursor")'
+    optional: true
+  workspace:
+    type: string
+    description: "Optional vault subdirectory scope"
+    optional: true
+  ttl_hours:
+    type: float
+    description: "Optional time-to-live in hours. Memory auto-expires after this."
+    optional: true
+  session_id:
+    type: int
+    description: "Optional session ID from vault-session-start to group with a session"
+    optional: true
+auth:
+  plugin: allow_all

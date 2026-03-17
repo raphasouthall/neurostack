@@ -1,0 +1,11 @@
+description: |
+  Get pre-computed summary for a note by path or search query.
+  Returns 2-3 sentence summary + frontmatter (~100-200 tokens)
+  instead of reading the full file (~500-2000 tokens).
+handler: "./handler.ts"
+inputs:
+  path_or_query:
+    type: string
+    description: 'Note path (e.g. "research/predictive-coding.md") or search query'
+auth:
+  plugin: allow_all

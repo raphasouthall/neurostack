@@ -1,0 +1,8 @@
+description: "Delete a specific memory by ID."
+handler: "./handler.ts"
+inputs:
+  memory_id:
+    type: int
+    description: "The ID of the memory to delete (from vault-remember or vault-memories)"
+auth:
+  plugin: allow_all

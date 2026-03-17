@@ -1,0 +1,17 @@
+description: |
+  Start a new memory session to group related memories.
+  Call at the beginning of a work session. All memories saved with the
+  returned session_id will be grouped together and can be reviewed or
+  summarized as a unit.
+handler: "./handler.ts"
+inputs:
+  source_agent:
+    type: string
+    description: 'Name of the agent starting the session (e.g. "claude-code", "cursor")'
+    optional: true
+  workspace:
+    type: string
+    description: "Optional vault subdirectory scope"
+    optional: true
+auth:
+  plugin: allow_all

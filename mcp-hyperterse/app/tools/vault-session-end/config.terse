@@ -1,0 +1,22 @@
+description: |
+  End a memory session and optionally generate a summary.
+  If summarize=true, uses the LLM to produce a 2-3 sentence summary of all
+  memories recorded during the session. If auto_harvest=true, extracts
+  insights from the most recent session transcript and saves them as memories.
+handler: "./handler.ts"
+inputs:
+  session_id:
+    type: int
+    description: "The session ID returned by vault-session-start"
+  summarize:
+    type: boolean
+    description: "Generate LLM summary of session (default true)"
+    optional: true
+    default: "true"
+  auto_harvest:
+    type: boolean
+    description: "Run harvest on the latest session (default true)"
+    optional: true
+    default: "true"
+auth:
+  plugin: allow_all

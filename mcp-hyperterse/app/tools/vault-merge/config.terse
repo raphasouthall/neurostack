@@ -1,0 +1,15 @@
+description: |
+  Merge two memories. Source is folded into target; source is deleted.
+  Use this after vault-remember reports near_duplicates. Keeps the longer
+  content, unions tags, keeps the more specific entity type, and tracks
+  the merge in an audit trail.
+handler: "./handler.ts"
+inputs:
+  target_id:
+    type: int
+    description: "Memory to keep (receives merged content)"
+  source_id:
+    type: int
+    description: "Memory to fold in (deleted after merge)"
+auth:
+  plugin: allow_all
