@@ -918,15 +918,17 @@ def vault_memories(
 
 
 @mcp.tool()
-def vault_harvest(sessions: int = 1, dry_run: bool = False) -> str:
-    """Extract insights from recent Claude Code sessions and save as memories.
+def vault_harvest(sessions: int = 1, dry_run: bool = False, provider: str | None = None) -> str:
+    """Extract insights from recent AI coding sessions and save as memories.
 
     Scans session transcripts for decisions, bugs, conventions, and learnings.
     Deduplicates against existing memories before saving.
+    Supports multiple providers: claude-code, vscode-chat, codex-cli, aider.
 
     Args:
         sessions: Number of recent sessions to scan (default 1)
         dry_run: If True, show what would be saved without saving
+        provider: Restrict to a single provider name, or omit for all
     """
     from .harvest import harvest_sessions
 
@@ -934,6 +936,7 @@ def vault_harvest(sessions: int = 1, dry_run: bool = False) -> str:
         n_sessions=sessions,
         dry_run=dry_run,
         embed_url=EMBED_URL,
+        provider=provider,
     )
     return json.dumps(result, indent=2, default=str)
 
