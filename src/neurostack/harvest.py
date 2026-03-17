@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -207,7 +207,10 @@ class CodexCLIProvider:
 
             if item_type == "response_item":
                 # ResponseItem::Message {role, content: [ContentItem]}
-                msg_payload = payload.get("payload", payload) if isinstance(payload, dict) else payload
+                if isinstance(payload, dict):
+                    msg_payload = payload.get("payload", payload)
+                else:
+                    msg_payload = payload
                 if not isinstance(msg_payload, dict):
                     continue
                 role = msg_payload.get("role", "")
