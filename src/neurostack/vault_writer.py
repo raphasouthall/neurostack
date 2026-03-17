@@ -15,17 +15,32 @@ log = logging.getLogger("neurostack")
 
 
 class VaultWriter:
-    """Writes Memory objects to the vault as markdown files."""
+    """Writes Memory objects as markdown files.
+
+    By default writes to NeuroStack-owned storage (~/.local/share/neurostack/memories/)
+    to maintain the read-only vault guarantee. Set writeback_path to an absolute path
+    or a relative path (joined with vault_root) to override.
+    """
 
     def __init__(
         self,
         vault_root: Path,
-        writeback_path: str = "memories",
+        writeback_path: str = "",
     ):
         self.vault_root = vault_root.resolve()
-        self.memories_dir = self.vault_root / writeback_path
+        if writeback_path:
+            wp = Path(writeback_path)
+            if wp.is_absolute():
+                self.memories_dir = wp
+            else:
+                self.memories_dir = self.vault_root / writeback_path
+        else:
+            # Default: NeuroStack-owned storage (never inside vault)
+            self.memories_dir = (
+                Path.home() / ".local" / "share" / "neurostack" / "memories"
+            )
         self._created_dirs: set[str] = set()
-        self._check_vault_root()
+        self._check_base_dir()
 
     # -- public API --------------------------------------------------
 
@@ -180,31 +195,31 @@ class VaultWriter:
             raise
 
     def _check_containment(self, path: Path) -> bool:
-        """Verify resolved path is under vault_root.
+        """Verify resolved path is under memories_dir.
 
         Prevents path traversal via symlinks or '..'.
         """
         real = Path(os.path.realpath(path))
-        root = str(self.vault_root)
-        if not str(real).startswith(root + os.sep) and str(real) != root:
+        base = str(self.memories_dir.resolve())
+        if not str(real).startswith(base + os.sep) and str(real) != base:
             log.warning(
-                "Security: path %s resolves outside vault root %s",
+                "Security: path %s resolves outside memories dir %s",
                 path,
-                self.vault_root,
+                self.memories_dir,
             )
             return False
         return True
 
-    def _check_vault_root(self) -> bool:
-        """Validate vault_root has >= 3 path components.
+    def _check_base_dir(self) -> bool:
+        """Validate memories_dir has >= 3 path components.
 
         Prevents accidental writes to / or /home/user.
         Raises ValueError on failure.
         """
-        parts = self.vault_root.parts
+        parts = self.memories_dir.resolve().parts
         if len(parts) < 3:
             raise ValueError(
-                f"vault_root too shallow ({self.vault_root}). "
+                f"memories_dir too shallow ({self.memories_dir}). "
                 f"Must have >= 3 path components to prevent "
                 f"accidental writes to system directories."
             )

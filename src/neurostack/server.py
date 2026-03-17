@@ -49,7 +49,10 @@ EMBED_URL = _cfg.embed_url
 _writer: VaultWriter | None = None
 if _cfg.writeback_enabled:
     try:
-        _writer = VaultWriter(_cfg.vault_root, _cfg.writeback_path)
+        _writer = VaultWriter(
+            _cfg.vault_root,
+            _cfg.writeback_path if _cfg.writeback_path != "memories" else "",
+        )
     except ValueError as e:
         log.warning("Write-back disabled: %s", e)
 
@@ -96,7 +99,7 @@ def vault_search(
             if memories:
                 result["memories"] = memories
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result)
 
     # Default: full depth (original behavior)
     from .search import hybrid_search
@@ -125,7 +128,7 @@ def vault_search(
     if memories:
         output.append({"_memories": memories})
 
-    return json.dumps(output, indent=2)
+    return json.dumps(output)
 
 
 @mcp.tool()
@@ -159,7 +162,7 @@ def vault_ask(
         embed_url=EMBED_URL,
         workspace=workspace,
     )
-    out = json.dumps(result, indent=2)
+    out = json.dumps(result)
     _cache_set(cache_key, out)
     return out
 
@@ -234,7 +237,7 @@ def vault_summary(path_or_query: str) -> str:
         "frontmatter": json.loads(row["frontmatter"]) if row["frontmatter"] else {},
         "summary": row["summary_text"] or "(not yet generated)",
     }
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -279,7 +282,7 @@ def vault_graph(note: str, depth: int = 1, workspace: str = None) -> str:
         "neighbors": [node_to_dict(n) for n in result.neighbors],
         "neighbor_count": len(result.neighbors),
     }
-    return json.dumps(output, indent=2)
+    return json.dumps(output)
 
 
 @mcp.tool()
@@ -299,7 +302,7 @@ def vault_related(note: str, top_k: int = 10, workspace: str = None) -> str:
     from .related import find_related
 
     results = find_related(note_path=note, top_k=top_k, workspace=workspace)
-    return json.dumps(results, indent=2)
+    return json.dumps(results)
 
 
 @mcp.tool()
@@ -348,7 +351,7 @@ def vault_context(
         workspace=workspace, include_memories=include_memories,
         include_triples=include_triples, embed_url=EMBED_URL,
     )
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -383,7 +386,7 @@ def vault_triples(query: str, top_k: int = 10, mode: str = "hybrid", workspace: 
             "score": round(t.score, 4),
         })
 
-    return json.dumps(output, indent=2)
+    return json.dumps(output)
 
 
 @mcp.tool()
@@ -428,7 +431,7 @@ def vault_communities(
         embed_url=EMBED_URL,
         workspace=workspace,
     )
-    out = json.dumps(result, indent=2)
+    out = json.dumps(result)
     _cache_set(cache_key, out)
     return out
 
@@ -504,7 +507,7 @@ def vault_stats() -> str:
         },
         "memories": mem_stats,
     }
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -622,7 +625,7 @@ def vault_prediction_errors(
         "total_flagged_notes": total_unresolved,
         "showing": len(results),
         "errors": results,
-    }, indent=2)
+    })
 
 
 @mcp.tool()
@@ -684,7 +687,7 @@ def vault_remember(
         result["near_duplicates"] = memory.near_duplicates
     if memory.suggested_tags:
         result["suggested_tags"] = memory.suggested_tags
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -799,7 +802,7 @@ def vault_update_memory(
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
         "expires_at": memory.expires_at,
-    }, indent=2)
+    })
 
 
 @mcp.tool()
@@ -864,7 +867,7 @@ def vault_merge(
         "tags": memory.tags,
         "merge_count": memory.merge_count,
         "merged_from": memory.merged_from,
-    }, indent=2)
+    })
 
 
 @mcp.tool()
@@ -914,7 +917,7 @@ def vault_memories(
             entry["score"] = round(m.score, 4)
         output.append(entry)
 
-    return json.dumps(output, indent=2)
+    return json.dumps(output)
 
 
 @mcp.tool()
@@ -938,7 +941,7 @@ def vault_harvest(sessions: int = 1, dry_run: bool = False, provider: str | None
         embed_url=EMBED_URL,
         provider=provider,
     )
-    return json.dumps(result, indent=2, default=str)
+    return json.dumps(result, default=str)
 
 
 @mcp.tool()
@@ -967,7 +970,7 @@ def vault_session_start(
         source_agent=source_agent,
         workspace=workspace,
     )
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -1012,7 +1015,7 @@ def vault_session_end(
         except Exception as e:
             result["harvest"] = {"error": str(e)}
 
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -1036,7 +1039,7 @@ def vault_capture(
         vault_root=str(VAULT_ROOT),
         tags=tags,
     )
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 if __name__ == "__main__":

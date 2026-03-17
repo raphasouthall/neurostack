@@ -983,7 +983,8 @@ def cmd_writeback(args):
             return
 
         writer = VaultWriter(
-            cfg.vault_root, cfg.writeback_path,
+            cfg.vault_root,
+            cfg.writeback_path if cfg.writeback_path != "memories" else "",
         )
         wrote = 0
         for row in rows:
@@ -1100,11 +1101,17 @@ def cmd_onboard(args):
     print(f"Scanning {target}...")
     print(f"  Found {notes_found} markdown files\n")
 
-    # 2. Add missing frontmatter
+    # 2. Generate metadata for notes without frontmatter
+    #    Stored in SQLite note_metadata — vault files are NEVER modified.
+    #    Use --write-frontmatter to opt in to file modification.
     today = date.today().isoformat()
+    write_fm = getattr(args, "write_frontmatter", False)
     # Files to skip — NeuroStack scaffolding, not user notes
     skip_names = {"index.md", "CLAUDE.md"}
     skip_dirs = {"templates", ".obsidian", ".claude"}
+
+    # Collect metadata for SQLite insertion after indexing
+    pending_metadata: list[tuple] = []
 
     for md in md_files:
         if md.name in skip_names:
@@ -1117,7 +1124,7 @@ def cmd_onboard(args):
         if not fm:
             # Derive tags from parent dir name
             parent_tag = rel.parent.name if rel.parent.name else ""
-            tags = f"[{parent_tag}]" if parent_tag else "[]"
+            tags_list = [parent_tag] if parent_tag else []
 
             # Guess note type from location
             parent_lower = rel.parent.name.lower() if rel.parent.name else ""
@@ -1132,15 +1139,23 @@ def cmd_onboard(args):
             else:
                 note_type = "permanent"
 
-            new_fm = (
-                f"---\ndate: {today}\ntags: {tags}\n"
-                f"type: {note_type}\nstatus: active\n---\n\n"
-            )
-            if not dry_run:
+            if write_fm and not dry_run:
+                tags_str = f"[{parent_tag}]" if parent_tag else "[]"
+                new_fm = (
+                    f"---\ndate: {today}\ntags: {tags_str}\n"
+                    f"type: {note_type}\nstatus: active\n---\n\n"
+                )
                 md.write_text(
                     new_fm + content, encoding="utf-8",
                 )
-            print(f"  {prefix}+ frontmatter → {rel}")
+                print(f"  {prefix}+ frontmatter → {rel}")
+            else:
+                pending_metadata.append((
+                    str(rel), "active",
+                    json.dumps(tags_list),
+                    note_type, 0, 0, today,
+                ))
+                print(f"  {prefix}+ metadata → {rel}")
             frontmatter_added += 1
 
     # 3. Generate index.md for directories that have .md files
@@ -1267,6 +1282,18 @@ def cmd_onboard(args):
         )
         db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", DB_PATH))
         conn = get_db(db_path)
+
+        # Insert pending metadata for notes without frontmatter
+        if pending_metadata:
+            conn.executemany(
+                "INSERT OR IGNORE INTO note_metadata"
+                " (note_path, status, tags, note_type,"
+                "  actionable, compositional, date_added)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                pending_metadata,
+            )
+            conn.commit()
+
         notes = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
         chunks = conn.execute(
             "SELECT COUNT(*) FROM chunks",
@@ -2816,6 +2843,10 @@ def main():
     p.add_argument(
         "--no-index", action="store_true",
         help="Skip indexing after onboarding",
+    )
+    p.add_argument(
+        "--write-frontmatter", action="store_true",
+        help="Write frontmatter into vault files (default: metadata stored in SQLite only)",
     )
     p.set_defaults(func=cmd_onboard)
 
