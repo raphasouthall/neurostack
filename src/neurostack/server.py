@@ -12,7 +12,6 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("neurostack")
 
 from .config import get_config
-from .vault_writer import VaultWriter
 
 log = logging.getLogger("neurostack")
 
@@ -45,13 +44,6 @@ _cfg = get_config()
 VAULT_ROOT = _cfg.vault_root
 EMBED_URL = _cfg.embed_url
 
-# Initialize write-back (None if disabled)
-_writer: VaultWriter | None = None
-if _cfg.writeback_enabled:
-    try:
-        _writer = VaultWriter(_cfg.vault_root, _cfg.writeback_path)
-    except ValueError as e:
-        log.warning("Write-back disabled: %s", e)
 
 
 @mcp.tool()
@@ -96,7 +88,7 @@ def vault_search(
             if memories:
                 result["memories"] = memories
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result)
 
     # Default: full depth (original behavior)
     from .search import hybrid_search
@@ -125,7 +117,7 @@ def vault_search(
     if memories:
         output.append({"_memories": memories})
 
-    return json.dumps(output, indent=2)
+    return json.dumps(output)
 
 
 @mcp.tool()
@@ -159,7 +151,7 @@ def vault_ask(
         embed_url=EMBED_URL,
         workspace=workspace,
     )
-    out = json.dumps(result, indent=2)
+    out = json.dumps(result)
     _cache_set(cache_key, out)
     return out
 
@@ -234,7 +226,7 @@ def vault_summary(path_or_query: str) -> str:
         "frontmatter": json.loads(row["frontmatter"]) if row["frontmatter"] else {},
         "summary": row["summary_text"] or "(not yet generated)",
     }
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -279,7 +271,7 @@ def vault_graph(note: str, depth: int = 1, workspace: str = None) -> str:
         "neighbors": [node_to_dict(n) for n in result.neighbors],
         "neighbor_count": len(result.neighbors),
     }
-    return json.dumps(output, indent=2)
+    return json.dumps(output)
 
 
 @mcp.tool()
@@ -299,7 +291,7 @@ def vault_related(note: str, top_k: int = 10, workspace: str = None) -> str:
     from .related import find_related
 
     results = find_related(note_path=note, top_k=top_k, workspace=workspace)
-    return json.dumps(results, indent=2)
+    return json.dumps(results)
 
 
 @mcp.tool()
@@ -348,7 +340,7 @@ def vault_context(
         workspace=workspace, include_memories=include_memories,
         include_triples=include_triples, embed_url=EMBED_URL,
     )
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -383,7 +375,7 @@ def vault_triples(query: str, top_k: int = 10, mode: str = "hybrid", workspace: 
             "score": round(t.score, 4),
         })
 
-    return json.dumps(output, indent=2)
+    return json.dumps(output)
 
 
 @mcp.tool()
@@ -428,7 +420,7 @@ def vault_communities(
         embed_url=EMBED_URL,
         workspace=workspace,
     )
-    out = json.dumps(result, indent=2)
+    out = json.dumps(result)
     _cache_set(cache_key, out)
     return out
 
@@ -504,7 +496,7 @@ def vault_stats() -> str:
         },
         "memories": mem_stats,
     }
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -622,7 +614,7 @@ def vault_prediction_errors(
         "total_flagged_notes": total_unresolved,
         "showing": len(results),
         "errors": results,
-    }, indent=2)
+    })
 
 
 @mcp.tool()
@@ -668,12 +660,6 @@ def vault_remember(
         session_id=session_id,
     )
 
-    if _writer:
-        _writer.write(memory)
-        log.debug(
-            "Write-back: wrote memory %s", memory.memory_id,
-        )
-
     result = {
         "saved": True,
         "memory_id": memory.memory_id,
@@ -684,7 +670,7 @@ def vault_remember(
         result["near_duplicates"] = memory.near_duplicates
     if memory.suggested_tags:
         result["suggested_tags"] = memory.suggested_tags
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -694,29 +680,11 @@ def vault_forget(memory_id: int) -> str:
     Args:
         memory_id: The ID of the memory to delete (from vault_remember or vault_memories)
     """
-    from .memories import _row_to_memory, forget_memory
+    from .memories import forget_memory
     from .schema import DB_PATH, get_db
 
     conn = get_db(DB_PATH)
-
-    # Fetch memory before deletion for file cleanup
-    mem_to_delete = None
-    if _writer:
-        row = conn.execute(
-            "SELECT * FROM memories WHERE memory_id = ?",
-            (memory_id,),
-        ).fetchone()
-        if row:
-            mem_to_delete = _row_to_memory(row)
-
     deleted = forget_memory(conn, memory_id)
-
-    if _writer and mem_to_delete and deleted:
-        _writer.delete(mem_to_delete)
-        log.debug(
-            "Write-back: deleted memory %s", memory_id,
-        )
-
     return json.dumps({"deleted": deleted, "memory_id": memory_id})
 
 
@@ -770,12 +738,6 @@ def vault_update_memory(
             "memory_id": memory_id,
         })
 
-    if _writer:
-        _writer.overwrite(memory)
-        log.debug(
-            "Write-back: updated memory %s", memory.memory_id,
-        )
-
     # Build changed_fields list
     changed = []
     if content is not None:
@@ -799,7 +761,7 @@ def vault_update_memory(
         "created_at": memory.created_at,
         "updated_at": memory.updated_at,
         "expires_at": memory.expires_at,
-    }, indent=2)
+    })
 
 
 @mcp.tool()
@@ -817,36 +779,13 @@ def vault_merge(
         target_id: Memory to keep (receives merged content)
         source_id: Memory to fold in (deleted after merge)
     """
-    from .memories import _row_to_memory, merge_memories
+    from .memories import merge_memories
     from .schema import DB_PATH, get_db
 
     conn = get_db(DB_PATH)
-
-    # Fetch source memory before merge for file cleanup
-    source_mem = None
-    if _writer:
-        row = conn.execute(
-            "SELECT * FROM memories WHERE memory_id = ?",
-            (source_id,),
-        ).fetchone()
-        if row:
-            source_mem = _row_to_memory(row)
-
     memory = merge_memories(
         conn, target_id, source_id, embed_url=EMBED_URL,
     )
-
-    if _writer and memory:
-        _writer.overwrite(memory)
-        log.debug(
-            "Write-back: overwrote merged memory %s",
-            memory.memory_id,
-        )
-    if _writer and source_mem:
-        _writer.delete(source_mem)
-        log.debug(
-            "Write-back: deleted merged source %s", source_id,
-        )
 
     if not memory:
         return json.dumps({
@@ -864,7 +803,7 @@ def vault_merge(
         "tags": memory.tags,
         "merge_count": memory.merge_count,
         "merged_from": memory.merged_from,
-    }, indent=2)
+    })
 
 
 @mcp.tool()
@@ -914,7 +853,7 @@ def vault_memories(
             entry["score"] = round(m.score, 4)
         output.append(entry)
 
-    return json.dumps(output, indent=2)
+    return json.dumps(output)
 
 
 @mcp.tool()
@@ -938,7 +877,7 @@ def vault_harvest(sessions: int = 1, dry_run: bool = False, provider: str | None
         embed_url=EMBED_URL,
         provider=provider,
     )
-    return json.dumps(result, indent=2, default=str)
+    return json.dumps(result, default=str)
 
 
 @mcp.tool()
@@ -967,7 +906,7 @@ def vault_session_start(
         source_agent=source_agent,
         workspace=workspace,
     )
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -1012,7 +951,7 @@ def vault_session_end(
         except Exception as e:
             result["harvest"] = {"error": str(e)}
 
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 @mcp.tool()
@@ -1036,7 +975,7 @@ def vault_capture(
         vault_root=str(VAULT_ROOT),
         tags=tags,
     )
-    return json.dumps(result, indent=2)
+    return json.dumps(result)
 
 
 if __name__ == "__main__":

@@ -134,6 +134,25 @@ def index_single_note(
         (parsed.path, parsed.title, frontmatter_json, parsed.content_hash, now),
     )
 
+    # Populate note_metadata if this note isn't already tracked
+    # (preserves existing overrides — only inserts if absent)
+    fm = parsed.frontmatter or {}
+    conn.execute(
+        "INSERT OR IGNORE INTO note_metadata"
+        " (note_path, status, tags, note_type,"
+        "  actionable, compositional, date_added)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            parsed.path,
+            fm.get("status", "active"),
+            json.dumps(fm.get("tags", [])),
+            fm.get("type", "permanent"),
+            1 if fm.get("actionable") else 0,
+            1 if fm.get("compositional") else 0,
+            fm.get("date", now[:10]),
+        ),
+    )
+
     # Generate summary first so it can be used as embedding context
     summary = None
     if not skip_summary:

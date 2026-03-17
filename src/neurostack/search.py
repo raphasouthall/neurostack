@@ -104,8 +104,10 @@ def fts_search(
     workspace: str | None = None,
 ) -> list[dict]:
     """Full-text search over chunks, returns chunk_ids and content."""
-    # Escape FTS5 special characters (quote each token to prevent hyphen/dot/operator injection)
-    safe_query = " ".join(
+    # Escape FTS5 special characters and join with OR for better recall.
+    # AND (implicit space join) requires ALL tokens in a single chunk,
+    # which destroys recall on multi-concept queries.
+    safe_query = " OR ".join(
         '"' + word.replace('"', '') + '"'
         for word in query.split()
         if word and not word.startswith("-")
@@ -471,18 +473,35 @@ def hybrid_search(
     # Excitability boost: notes with status=active get a 1.15x boost
     # Mirrors CREB-mediated excitability windows where recently active
     # neurons are preferentially recruited into new engrams.
+    # Reads from note_metadata (SQLite-owned) with frontmatter fallback.
+    meta_paths = [r["note_path"] for r in valid_results]
+    if meta_paths:
+        placeholders = ",".join("?" * len(meta_paths))
+        meta_rows = conn.execute(
+            f"SELECT note_path, status FROM note_metadata"
+            f" WHERE note_path IN ({placeholders})",
+            meta_paths,
+        ).fetchall()
+        meta_status = {r["note_path"]: r["status"] for r in meta_rows}
+    else:
+        meta_status = {}
+
     for r in valid_results:
-        note_row = conn.execute(
-            "SELECT frontmatter FROM notes WHERE path = ?",
-            (r["note_path"],),
-        ).fetchone()
-        if note_row and note_row["frontmatter"]:
-            try:
-                fm = json.loads(note_row["frontmatter"])
-                if fm.get("status") == "active":
-                    r["score"] *= 1.15
-            except (json.JSONDecodeError, TypeError):
-                pass
+        status = meta_status.get(r["note_path"])
+        if status is None:
+            # Fallback: parse from notes.frontmatter
+            note_row = conn.execute(
+                "SELECT frontmatter FROM notes WHERE path = ?",
+                (r["note_path"],),
+            ).fetchone()
+            if note_row and note_row["frontmatter"]:
+                try:
+                    fm = json.loads(note_row["frontmatter"])
+                    status = fm.get("status")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        if status == "active":
+            r["score"] *= 1.15
 
     valid_results.sort(key=lambda x: x["score"], reverse=True)
 
@@ -565,7 +584,7 @@ def triple_fts_search(
     workspace: str | None = None,
 ) -> list[dict]:
     """Full-text search over triples."""
-    safe_query = " ".join(
+    safe_query = " OR ".join(
         '"' + word.replace('"', '') + '"'
         for word in query.split()
         if word and not word.startswith("-")
