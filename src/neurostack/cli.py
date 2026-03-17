@@ -2577,6 +2577,22 @@ def cmd_decay(args):
     from .search import get_dormancy_report
 
     conn = get_db(DB_PATH)
+
+    if getattr(args, "demote", False):
+        from .search import run_excitability_demotion
+        result = run_excitability_demotion(
+            conn,
+            threshold=args.threshold,
+            half_life_days=args.half_life,
+        )
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"\n  Demoted {result['demoted']} notes to dormant status")
+            for p in result["paths"]:
+                print(f"    {p}")
+        return
+
     report = get_dormancy_report(
         conn,
         threshold=args.threshold,
@@ -3133,6 +3149,8 @@ def main():
                    help="Half-life in days for hotness decay (default: 30)")
     p.add_argument("--limit", type=int, default=50,
                    help="Max notes to show per category (default: 50)")
+    p.add_argument("--demote", action="store_true",
+                   help="Demote dormant notes to status=dormant in note_metadata")
     p.set_defaults(func=cmd_decay)
 
     # harvest
