@@ -19,6 +19,7 @@ from .embedder import HAS_NUMPY, build_chunk_context, embedding_to_blob, get_emb
 from .graph import build_graph, compute_pagerank
 from .schema import DB_PATH, get_db
 from .summarizer import summarize_note
+from .cooccurrence import persist_cooccurrence, upsert_cooccurrence_for_note
 from .triples import extract_triples, triple_to_text
 
 logging.basicConfig(
@@ -272,6 +273,9 @@ def _index_triples_for_note(
 
     log.info(f"  Extracted {len(triples)} triples from {note_path}")
 
+    # Update co-occurrence for entities in this note
+    upsert_cooccurrence_for_note(conn, note_path)
+
 
 def full_index(
     vault_root: Path = VAULT_ROOT,
@@ -334,6 +338,12 @@ def full_index(
     log.info("Building wiki-link graph...")
     build_graph(conn, vault_root)
     compute_pagerank(conn)
+
+    # Populate co-occurrence weights from all triples
+    log.info("Populating co-occurrence weights...")
+    n_pairs = persist_cooccurrence(conn)
+    log.info(f"Co-occurrence: {n_pairs} entity pairs.")
+
     log.info("Index complete.")
 
 

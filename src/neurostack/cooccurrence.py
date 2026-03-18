@@ -73,3 +73,78 @@ def persist_cooccurrence(conn: sqlite3.Connection) -> int:
         f"Persisted {len(pair_weights)} entity co-occurrence pairs."
     )
     return len(pair_weights)
+
+
+def upsert_cooccurrence_for_note(conn: sqlite3.Connection, note_path: str) -> int:
+    """Incrementally update co-occurrence for entities found in *note_path*.
+
+    Unlike ``persist_cooccurrence`` (which does a full DELETE+INSERT), this
+    function only touches pairs involving entities from the given note.
+    For each affected pair it recomputes the weight across ALL notes so
+    the result is always globally correct.
+
+    Returns the number of pairs upserted.
+    """
+    rows = conn.execute(
+        "SELECT subject, object FROM triples WHERE note_path = ?", (note_path,)
+    ).fetchall()
+
+    if not rows:
+        return 0
+
+    entities: set[str] = set()
+    for r in rows:
+        entities.add(r["subject"])
+        entities.add(r["object"])
+
+    # Also find entities previously paired with any of our entities in
+    # co-occurrence (they may need cleanup if an entity was removed from
+    # this note).
+    if entities:
+        placeholders = ",".join("?" for _ in entities)
+        prev_rows = conn.execute(
+            f"SELECT DISTINCT entity_a, entity_b FROM entity_cooccurrence "
+            f"WHERE entity_a IN ({placeholders}) OR entity_b IN ({placeholders})",
+            list(entities) + list(entities),
+        ).fetchall()
+        for pr in prev_rows:
+            entities.add(pr["entity_a"])
+            entities.add(pr["entity_b"])
+
+    entity_list = sorted(entities)
+    now = datetime.now(timezone.utc).isoformat()
+    updated = 0
+
+    for i in range(len(entity_list)):
+        for j in range(i + 1, len(entity_list)):
+            a, b = entity_list[i], entity_list[j]
+            # Count distinct notes where BOTH a and b appear as entity
+            weight_row = conn.execute(
+                """SELECT COUNT(*) AS w FROM (
+                       SELECT DISTINCT note_path FROM triples
+                       WHERE subject = ? OR object = ?
+                   ) n1
+                   WHERE n1.note_path IN (
+                       SELECT DISTINCT note_path FROM triples
+                       WHERE subject = ? OR object = ?
+                   )""",
+                (a, a, b, b),
+            ).fetchone()
+            weight = float(weight_row["w"])
+            if weight > 0:
+                conn.execute(
+                    "INSERT OR REPLACE INTO entity_cooccurrence "
+                    "(entity_a, entity_b, weight, last_seen) VALUES (?, ?, ?, ?)",
+                    (a, b, weight, now),
+                )
+                updated += 1
+            else:
+                # Pair no longer co-occurs in any note — remove it
+                conn.execute(
+                    "DELETE FROM entity_cooccurrence "
+                    "WHERE entity_a = ? AND entity_b = ?",
+                    (a, b),
+                )
+
+    conn.commit()
+    return updated
