@@ -315,6 +315,12 @@ def cmd_backfill(args):
             embed_url=args.embed_url,
             summarize_url=args.summarize_url,
         )
+    if args.target in ("cooccurrence", "all"):
+        from .cooccurrence import persist_cooccurrence
+        from .schema import DB_PATH, get_db
+        conn = get_db(DB_PATH)
+        n = persist_cooccurrence(conn)
+        print(f"Co-occurrence backfill: {n} entity pairs populated.")
 
 
 def cmd_communities(args):
@@ -3030,7 +3036,7 @@ def main():
 
     # backfill
     p = sub.add_parser("backfill", help="Backfill missing summaries and/or triples")
-    p.add_argument("target", choices=["summaries", "triples", "all"], default="all", nargs="?")
+    p.add_argument("target", choices=["summaries", "triples", "cooccurrence", "all"], default="all", nargs="?")
     p.set_defaults(func=cmd_backfill)
 
     # communities
