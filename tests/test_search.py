@@ -588,3 +588,125 @@ class TestCooccurrenceBoost:
             assert ratio <= 2.1, (
                 f"Boost ratio {ratio} exceeds bounded maximum of ~2.0"
             )
+
+
+class TestReinforcementFromSearch:
+    """Tests for Hebbian reinforcement wired into hybrid_search."""
+
+    def test_reinforce_from_search(self, in_memory_db, monkeypatch):
+        """After hybrid_search, co-occurrence weights increase for entity pairs
+        appearing in both query-matched entities and result-note entities."""
+        conn = in_memory_db
+        emb = _fake_embedding(0.5)
+
+        # noteA.md has entities "alpha" and "beta"
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("noteA.md", "Note A", "ha", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO chunks (note_path, heading_path, content, "
+            "content_hash, position, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            ("noteA.md", "## Test", "alpha related content", "h_a", 0, emb),
+        )
+        conn.execute(
+            "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("noteA.md", "alpha", "relates_to", "beta", "alpha relates_to beta"),
+        )
+
+        # noteB.md has entity "alpha" (so "alpha" is a query-matched entity)
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("noteB.md", "Note B", "hb", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("noteB.md", "alpha", "is_a", "concept", "alpha is_a concept"),
+        )
+        conn.commit()
+
+        # Check initial state: no co-occurrence for (alpha, beta) from reinforcement
+        initial = conn.execute(
+            "SELECT weight FROM entity_cooccurrence "
+            "WHERE entity_a = 'alpha' AND entity_b = 'beta'"
+        ).fetchone()
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(
+            search_mod, "get_embedding", lambda q, base_url=None: fake_emb
+        )
+
+        original_config = config_mod._config
+        try:
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.0  # Disable boost, but reinforcement should still fire
+            config_mod._config = cfg
+
+            hybrid_search("alpha", top_k=10, embed_url="http://fake")
+        finally:
+            config_mod._config = original_config
+
+        # After search, reinforcement should have created/increased the
+        # co-occurrence between alpha (query entity) and beta (result-note entity)
+        after = conn.execute(
+            "SELECT weight FROM entity_cooccurrence "
+            "WHERE entity_a = 'alpha' AND entity_b = 'beta'"
+        ).fetchone()
+        assert after is not None, "Reinforcement should have created (alpha, beta) pair"
+        initial_weight = initial["weight"] if initial else 0.0
+        assert after["weight"] > initial_weight, (
+            f"Weight should have increased from {initial_weight}"
+        )
+
+    def test_reinforce_noop_no_entities_in_search(self, in_memory_db, monkeypatch):
+        """If the query matches no entities in triples, no reinforcement occurs."""
+        conn = in_memory_db
+        emb = _fake_embedding(0.5)
+
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("solo.md", "Solo", "hs", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO chunks (note_path, heading_path, content, "
+            "content_hash, position, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            ("solo.md", "## Test", "unrelated content here", "h_solo", 0, emb),
+        )
+        conn.commit()
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(
+            search_mod, "get_embedding", lambda q, base_url=None: fake_emb
+        )
+
+        original_config = config_mod._config
+        try:
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.0
+            config_mod._config = cfg
+
+            hybrid_search("zzzznonexistent", top_k=10, embed_url="http://fake")
+        finally:
+            config_mod._config = original_config
+
+        count = conn.execute(
+            "SELECT COUNT(*) as c FROM entity_cooccurrence"
+        ).fetchone()["c"]
+        assert count == 0, "No reinforcement should occur when query matches no entities"
