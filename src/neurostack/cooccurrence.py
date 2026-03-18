@@ -14,6 +14,63 @@ from datetime import datetime, timezone
 
 log = logging.getLogger("neurostack")
 
+MAX_COOCCURRENCE_WEIGHT = 100.0
+
+
+def reinforce_cooccurrence(
+    conn: sqlite3.Connection, entity_pairs: list[tuple[str, str]]
+) -> int:
+    """Hebbian reinforcement: increase co-occurrence weight for entity pairs.
+
+    For each pair, applies a multiplicative increment:
+        new_weight = min(existing_weight * 1.1, MAX_COOCCURRENCE_WEIGHT)
+
+    New pairs are seeded with weight 1.0. All pairs are stored in canonical
+    order (entity_a < entity_b).
+
+    Never raises -- wrapped in try/except to avoid disrupting callers.
+    Returns the number of pairs reinforced.
+    """
+    if not entity_pairs:
+        return 0
+
+    try:
+        # Canonicalize and deduplicate
+        canonical: set[tuple[str, str]] = set()
+        for a, b in entity_pairs:
+            if a == b:
+                continue
+            canonical.add((min(a, b), max(a, b)))
+
+        if not canonical:
+            return 0
+
+        now = datetime.now(timezone.utc).isoformat()
+        updates: list[tuple[str, str, float, str]] = []
+
+        for a, b in canonical:
+            row = conn.execute(
+                "SELECT weight FROM entity_cooccurrence "
+                "WHERE entity_a = ? AND entity_b = ?",
+                (a, b),
+            ).fetchone()
+            if row:
+                new_weight = min(row["weight"] * 1.1, MAX_COOCCURRENCE_WEIGHT)
+            else:
+                new_weight = 1.0
+            updates.append((a, b, new_weight, now))
+
+        conn.executemany(
+            "INSERT OR REPLACE INTO entity_cooccurrence "
+            "(entity_a, entity_b, weight, last_seen) VALUES (?, ?, ?, ?)",
+            updates,
+        )
+        conn.commit()
+        return len(updates)
+    except Exception:
+        log.debug("reinforce_cooccurrence failed silently", exc_info=True)
+        return 0
+
 
 def persist_cooccurrence(conn: sqlite3.Connection) -> int:
     """Compute and persist entity co-occurrence weights from triples.
@@ -148,3 +205,20 @@ def upsert_cooccurrence_for_note(conn: sqlite3.Connection, note_path: str) -> in
 
     conn.commit()
     return updated
+
+
+def get_cooccurrence_stats(conn: sqlite3.Connection) -> dict:
+    """Return aggregate co-occurrence statistics.
+
+    Returns dict with:
+        pairs: int -- number of entity co-occurrence pairs
+        total_weight: float -- sum of all weights, rounded to 1 decimal
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS pairs, COALESCE(SUM(weight), 0.0) AS total_weight "
+        "FROM entity_cooccurrence"
+    ).fetchone()
+    return {
+        "pairs": row["pairs"],
+        "total_weight": round(float(row["total_weight"]), 1),
+    }

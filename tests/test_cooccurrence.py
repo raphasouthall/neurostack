@@ -5,8 +5,10 @@ import sqlite3
 import pytest
 
 from neurostack.cooccurrence import (
+    MAX_COOCCURRENCE_WEIGHT,
     get_cooccurrence_stats,
     persist_cooccurrence,
+    reinforce_cooccurrence,
     upsert_cooccurrence_for_note,
 )
 
@@ -69,7 +71,7 @@ def test_upsert_shared_entities_increments_weight(in_memory_db):
 
     # First upsert for note1
     upsert_cooccurrence_for_note(conn, "note1.md")
-    # Then upsert for note2 — weight should now be 2.0
+    # Then upsert for note2 -- weight should now be 2.0
     upsert_cooccurrence_for_note(conn, "note2.md")
 
     row = conn.execute(
@@ -144,7 +146,7 @@ def test_upsert_only_touches_affected_pairs(in_memory_db):
     ).fetchone()["c"]
     assert count == 2
 
-    # Now re-upsert note1 — should not affect Gamma-Delta
+    # Now re-upsert note1 -- should not affect Gamma-Delta
     upsert_cooccurrence_for_note(conn, "note1.md")
 
     gamma_delta = conn.execute(
@@ -288,3 +290,103 @@ def test_cooccurrence_stats_with_data(in_memory_db):
 
     assert stats["pairs"] == 3
     assert stats["total_weight"] == 6.5
+
+
+# --- reinforce_cooccurrence tests ---
+
+
+def test_reinforce_basic(in_memory_db):
+    """Reinforcing an existing pair with weight 2.0 increases it via multiplicative formula."""
+    conn = in_memory_db
+    conn.execute(
+        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+        "VALUES (?, ?, ?, ?)",
+        ("Alpha", "Beta", 2.0, "2026-01-01"),
+    )
+    conn.commit()
+
+    n = reinforce_cooccurrence(conn, [("Alpha", "Beta")])
+
+    assert n == 1
+    row = conn.execute(
+        "SELECT weight FROM entity_cooccurrence "
+        "WHERE entity_a = 'Alpha' AND entity_b = 'Beta'"
+    ).fetchone()
+    expected = min(2.0 * 1.1, MAX_COOCCURRENCE_WEIGHT)
+    assert abs(row["weight"] - expected) < 1e-9
+
+
+def test_reinforce_creates_new_pair(in_memory_db):
+    """Reinforcing a non-existent pair creates it with seed weight 1.0."""
+    conn = in_memory_db
+
+    n = reinforce_cooccurrence(conn, [("X", "Y")])
+
+    assert n == 1
+    row = conn.execute(
+        "SELECT weight FROM entity_cooccurrence "
+        "WHERE entity_a = 'X' AND entity_b = 'Y'"
+    ).fetchone()
+    assert row is not None
+    assert row["weight"] == 1.0
+
+
+def test_reinforce_bounded(in_memory_db):
+    """Reinforcement cannot push weight above MAX_COOCCURRENCE_WEIGHT (100.0)."""
+    conn = in_memory_db
+    # Insert pair at 99.0
+    conn.execute(
+        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+        "VALUES (?, ?, ?, ?)",
+        ("Alpha", "Beta", 99.0, "2026-01-01"),
+    )
+    # Insert pair already at 100.0
+    conn.execute(
+        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+        "VALUES (?, ?, ?, ?)",
+        ("Gamma", "Delta", 100.0, "2026-01-01"),
+    )
+    conn.commit()
+
+    reinforce_cooccurrence(conn, [("Alpha", "Beta"), ("Gamma", "Delta")])
+
+    row_99 = conn.execute(
+        "SELECT weight FROM entity_cooccurrence "
+        "WHERE entity_a = 'Alpha' AND entity_b = 'Beta'"
+    ).fetchone()
+    assert row_99["weight"] <= MAX_COOCCURRENCE_WEIGHT
+    # 99.0 * 1.1 = 108.9 -> capped to 100.0
+    assert row_99["weight"] == MAX_COOCCURRENCE_WEIGHT
+
+    row_100 = conn.execute(
+        "SELECT weight FROM entity_cooccurrence "
+        "WHERE entity_a = 'Gamma' AND entity_b = 'Delta'"
+    ).fetchone()
+    # Already at max, should not increase
+    assert row_100["weight"] == MAX_COOCCURRENCE_WEIGHT
+
+
+def test_reinforce_canonical_order(in_memory_db):
+    """Reinforcing with (Z, A) stores as (A, Z) -- canonical order."""
+    conn = in_memory_db
+
+    reinforce_cooccurrence(conn, [("Z", "A")])
+
+    row = conn.execute(
+        "SELECT entity_a, entity_b FROM entity_cooccurrence"
+    ).fetchone()
+    assert row["entity_a"] == "A"
+    assert row["entity_b"] == "Z"
+
+
+def test_reinforce_noop_no_entities(in_memory_db):
+    """Empty pairs list causes no errors and no new rows."""
+    conn = in_memory_db
+
+    n = reinforce_cooccurrence(conn, [])
+
+    assert n == 0
+    count = conn.execute(
+        "SELECT COUNT(*) as c FROM entity_cooccurrence"
+    ).fetchone()["c"]
+    assert count == 0

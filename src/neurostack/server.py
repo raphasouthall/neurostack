@@ -460,6 +460,10 @@ def vault_stats() -> str:
     from .search import get_dormancy_report
     dormancy = get_dormancy_report(conn, threshold=0.05, limit=0)
 
+    # Co-occurrence stats
+    from .cooccurrence import get_cooccurrence_stats
+    cooc_stats = get_cooccurrence_stats(conn)
+
     # Memory stats
     from .memories import get_memory_stats
     mem_stats = get_memory_stats(conn)
@@ -502,6 +506,8 @@ def vault_stats() -> str:
             "dormant": dormancy["dormant_count"],
             "never_used": dormancy["never_used_count"],
         },
+        "cooccurrence_pairs": cooc_stats["pairs"],
+        "cooccurrence_total_weight": cooc_stats["total_weight"],
         "memories": mem_stats,
     }
     if demotion_result and demotion_result["demoted"] > 0:

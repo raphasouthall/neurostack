@@ -500,6 +500,9 @@ def cmd_stats(args):
         "SELECT COUNT(DISTINCT note_path) as c FROM triples"
     ).fetchone()["c"]
 
+    from .cooccurrence import get_cooccurrence_stats
+    cooc = get_cooccurrence_stats(conn)
+
     if args.json:
         embed_pct = embedded * 100 // max(chunks, 1)
         sum_pct = summaries * 100 // max(notes, 1)
@@ -515,6 +518,8 @@ def cmd_stats(args):
             "triples": total_triples,
             "notes_with_triples": notes_with_triples,
             "triple_coverage": f"{triple_pct}%",
+            "cooccurrence_pairs": cooc["pairs"],
+            "cooccurrence_total_weight": cooc["total_weight"],
         }
         print(json.dumps(output, indent=2, default=str))
         return
@@ -530,6 +535,10 @@ def cmd_stats(args):
     print(
         f"Triples:     {total_triples} from"
         f" {notes_with_triples} notes ({triple_pct}%)"
+    )
+    print(
+        f"Co-occurrence: {cooc['pairs']} pairs"
+        f" ({cooc['total_weight']:.1f} total weight)"
     )
 
 
