@@ -527,6 +527,70 @@ def hybrid_search(
         if h > 0.0:
             r["score"] = 0.8 * r["score"] + 0.2 * h
 
+    # Co-occurrence boost: notes containing entities that co-occur with query entities
+    # get a bounded multiplicative boost. Slots after hotness, before excitability.
+    cfg = get_config()
+    cooc_weight = cfg.cooccurrence_boost_weight
+    if cooc_weight > 0:
+        query_words = [w.lower() for w in query.split() if len(w) > 2]
+        if query_words:
+            # Step 1: Find entities that match query terms via triples
+            query_entities = set()
+            for word in query_words:
+                ent_rows = conn.execute(
+                    "SELECT DISTINCT subject FROM triples WHERE LOWER(subject) LIKE ? "
+                    "UNION "
+                    "SELECT DISTINCT object FROM triples WHERE LOWER(object) LIKE ?",
+                    (f"%{word}%", f"%{word}%"),
+                ).fetchall()
+                query_entities.update(r[0] for r in ent_rows)
+
+            if query_entities:
+                # Step 2: Find co-occurring entities and their weights
+                cooc_entities = {}  # entity -> max co-occurrence weight
+                for qe in query_entities:
+                    rows = conn.execute(
+                        "SELECT entity_b, weight FROM entity_cooccurrence WHERE entity_a = ? "
+                        "UNION ALL "
+                        "SELECT entity_a, weight FROM entity_cooccurrence WHERE entity_b = ?",
+                        (qe, qe),
+                    ).fetchall()
+                    for r in rows:
+                        ent = r[0]
+                        w = r[1]
+                        if ent not in query_entities:  # Don't boost for direct matches
+                            cooc_entities[ent] = max(cooc_entities.get(ent, 0), w)
+
+                if cooc_entities:
+                    # Step 3: Build note -> entities map from triples for result notes
+                    result_paths = [r["note_path"] for r in valid_results]
+                    if result_paths:
+                        placeholders = ",".join("?" * len(result_paths))
+                        note_ent_rows = conn.execute(
+                            f"SELECT DISTINCT note_path, subject, object FROM triples "
+                            f"WHERE note_path IN ({placeholders})",
+                            result_paths,
+                        ).fetchall()
+                        note_entities = {}
+                        for ner in note_ent_rows:
+                            path = ner["note_path"]
+                            if path not in note_entities:
+                                note_entities[path] = set()
+                            note_entities[path].add(ner["subject"])
+                            note_entities[path].add(ner["object"])
+
+                        # Step 4: Apply bounded boost
+                        max_cooc_weight = max(cooc_entities.values()) if cooc_entities else 1.0
+                        for r in valid_results:
+                            note_ents = note_entities.get(r["note_path"], set())
+                            overlap = note_ents & set(cooc_entities.keys())
+                            if overlap:
+                                raw_boost = sum(cooc_entities[e] for e in overlap)
+                                # Normalize and cap: sigmoid-like bounded boost
+                                normalized = raw_boost / (raw_boost + max_cooc_weight)
+                                boost = 1.0 + (cooc_weight * normalized)
+                                r["score"] *= boost
+
     # Excitability boost: notes with status=active get a 1.15x boost
     # Mirrors CREB-mediated excitability windows where recently active
     # neurons are preferentially recruited into new engrams.
