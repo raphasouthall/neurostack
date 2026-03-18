@@ -135,14 +135,20 @@ def index_single_note(
         (parsed.path, parsed.title, frontmatter_json, parsed.content_hash, now),
     )
 
-    # Populate note_metadata if this note isn't already tracked
-    # (preserves existing overrides — only inserts if absent)
+    # Upsert note_metadata: frontmatter-owned fields sync on every
+    # re-index; status and date_added are preserved (status is managed
+    # by the excitability decay system, date_added is immutable).
     fm = parsed.frontmatter or {}
     conn.execute(
-        "INSERT OR IGNORE INTO note_metadata"
+        "INSERT INTO note_metadata"
         " (note_path, status, tags, note_type,"
         "  actionable, compositional, date_added)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(note_path) DO UPDATE SET"
+        "  tags = excluded.tags,"
+        "  note_type = excluded.note_type,"
+        "  actionable = excluded.actionable,"
+        "  compositional = excluded.compositional",
         (
             parsed.path,
             fm.get("status", "active"),
