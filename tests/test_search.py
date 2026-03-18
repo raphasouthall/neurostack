@@ -1,10 +1,13 @@
-"""Tests for neurostack.search — FTS5, hotness scoring, prediction errors."""
+"""Tests for neurostack.search — FTS5, hotness scoring, prediction errors, co-occurrence boost."""
 
+import struct
 
+from neurostack.config import Config
 from neurostack.search import (
     PREDICTION_ERROR_SIM_THRESHOLD,
     fts_search,
     hotness_score,
+    hybrid_search,
     log_prediction_error,
     run_excitability_demotion,
 )
@@ -298,3 +301,294 @@ class TestExcitabilityBoost:
         ).fetchone()
         parsed = json.loads(row["frontmatter"])
         assert parsed["status"] == "active"
+
+
+def _fake_embedding(val: float = 0.5, dim: int = 768) -> bytes:
+    """Create a fake embedding blob for testing."""
+    return struct.pack(f"{dim}f", *([val] * dim))
+
+
+class TestCooccurrenceBoost:
+    """Tests for the co-occurrence boost scoring stage in hybrid_search."""
+
+    def _setup_cooccurrence_scenario(self, conn):
+        """Insert notes, chunks, triples, and co-occurrence data for testing.
+
+        Creates two notes:
+        - noteA.md: contains entity "alpha" and "beta" (beta co-occurs with "gamma")
+        - noteB.md: contains entity "delta" only (no co-occurrence with gamma)
+
+        Query for "gamma" should cause noteA to get boosted (because beta
+        co-occurs with gamma) while noteB should not be boosted.
+        """
+        emb = _fake_embedding(0.5)
+
+        # Insert notes
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("noteA.md", "Note A", "ha", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("noteB.md", "Note B", "hb", "2026-01-01"),
+        )
+
+        # Insert chunks with embeddings (identical content so FTS scores match)
+        for path in ["noteA.md", "noteB.md"]:
+            conn.execute(
+                "INSERT INTO chunks (note_path, heading_path, content, "
+                "content_hash, position, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+                (path, "## Test", "gamma related content here",
+                 f"h_{path}", 0, emb),
+            )
+
+        # Insert triples: noteA has alpha+beta, noteB has delta
+        conn.execute(
+            "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("noteA.md", "alpha", "relates_to", "beta", "alpha relates_to beta"),
+        )
+        conn.execute(
+            "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("noteB.md", "delta", "relates_to", "epsilon", "delta relates_to epsilon"),
+        )
+
+        # Co-occurrence: gamma co-occurs with beta (weight 3.0)
+        # This means searching for "gamma" should boost notes containing "beta" (noteA)
+        conn.execute(
+            "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+            "VALUES (?, ?, ?, ?)",
+            ("beta", "gamma", 3.0, "2026-01-01"),
+        )
+
+        conn.commit()
+
+    def test_cooccurrence_boost_increases_score(self, in_memory_db, monkeypatch):
+        """A note containing a co-occurring entity should score higher."""
+        conn = in_memory_db
+        self._setup_cooccurrence_scenario(conn)
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(search_mod, "get_embedding", lambda q, base_url=None: fake_emb)
+
+        original_config = config_mod._config
+        try:
+            # With boost enabled
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.5
+            config_mod._config = cfg
+
+            results = hybrid_search("gamma", top_k=10, embed_url="http://fake")
+            scores = {r.note_path: r.score for r in results}
+        finally:
+            config_mod._config = original_config
+
+        # noteA has beta which co-occurs with gamma -- it should rank higher
+        assert "noteA.md" in scores, "noteA should appear in results"
+        assert "noteB.md" in scores, "noteB should appear in results"
+        assert scores["noteA.md"] > scores["noteB.md"], (
+            f"noteA (co-occurring) should rank higher than noteB: "
+            f"{scores['noteA.md']} > {scores['noteB.md']}"
+        )
+
+    def test_cooccurrence_boost_with_hybrid_scoring(self, in_memory_db, monkeypatch):
+        """In hybrid mode, notes with co-occurring entities get higher scores."""
+        conn = in_memory_db
+        self._setup_cooccurrence_scenario(conn)
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+        import neurostack.schema as schema_mod
+
+        # Monkeypatch get_db to return our in_memory_db
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        # Monkeypatch get_embedding to return a fake embedding
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(search_mod, "get_embedding", lambda q, base_url=None: fake_emb)
+
+        original_config = config_mod._config
+        try:
+            # First: no boost
+            cfg_off = Config()
+            cfg_off.cooccurrence_boost_weight = 0.0
+            config_mod._config = cfg_off
+
+            results_off = hybrid_search("gamma", top_k=10, embed_url="http://fake")
+            scores_off = {r.note_path: r.score for r in results_off}
+
+            # Then: with boost
+            cfg_on = Config()
+            cfg_on.cooccurrence_boost_weight = 0.5
+            config_mod._config = cfg_on
+
+            results_on = hybrid_search("gamma", top_k=10, embed_url="http://fake")
+            scores_on = {r.note_path: r.score for r in results_on}
+        finally:
+            config_mod._config = original_config
+
+        # noteA contains "beta" which co-occurs with "gamma" -- it should be boosted
+        assert "noteA.md" in scores_on
+        assert "noteA.md" in scores_off
+        assert scores_on["noteA.md"] > scores_off["noteA.md"], (
+            f"noteA should be boosted: {scores_on['noteA.md']} > {scores_off['noteA.md']}"
+        )
+
+        # noteB has no co-occurring entities with gamma -- score unchanged
+        if "noteB.md" in scores_on and "noteB.md" in scores_off:
+            assert scores_on["noteB.md"] == scores_off["noteB.md"], (
+                "noteB should NOT be boosted"
+            )
+
+    def test_cooccurrence_boost_zero_weight_no_change(self, in_memory_db, monkeypatch):
+        """With cooccurrence_boost_weight=0.0, scores should be unchanged."""
+        conn = in_memory_db
+        self._setup_cooccurrence_scenario(conn)
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(search_mod, "get_embedding", lambda q, base_url=None: fake_emb)
+
+        original_config = config_mod._config
+        try:
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.0
+            config_mod._config = cfg
+
+            results = hybrid_search("gamma", top_k=10, embed_url="http://fake")
+            scores_zero = {r.note_path: r.score for r in results}
+
+            # Run again -- should be identical
+            results2 = hybrid_search("gamma", top_k=10, embed_url="http://fake")
+            scores_zero2 = {r.note_path: r.score for r in results2}
+        finally:
+            config_mod._config = original_config
+
+        for path in scores_zero:
+            assert abs(scores_zero[path] - scores_zero2[path]) < 1e-9
+
+    def test_cooccurrence_boost_graceful_no_data(self, in_memory_db, monkeypatch):
+        """When no co-occurrence data exists, search works normally."""
+        conn = in_memory_db
+        emb = _fake_embedding(0.5)
+
+        # Insert a note and chunk but NO co-occurrence data
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("solo.md", "Solo", "hs", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO chunks (note_path, heading_path, content, "
+            "content_hash, position, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            ("solo.md", "## Test", "test search content", "h_solo", 0, emb),
+        )
+        conn.execute(
+            "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("solo.md", "test", "is", "content", "test is content"),
+        )
+        conn.commit()
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(search_mod, "get_embedding", lambda q, base_url=None: fake_emb)
+
+        original_config = config_mod._config
+        try:
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.5
+            config_mod._config = cfg
+
+            # Should not crash, should return results
+            results = hybrid_search("test", top_k=10, embed_url="http://fake")
+            assert len(results) > 0
+        finally:
+            config_mod._config = original_config
+
+    def test_cooccurrence_boost_bounded(self, in_memory_db, monkeypatch):
+        """Co-occurrence boost should be bounded -- cannot dominate semantic score."""
+        conn = in_memory_db
+        emb = _fake_embedding(0.5)
+
+        # Create a note with MANY co-occurring entities
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("heavy.md", "Heavy", "hh", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO chunks (note_path, heading_path, content, "
+            "content_hash, position, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            ("heavy.md", "## Test", "target search term here", "h_heavy", 0, emb),
+        )
+        # Add many entities to this note
+        for i in range(20):
+            conn.execute(
+                "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("heavy.md", f"ent{i}", "has", f"prop{i}", f"ent{i} has prop{i}"),
+            )
+        # Add massive co-occurrence weights between target and all entities
+        for i in range(20):
+            conn.execute(
+                "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+                "VALUES (?, ?, ?, ?)",
+                (f"ent{i}", "target", 100.0, "2026-01-01"),
+            )
+        conn.commit()
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(search_mod, "get_embedding", lambda q, base_url=None: fake_emb)
+
+        original_config = config_mod._config
+        try:
+            # Without boost
+            cfg_off = Config()
+            cfg_off.cooccurrence_boost_weight = 0.0
+            config_mod._config = cfg_off
+            results_off = hybrid_search("target", top_k=10, embed_url="http://fake")
+            score_off = results_off[0].score if results_off else 0
+
+            # With max boost
+            cfg_on = Config()
+            cfg_on.cooccurrence_boost_weight = 1.0  # maximum weight
+            config_mod._config = cfg_on
+            results_on = hybrid_search("target", top_k=10, embed_url="http://fake")
+            score_on = results_on[0].score if results_on else 0
+        finally:
+            config_mod._config = original_config
+
+        # Even with weight=1.0 and huge co-occurrence, boost should be bounded
+        # The boost factor should be at most (1 + weight) = 2.0x
+        if score_off > 0:
+            ratio = score_on / score_off
+            assert ratio <= 2.1, (
+                f"Boost ratio {ratio} exceeds bounded maximum of ~2.0"
+            )
