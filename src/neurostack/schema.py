@@ -16,7 +16,7 @@ _cfg = get_config()
 DB_DIR = _cfg.db_dir
 DB_PATH = _cfg.db_path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -263,6 +263,18 @@ CREATE TABLE IF NOT EXISTS memory_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_memory_sessions_workspace
     ON memory_sessions(workspace);
+
+-- Entity co-occurrence weights (Hebbian association layer)
+CREATE TABLE IF NOT EXISTS entity_cooccurrence (
+    entity_a TEXT NOT NULL,
+    entity_b TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 0.0,
+    last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (entity_a, entity_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cooccurrence_a ON entity_cooccurrence(entity_a);
+CREATE INDEX IF NOT EXISTS idx_cooccurrence_b ON entity_cooccurrence(entity_b);
 """
 
 # Migration from v1 to v2: add triples tables
@@ -473,6 +485,21 @@ CREATE INDEX IF NOT EXISTS idx_note_metadata_status ON note_metadata(status);
 """
 
 
+# Migration from v11 to v12: add entity co-occurrence table
+MIGRATION_V12 = """
+CREATE TABLE IF NOT EXISTS entity_cooccurrence (
+    entity_a TEXT NOT NULL,
+    entity_b TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 0.0,
+    last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (entity_a, entity_b)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cooccurrence_a ON entity_cooccurrence(entity_a);
+CREATE INDEX IF NOT EXISTS idx_cooccurrence_b ON entity_cooccurrence(entity_b);
+"""
+
+
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
@@ -674,6 +701,19 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v11 complete.")
+
+    if current < 12:
+        log.info(
+            "Migrating schema v11 -> v12: "
+            "adding entity co-occurrence table..."
+        )
+        conn.executescript(MIGRATION_V12)
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (12)"
+        )
+        conn.commit()
+        log.info("Migration to v12 complete.")
 
 
 def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
