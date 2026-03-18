@@ -4,7 +4,11 @@ import sqlite3
 
 import pytest
 
-from neurostack.cooccurrence import persist_cooccurrence, upsert_cooccurrence_for_note
+from neurostack.cooccurrence import (
+    get_cooccurrence_stats,
+    persist_cooccurrence,
+    upsert_cooccurrence_for_note,
+)
 
 
 def _insert_triple(conn, note_path, subject, obj):
@@ -244,3 +248,43 @@ def test_idempotent_replaces_not_duplicates(in_memory_db):
         "SELECT weight FROM entity_cooccurrence"
     ).fetchone()
     assert row["weight"] == 1.0
+
+
+# --- get_cooccurrence_stats tests ---
+
+
+def test_cooccurrence_stats_empty(in_memory_db):
+    """With no data, get_cooccurrence_stats returns zeros."""
+    conn = in_memory_db
+
+    stats = get_cooccurrence_stats(conn)
+
+    assert stats["pairs"] == 0
+    assert stats["total_weight"] == 0.0
+
+
+def test_cooccurrence_stats_with_data(in_memory_db):
+    """After inserting 3 pairs with weights 1.0, 2.5, 3.0, returns correct counts."""
+    conn = in_memory_db
+    now = "2026-01-01T00:00:00"
+    conn.execute(
+        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+        "VALUES (?, ?, ?, ?)",
+        ("A", "B", 1.0, now),
+    )
+    conn.execute(
+        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+        "VALUES (?, ?, ?, ?)",
+        ("C", "D", 2.5, now),
+    )
+    conn.execute(
+        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+        "VALUES (?, ?, ?, ?)",
+        ("E", "F", 3.0, now),
+    )
+    conn.commit()
+
+    stats = get_cooccurrence_stats(conn)
+
+    assert stats["pairs"] == 3
+    assert stats["total_weight"] == 6.5
