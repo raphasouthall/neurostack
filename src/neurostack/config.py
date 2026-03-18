@@ -34,6 +34,7 @@ class Config:
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     api_key: str = ""
+    cooccurrence_boost_weight: float = 0.1
 
     @property
     def db_path(self) -> Path:
@@ -64,6 +65,8 @@ def load_config() -> Config:
             cfg.embed_dim = int(data["embed_dim"])
         if "api_port" in data:
             cfg.api_port = int(data["api_port"])
+        if "cooccurrence_boost_weight" in data:
+            cfg.cooccurrence_boost_weight = float(data["cooccurrence_boost_weight"])
 
     # Env var overrides (NEUROSTACK_ prefix)
     env_map = {
@@ -80,6 +83,7 @@ def load_config() -> Config:
         "NEUROSTACK_API_HOST": ("api_host", str),
         "NEUROSTACK_API_PORT": ("api_port", int),
         "NEUROSTACK_API_KEY": ("api_key", str),
+        "NEUROSTACK_COOCCURRENCE_BOOST": ("cooccurrence_boost_weight", float),
     }
 
     for env_key, (attr, typ) in env_map.items():

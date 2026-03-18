@@ -356,6 +356,18 @@ class TestCooccurrenceBoost:
             ("noteB.md", "delta", "relates_to", "epsilon", "delta relates_to epsilon"),
         )
 
+        # Add a triple with "gamma" in another note so the query can find it as an entity
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("noteC.md", "Note C", "hc", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("noteC.md", "gamma", "is_a", "concept", "gamma is_a concept"),
+        )
+
         # Co-occurrence: gamma co-occurs with beta (weight 3.0)
         # This means searching for "gamma" should boost notes containing "beta" (noteA)
         conn.execute(
@@ -401,57 +413,40 @@ class TestCooccurrenceBoost:
         )
 
     def test_cooccurrence_boost_with_hybrid_scoring(self, in_memory_db, monkeypatch):
-        """In hybrid mode, notes with co-occurring entities get higher scores."""
+        """In hybrid mode, boosted note scores higher than unboosted note."""
         conn = in_memory_db
         self._setup_cooccurrence_scenario(conn)
 
         import neurostack.config as config_mod
         import neurostack.search as search_mod
-        import neurostack.schema as schema_mod
 
-        # Monkeypatch get_db to return our in_memory_db
         monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
 
-        # Monkeypatch get_embedding to return a fake embedding
         import numpy as np
         fake_emb = np.array([0.5] * 768, dtype=np.float32)
         monkeypatch.setattr(search_mod, "get_embedding", lambda q, base_url=None: fake_emb)
 
         original_config = config_mod._config
         try:
-            # First: no boost
-            cfg_off = Config()
-            cfg_off.cooccurrence_boost_weight = 0.0
-            config_mod._config = cfg_off
-
-            results_off = hybrid_search("gamma", top_k=10, embed_url="http://fake")
-            scores_off = {r.note_path: r.score for r in results_off}
-
-            # Then: with boost
             cfg_on = Config()
             cfg_on.cooccurrence_boost_weight = 0.5
             config_mod._config = cfg_on
 
-            results_on = hybrid_search("gamma", top_k=10, embed_url="http://fake")
-            scores_on = {r.note_path: r.score for r in results_on}
+            results = hybrid_search("gamma", top_k=10, embed_url="http://fake")
+            scores = {r.note_path: r.score for r in results}
         finally:
             config_mod._config = original_config
 
-        # noteA contains "beta" which co-occurs with "gamma" -- it should be boosted
-        assert "noteA.md" in scores_on
-        assert "noteA.md" in scores_off
-        assert scores_on["noteA.md"] > scores_off["noteA.md"], (
-            f"noteA should be boosted: {scores_on['noteA.md']} > {scores_off['noteA.md']}"
+        # noteA contains "beta" which co-occurs with "gamma" -- it should rank higher
+        assert "noteA.md" in scores
+        assert "noteB.md" in scores
+        assert scores["noteA.md"] > scores["noteB.md"], (
+            f"noteA (co-occurring) should rank higher than noteB: "
+            f"{scores['noteA.md']} > {scores['noteB.md']}"
         )
 
-        # noteB has no co-occurring entities with gamma -- score unchanged
-        if "noteB.md" in scores_on and "noteB.md" in scores_off:
-            assert scores_on["noteB.md"] == scores_off["noteB.md"], (
-                "noteB should NOT be boosted"
-            )
-
     def test_cooccurrence_boost_zero_weight_no_change(self, in_memory_db, monkeypatch):
-        """With cooccurrence_boost_weight=0.0, scores should be unchanged."""
+        """With cooccurrence_boost_weight=0.0, all notes score equally (no boost)."""
         conn = in_memory_db
         self._setup_cooccurrence_scenario(conn)
 
@@ -471,16 +466,17 @@ class TestCooccurrenceBoost:
             config_mod._config = cfg
 
             results = hybrid_search("gamma", top_k=10, embed_url="http://fake")
-            scores_zero = {r.note_path: r.score for r in results}
-
-            # Run again -- should be identical
-            results2 = hybrid_search("gamma", top_k=10, embed_url="http://fake")
-            scores_zero2 = {r.note_path: r.score for r in results2}
+            scores = {r.note_path: r.score for r in results}
         finally:
             config_mod._config = original_config
 
-        for path in scores_zero:
-            assert abs(scores_zero[path] - scores_zero2[path]) < 1e-9
+        # With weight=0, noteA and noteB should have identical scores
+        # (both have identical chunks/embeddings, only co-occurrence differs)
+        if "noteA.md" in scores and "noteB.md" in scores:
+            assert abs(scores["noteA.md"] - scores["noteB.md"]) < 1e-9, (
+                f"With boost disabled, scores should be equal: "
+                f"noteA={scores['noteA.md']}, noteB={scores['noteB.md']}"
+            )
 
     def test_cooccurrence_boost_graceful_no_data(self, in_memory_db, monkeypatch):
         """When no co-occurrence data exists, search works normally."""
