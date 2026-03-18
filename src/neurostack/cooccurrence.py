@@ -222,3 +222,24 @@ def get_cooccurrence_stats(conn: sqlite3.Connection) -> dict:
         "pairs": row["pairs"],
         "total_weight": round(float(row["total_weight"]), 1),
     }
+
+
+def get_top_pairs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
+    """Return the top co-occurring entity pairs sorted by weight descending.
+
+    Each element: {"entity_a": str, "entity_b": str, "weight": float, "last_seen": str}
+    """
+    rows = conn.execute(
+        "SELECT entity_a, entity_b, weight, last_seen "
+        "FROM entity_cooccurrence ORDER BY weight DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [
+        {
+            "entity_a": r["entity_a"],
+            "entity_b": r["entity_b"],
+            "weight": float(r["weight"]),
+            "last_seen": r["last_seen"],
+        }
+        for r in rows
+    ]
