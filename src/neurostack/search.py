@@ -24,6 +24,7 @@ from .embedder import (
     cosine_similarity_batch,
     get_embedding,
 )
+from .cooccurrence import reinforce_cooccurrence
 from .schema import get_db
 
 # Cosine similarity below this threshold signals a prediction error (poor retrieval fit).
@@ -527,25 +528,24 @@ def hybrid_search(
         if h > 0.0:
             r["score"] = 0.8 * r["score"] + 0.2 * h
 
+    # Extract query-matched entities (used for co-occurrence boost AND reinforcement)
+    cfg = get_config()
+    query_words = [w.lower() for w in query.split() if len(w) > 2]
+    query_entities: set[str] = set()
+    if query_words:
+        for word in query_words:
+            ent_rows = conn.execute(
+                "SELECT DISTINCT subject FROM triples WHERE LOWER(subject) LIKE ? "
+                "UNION "
+                "SELECT DISTINCT object FROM triples WHERE LOWER(object) LIKE ?",
+                (f"%{word}%", f"%{word}%"),
+            ).fetchall()
+            query_entities.update(r[0] for r in ent_rows)
+
     # Co-occurrence boost: notes containing entities that co-occur with query entities
     # get a bounded multiplicative boost. Slots after hotness, before excitability.
-    cfg = get_config()
     cooc_weight = cfg.cooccurrence_boost_weight
-    if cooc_weight > 0:
-        query_words = [w.lower() for w in query.split() if len(w) > 2]
-        if query_words:
-            # Step 1: Find entities that match query terms via triples
-            query_entities = set()
-            for word in query_words:
-                ent_rows = conn.execute(
-                    "SELECT DISTINCT subject FROM triples WHERE LOWER(subject) LIKE ? "
-                    "UNION "
-                    "SELECT DISTINCT object FROM triples WHERE LOWER(object) LIKE ?",
-                    (f"%{word}%", f"%{word}%"),
-                ).fetchall()
-                query_entities.update(r[0] for r in ent_rows)
-
-            if query_entities:
+    if cooc_weight > 0 and query_entities:
                 # Step 2: Find co-occurring entities and their weights
                 cooc_entities = {}  # entity -> max co-occurrence weight
                 for qe in query_entities:
@@ -653,6 +653,34 @@ def hybrid_search(
             conn.commit()
         except Exception:
             pass  # Never let usage recording disrupt search
+
+    # Hebbian reinforcement: strengthen co-occurrence for entity pairs shared
+    # between query-matched entities and result-note entities.
+    # Fires regardless of cooccurrence_boost_weight setting.
+    if query_entities and returned_paths:
+        try:
+            placeholders = ",".join("?" * len(returned_paths))
+            result_ent_rows = conn.execute(
+                f"SELECT DISTINCT subject, object FROM triples "
+                f"WHERE note_path IN ({placeholders})",
+                returned_paths,
+            ).fetchall()
+            result_entities: set[str] = set()
+            for rer in result_ent_rows:
+                result_entities.add(rer["subject"])
+                result_entities.add(rer["object"])
+
+            # Build reinforcement pairs: each query entity x each result entity
+            reinforce_pairs = [
+                (qe, re)
+                for qe in query_entities
+                for re in result_entities
+                if qe != re
+            ]
+            if reinforce_pairs:
+                reinforce_cooccurrence(conn, reinforce_pairs)
+        except Exception:
+            pass  # Never let reinforcement disrupt search
 
     # Prediction error detection — check top result for high semantic distance
     if deduped:
