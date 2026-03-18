@@ -5,17 +5,17 @@
 export const posts = [
   {
     slug: 'vanilla-vs-neurostack-393-notes',
-    title: 'Vanilla Claude Code vs NeuroStack on 393 Notes — The Token Cost Nobody Talks About',
+    title: 'I Benchmarked NeuroStack Against Vanilla Claude Code — 90 Runs, 15 Queries, Honest Results',
     date: '2026-03-18',
     author: 'Raphael Southall',
-    excerpt: 'I ran identical prompts through Claude Code with and without NeuroStack in Podman containers against my real 393-note vault. Vanilla needed 37 API turns and 379K tokens. NeuroStack needed 8 turns and 109K tokens. Here are the full results.',
+    excerpt: 'I ran 90 benchmark runs across 15 query types comparing Claude Code with and without NeuroStack MCP against my 393-note vault. NeuroStack dominates complex multi-note queries (15-64% cheaper) but loses on simple lookups. Here is everything, including where it fails.',
     tags: ['benchmark', 'token-efficiency', 'engineering'],
-    readTime: '7 min',
+    readTime: '8 min',
     heroSvg: '/screenshots/e2e-search.gif',
     sections: [
       {
         type: 'text',
-        content: 'Every MCP memory tool claims to improve retrieval. Few publish numbers. I wanted real data from my own vault, so I set up two identical Podman containers and ran the same prompts through both.',
+        content: 'Every MCP memory tool claims to improve retrieval. Few publish numbers. I ran a rigorous benchmark — 90 runs across 15 queries with 3 replications each — against my real 393-note vault. The results are more nuanced than I expected.',
       },
       {
         type: 'heading',
@@ -24,14 +24,14 @@ export const posts = [
       },
       {
         type: 'text',
-        content: 'Two containers built from node:22. Same Claude Code version, same Sonnet model, same credentials. The only difference: one had NeuroStack\'s MCP server connected to a pre-indexed copy of my vault database.',
+        content: '15 queries across 5 categories (pinpoint, cross-reference, scan-and-filter, thematic synthesis, adversarial), each run 3 times per condition. Randomized query order per replication, alternating condition start. Stream-json output captured every tool call.',
       },
       {
         type: 'table',
-        headers: ['Container', 'How it searches', 'Tools available'],
+        headers: ['Condition', 'How it searches', 'CLAUDE.md'],
         rows: [
-          ['Vanilla', 'Glob + Grep + Read (file by file)', 'Standard Claude Code tools only'],
-          ['NeuroStack', 'vault_search, vault_triples, vault_memories', 'MCP server with 67MB indexed DB'],
+          ['Vanilla', 'Glob + Grep + Read (file by file)', 'Permissive: "use any tools available"'],
+          ['NeuroStack', 'vault_search, vault_triples, vault_memories MCP', '"NEVER use Read/Glob/Grep on vault files"'],
         ],
       },
       {
@@ -39,124 +39,111 @@ export const posts = [
         content: 'The vault: 393 Markdown notes (infrastructure docs, architecture decisions, research, project notes), fully indexed with 4,602 embedded chunks, 4,386 knowledge graph triples, 393 AI-generated summaries, and 117K co-occurrence pairs.',
       },
       {
-        type: 'text',
-        content: 'Vanilla got a permissive CLAUDE.md that allowed free file search. No artificial restrictions. This is the fairest comparison: Claude Code doing what it does best (reading files) against NeuroStack doing what it does best (indexed retrieval).',
-      },
-      {
         type: 'heading',
         level: 2,
-        content: 'The Token Cost Gap',
+        content: 'The Headline: It Depends on Query Type',
       },
       {
         type: 'text',
-        content: 'I measured exact API token usage via Claude Code\'s --output-format json on three query types, from narrow to broad:',
-      },
-      {
-        type: 'table',
-        headers: ['Query type', 'Vanilla input tokens', 'NeuroStack input tokens', 'Savings', 'Cost (USD)'],
-        rows: [
-          ['Needle (1 fact in 393 notes)', '49,835', '51,395', '-3%', '$0.038 vs $0.044'],
-          ['Broad thematic (neuroscience)', '89,939', '70,446', '22%', '$0.120 vs $0.112'],
-          ['Vault-wide inventory (all projects)', '379,271', '108,652', '71%', '$0.608 vs $0.350'],
-        ],
+        content: 'Total cost across all 15 queries: $1.387 for NeuroStack vs $1.385 for vanilla. Effectively a tie. But that aggregate hides two very different stories.',
       },
       {
         type: 'stats',
         items: [
-          { label: 'Token reduction', value: '71%', detail: 'on vault-wide queries' },
-          { label: 'Cost reduction', value: '42%', detail: '$0.61 vs $0.35' },
-          { label: 'API turns', value: '37 vs 8', detail: 'vanilla vs NeuroStack' },
-          { label: 'Queries tested', value: '10', detail: 'across 5 categories' },
+          { label: 'Total runs', value: '90', detail: '15 queries x 2 conditions x 3 reps' },
+          { label: 'NeuroStack wins', value: '7', detail: 'thematic + cross-reference' },
+          { label: 'Vanilla wins', value: '7', detail: 'pinpoint + scan + adversarial' },
+          { label: 'MCP engagement', value: '94%', detail: '46/49 NeuroStack runs used MCP' },
         ],
       },
       {
         type: 'heading',
         level: 2,
-        content: 'Why the Gap Exists',
+        content: 'Where NeuroStack Wins: Complex Queries (15-64% cheaper)',
       },
       {
         type: 'text',
-        content: 'When vanilla Claude Code needs to answer "list all projects in this vault," it has to discover the answer file by file. Glob to find directories. Read an index. Read another file. Grep for keywords. Read more files. Each step is an API turn that sends accumulated context back to the model.',
-      },
-      {
-        type: 'text',
-        content: 'On my vault, this meant 37 turns and 379K input tokens. Every file Claude read got added to the context window and re-sent on every subsequent turn.',
-      },
-      {
-        type: 'text',
-        content: 'NeuroStack resolves the same query in 8 turns because the answer is pre-indexed. vault_search returns ranked results with pre-computed summaries. vault_triples returns structured facts at ~15 tokens each. The model never reads a raw file unless it needs the full content for a deep dive.',
-      },
-      {
-        type: 'heading',
-        level: 2,
-        content: 'Where NeuroStack Loses',
-      },
-      {
-        type: 'text',
-        content: 'On simple single-fact lookups, NeuroStack is actually slightly more expensive. The MCP tool definitions add ~1,800 tokens to the system prompt. If your query resolves in 2-3 file reads, vanilla is cheaper.',
-      },
-      {
-        type: 'text',
-        content: 'The crossover point is around 10 notes. Any query that touches more than 10 files costs less through the index. For a 393-note vault, that means most real-world queries are cheaper with NeuroStack.',
-      },
-      {
-        type: 'heading',
-        level: 2,
-        content: 'Quality Results: 10 Tests',
-      },
-      {
-        type: 'text',
-        content: 'Beyond cost, I ran 10 diverse tests covering needle-in-haystack lookups, cross-project synthesis, decision archaeology, broad thematic questions, memory recall, workspace-scoped queries, vault health checks, multi-hop reasoning, and comprehensive inventory.',
+        content: 'NeuroStack swept all 6 thematic and cross-reference queries. These are queries that require connecting information across 3+ notes or understanding vault-wide themes.',
       },
       {
         type: 'table',
-        headers: ['Test', 'Vanilla', 'NeuroStack', 'Winner'],
+        headers: ['Query', 'Category', 'NS cost', 'Vanilla cost', 'Savings', 'Vanilla file reads'],
         rows: [
-          ['Needle in haystack', '85c, 14s', '94c, 13s', 'Tie'],
-          ['Cross-project synthesis', '2,185c, 31s', '2,233c, 38s', 'Tie'],
-          ['Decision archaeology', '2,977c, 54s', '2,619c, 94s', 'Vanilla'],
-          ['Broad thematic', '4,422c, 123s', '4,236c, 81s', 'NeuroStack (34% faster)'],
-          ['Operational lookup', '906c, 19s', '1,114c, 22s', 'NeuroStack (more complete)'],
-          ['Memory recall', '2,393c, 45s', '387c, 14s', 'Vanilla'],
-          ['Workspace scoped', '2,129c, 39s', '2,061c, 45s', 'Tie'],
-          ['Vault health', '1,720c, 152s', '2,495c, 70s', 'NeuroStack (54% faster)'],
-          ['Multi-hop reasoning', '6,669c, 102s', '7,543c, 107s', 'NeuroStack (more detail)'],
-          ['Broad project list', '4,416c, 110s', '3,200c, 65s', 'NeuroStack (41% faster)'],
+          ['Cloud infrastructure overview', 'Thematic', '$0.09', '$0.26', '64%', '15.7'],
+          ['Neuroscience-architecture link', 'Cross-ref', '$0.07', '$0.11', '32%', '4.0'],
+          ['Shared resources (AppSystem+KPI)', 'Cross-ref', '$0.07', '$0.09', '30%', '3.0'],
+          ['Neuroscience theory mapping', 'Thematic', '$0.11', '$0.15', '28%', '18.7'],
+          ['vault-oracle evolution', 'Thematic', '$0.16', '$0.19', '15%', '14.3'],
+          ['LicenseTool firewall + subnet', 'Cross-ref', '$0.08', '$0.09', '14%', '5.7'],
         ],
       },
       {
         type: 'text',
-        content: 'On raw quality, NeuroStack won 4, vanilla won 2, and 4 were ties. When you factor in token cost, the ties flip to NeuroStack because every multi-file query is cheaper through the index. Adjusted score: NeuroStack 8, vanilla 2.',
+        content: 'The pattern: vanilla needs 4-19 file reads for these queries (Glob to find candidates, Read each one, accumulate context). NeuroStack resolves them in 2-5 MCP calls using pre-computed summaries and triples. The token savings come from not re-sending all that file content on every API turn.',
       },
       {
         type: 'heading',
         level: 2,
-        content: 'Speed',
+        content: 'Where Vanilla Wins: Simple Lookups (11-315% cheaper)',
       },
       {
         type: 'text',
-        content: 'NeuroStack was 19% faster across all 10 tests (534s total vs 659s). The biggest gains were on broad queries where vanilla had to scan many files: 54% faster on vault health, 41% faster on the project inventory, 34% faster on thematic questions.',
+        content: 'Vanilla won all 3 pinpoint queries and most adversarial/scan queries. When the answer is in 1-2 files, direct file read is faster and cheaper than MCP round-trips.',
+      },
+      {
+        type: 'table',
+        headers: ['Query', 'Category', 'NS cost', 'Vanilla cost', 'Why vanilla wins'],
+        rows: [
+          ['AppSystem cron schedule', 'Pinpoint', '$0.08', '$0.02', 'One Grep, one Read, done'],
+          ['CloudVendor consultants', 'Adversarial', '$0.07', '$0.03', 'Grep "CloudVendor" found it instantly'],
+          ['VPN sites list', 'Scan', '$0.18', '$0.08', 'One file read vs 5 MCP calls'],
+          ['Private endpoints list', 'Scan', '$0.20', '$0.10', 'Same pattern — NeuroStack over-searched'],
+          ['Homelab GPU', 'Pinpoint', '$0.04', '$0.03', 'Filename match, direct read'],
+        ],
       },
       {
         type: 'text',
-        content: 'On narrow queries (1-3 files), vanilla was comparable or faster. The file-read approach has less overhead when you already know which file to read.',
+        content: 'The MCP tool definitions add overhead to every NeuroStack call. For a single-fact lookup, that overhead exceeds the cost of just reading the file. The crossover point is roughly 3 files: if the answer requires information from more than 3 files, NeuroStack is cheaper.',
       },
       {
         type: 'heading',
         level: 2,
-        content: 'What This Means',
+        content: 'Tool Usage Profile',
       },
       {
         type: 'text',
-        content: 'If you run 20 queries per day across a vault of 200+ notes, the token savings on broad queries alone would be roughly $2-5 per day depending on model and query mix. Over a month, that adds up.',
+        content: 'The benchmark captured every tool call via stream-json. The usage profiles are fundamentally different:',
+      },
+      {
+        type: 'table',
+        headers: ['Metric', 'NeuroStack', 'Vanilla'],
+        rows: [
+          ['MCP calls per query', '3.1', '0'],
+          ['File reads per query', '0.1', '5.4'],
+          ['Total tool calls per query', '3.2', '5.4'],
+          ['MCP engagement rate', '94%', 'N/A'],
+        ],
       },
       {
         type: 'text',
-        content: 'But the real value is not just cost. It is context window efficiency. Vanilla Claude Code fills its context window with raw file content that it read to find one fact. NeuroStack sends the structured fact at ~15 tokens and preserves context window space for the actual reasoning the model needs to do.',
+        content: 'NeuroStack makes fewer, more targeted tool calls. Vanilla makes more calls but each is simpler. The cost difference comes from what gets sent back: MCP returns pre-computed summaries and structured facts, while file reads return raw Markdown that accumulates in the context window.',
+      },
+      {
+        type: 'heading',
+        level: 2,
+        content: 'What This Actually Means',
       },
       {
         type: 'text',
-        content: 'At 393 notes, vanilla still works. At 1,000+ notes, the file-scanning approach would hit context window limits before finding everything it needs. The index does not have that problem.',
+        content: 'If your vault is under 50 notes and you mostly look up specific facts, NeuroStack will cost you more than vanilla Claude Code. Do not use it for this.',
+      },
+      {
+        type: 'text',
+        content: 'If your vault is 200+ notes and you regularly ask cross-cutting questions ("how does X relate to Y", "what is the security posture of Z", "trace the evolution of W"), NeuroStack saves 15-64% on those queries. The savings compound because complex queries are the expensive ones.',
+      },
+      {
+        type: 'text',
+        content: 'The real value is not aggregate cost. It is context window efficiency. Vanilla fills the context window with raw file content. NeuroStack sends structured facts and summaries, preserving context space for reasoning. At 1,000+ notes, vanilla would hit context limits before finding everything. The index does not have that problem.',
       },
       {
         type: 'heading',
@@ -166,10 +153,11 @@ export const posts = [
       {
         type: 'list',
         items: [
-          { bold: 'Lite mode only.', text: ' The container ran FTS5 keyword search, not full semantic search. The DB had pre-computed embeddings but the container lacked numpy. Full mode with live semantic search would likely show larger gaps.' },
-          { bold: 'MCP was intermittent.', text: ' In 2 of 10 tests, Claude ignored the MCP tools and fell back to file reading. The MCP integration is not yet perfectly reliable.' },
-          { bold: 'Single-run tests.', text: ' Results are from one run, not averaged. Some variance is expected.' },
-          { bold: 'Neuroscience features untested.', text: ' Prediction error detection, Hebbian co-occurrence learning, and excitability decay need weeks of accumulated usage data before they produce measurable differences. The vault is 5 days old. These features are the long-term bet, not the day-one win.' },
+          { bold: 'NeuroStack is more expensive for simple lookups.', text: ' If your workflow is mostly "what is the value of X in file Y", vanilla is cheaper. MCP overhead adds ~1,800 tokens per invocation.' },
+          { bold: '3 replications, not 10.', text: ' With 3 reps per query, there is meaningful variance. Some queries had 2x cost swings between reps (vanilla theme_02 ranged from $0.17 to $0.38). More reps would tighten the confidence intervals.' },
+          { bold: 'The developer wrote the queries.', text: ' I know my vault structure. Queries may unconsciously favour paths I know NeuroStack handles well. An independent query set would be stronger evidence.' },
+          { bold: 'Neuroscience features untested.', text: ' Prediction error detection, Hebbian co-occurrence learning, and excitability decay need weeks of accumulated usage data. The vault has only 82 usage records and 3 prediction errors. These features are the long-term bet, not the day-one win.' },
+          { bold: 'MCP engagement required CLAUDE.md tuning.', text: ' Without explicit "NEVER use Read/Glob/Grep on vault files" in CLAUDE.md, Claude falls back to file tools ~30% of the time. The strong CLAUDE.md is part of the NeuroStack setup, but it is worth knowing.' },
         ],
       },
       {
