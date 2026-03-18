@@ -2644,6 +2644,34 @@ def cmd_decay(args):
             print(f"    {n['hotness']:.4f}  {n['path']}")
 
 
+def cmd_cooccurrence(args):
+    """Inspect entity co-occurrence pairs."""
+    from .schema import DB_PATH, get_db
+    from .cooccurrence import get_top_pairs, get_cooccurrence_stats
+
+    conn = get_db(DB_PATH)
+    pairs = get_top_pairs(conn, limit=args.limit)
+
+    if args.json:
+        print(json.dumps(pairs, indent=2, default=str))
+        return
+
+    stats = get_cooccurrence_stats(conn)
+
+    if not pairs:
+        print("No co-occurrence data. Run 'neurostack communities build' to populate.")
+        return
+
+    print(
+        f"\n  Co-occurrence: {stats['pairs']} pairs"
+        f" ({stats['total_weight']:.1f} total weight)"
+    )
+    print(f"\n  Top {args.limit} entity pairs by weight:")
+    for p in pairs:
+        last = p["last_seen"][:10] if len(p["last_seen"]) >= 10 else p["last_seen"]
+        print(f"    {p['weight']:>8.2f}  {p['entity_a']} <-> {p['entity_b']}  (last: {last})")
+
+
 def cmd_harvest(args):
     """Extract insights from recent AI coding sessions."""
     from .harvest import get_provider_names, harvest_sessions
@@ -3167,6 +3195,13 @@ def main():
     p.add_argument("--demote", action="store_true",
                    help="Demote dormant notes to status=dormant in note_metadata")
     p.set_defaults(func=cmd_decay)
+
+    # cooccurrence
+    p = sub.add_parser("cooccurrence", help="Inspect entity co-occurrence pairs")
+    p.add_argument("--limit", type=int, default=20,
+                   help="Number of top pairs to show (default: 20)")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.set_defaults(func=cmd_cooccurrence)
 
     # harvest
     p = sub.add_parser("harvest", help="Extract insights from recent AI coding sessions")
