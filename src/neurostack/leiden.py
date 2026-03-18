@@ -25,6 +25,7 @@ try:
 except ImportError:
     HAS_LEIDEN = False
 
+from .cooccurrence import persist_cooccurrence
 from .schema import DB_PATH, get_db
 
 log = logging.getLogger("neurostack")
@@ -163,6 +164,10 @@ def detect_communities(
     conn.execute("DELETE FROM community_members")
     conn.execute("DELETE FROM communities")
     conn.commit()
+
+    # Persist entity co-occurrence weights from triples
+    n_pairs = persist_cooccurrence(conn)
+    log.info(f"Co-occurrence: {n_pairs} entity pairs persisted.")
 
     g = build_note_graph(conn)
     if g.vcount() == 0:
