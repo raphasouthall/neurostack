@@ -15,11 +15,11 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .chunker import parse_note
+from .cooccurrence import persist_cooccurrence, upsert_cooccurrence_for_note
 from .embedder import HAS_NUMPY, build_chunk_context, embedding_to_blob, get_embeddings_batch
 from .graph import build_graph, compute_pagerank
 from .schema import DB_PATH, get_db
 from .summarizer import summarize_note
-from .cooccurrence import persist_cooccurrence, upsert_cooccurrence_for_note
 from .triples import extract_triples, triple_to_text
 
 logging.basicConfig(

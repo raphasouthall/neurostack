@@ -2646,8 +2646,8 @@ def cmd_decay(args):
 
 def cmd_cooccurrence(args):
     """Inspect entity co-occurrence pairs."""
+    from .cooccurrence import get_cooccurrence_stats, get_top_pairs
     from .schema import DB_PATH, get_db
-    from .cooccurrence import get_top_pairs, get_cooccurrence_stats
 
     conn = get_db(DB_PATH)
     pairs = get_top_pairs(conn, limit=args.limit)
@@ -3073,7 +3073,10 @@ def main():
 
     # backfill
     p = sub.add_parser("backfill", help="Backfill missing summaries and/or triples")
-    p.add_argument("target", choices=["summaries", "triples", "cooccurrence", "all"], default="all", nargs="?")
+    p.add_argument(
+        "target", choices=["summaries", "triples", "cooccurrence", "all"],
+        default="all", nargs="?",
+    )
     p.set_defaults(func=cmd_backfill)
 
     # communities

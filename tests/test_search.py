@@ -649,7 +649,7 @@ class TestReinforcementFromSearch:
         original_config = config_mod._config
         try:
             cfg = Config()
-            cfg.cooccurrence_boost_weight = 0.0  # Disable boost, but reinforcement should still fire
+            cfg.cooccurrence_boost_weight = 0.0  # Disable boost; reinforcement still fires
             config_mod._config = cfg
 
             hybrid_search("alpha", top_k=10, embed_url="http://fake")
