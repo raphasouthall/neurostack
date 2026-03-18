@@ -1,9 +1,5 @@
 """Tests for neurostack.cooccurrence — entity co-occurrence persistence."""
 
-import sqlite3
-
-import pytest
-
 from neurostack.cooccurrence import (
     MAX_COOCCURRENCE_WEIGHT,
     get_cooccurrence_stats,
@@ -52,9 +48,9 @@ def test_upsert_two_entities_one_note(in_memory_db):
     conn = in_memory_db
     _insert_triple(conn, "note1.md", "Alpha", "Beta")
 
-    n = upsert_cooccurrence_for_note(conn, "note1.md")
+    result = upsert_cooccurrence_for_note(conn, "note1.md")
 
-    assert n == 1
+    assert result == 1
     row = conn.execute(
         "SELECT entity_a, entity_b, weight FROM entity_cooccurrence"
     ).fetchone()
@@ -99,7 +95,7 @@ def test_upsert_re_upsert_same_note_recalculates(in_memory_db):
     )
     conn.commit()
 
-    n = upsert_cooccurrence_for_note(conn, "note1.md")
+    upsert_cooccurrence_for_note(conn, "note1.md")
 
     # Should have Alpha-Beta and Alpha-Delta (and Beta-Delta)
     rows = conn.execute(
@@ -120,8 +116,8 @@ def test_upsert_no_triples_noop(in_memory_db):
     upsert_cooccurrence_for_note(conn, "note1.md")
 
     # upsert for a note that has no triples
-    n = upsert_cooccurrence_for_note(conn, "nonexistent.md")
-    assert n == 0
+    result = upsert_cooccurrence_for_note(conn, "nonexistent.md")
+    assert result == 0
 
     # Existing pair should still be there
     count = conn.execute(

@@ -19,12 +19,12 @@ from .config import get_config
 
 log = logging.getLogger("neurostack")
 
+from .cooccurrence import reinforce_cooccurrence
 from .embedder import (
     blob_to_embedding,
     cosine_similarity_batch,
     get_embedding,
 )
-from .cooccurrence import reinforce_cooccurrence
 from .schema import get_db
 
 # Cosine similarity below this threshold signals a prediction error (poor retrieval fit).
