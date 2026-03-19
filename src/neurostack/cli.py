@@ -29,6 +29,9 @@ def cmd_index(args):
     chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     edges = conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
     print(f"Indexed {notes} notes, {chunks} chunks, {edges} graph edges.")
+    if notes == 0:
+        print("\n  \033[33m!\033[0m No Markdown files found in the vault.")
+        print("  Add .md files to your vault, then run: neurostack index")
 
 
 def _get_workspace(args) -> str | None:
@@ -64,6 +67,22 @@ def cmd_search(args):
                 entry["summary"] = r.summary
             output.append(entry)
         print(json.dumps(output, indent=2, default=str))
+        return
+    if not results:
+        print("  No results found.")
+        # Check if DB has any notes at all
+        from .schema import get_db
+        db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", ""))
+        if not db_path.name:
+            from .schema import DB_PATH
+            db_path = Path(DB_PATH)
+        if db_path.exists():
+            conn = get_db(db_path)
+            count = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+            if count == 0:
+                print("  \033[33m!\033[0m No notes indexed yet. Run: neurostack index")
+        else:
+            print("  \033[33m!\033[0m No database found. Run: neurostack index")
         return
     for r in results:
         print(f"\n{'='*60}")
@@ -832,6 +851,9 @@ def cmd_init(args):
     print("\n  \033[1m━━━ NeuroStack Setup ━━━\033[0m\n")
 
     # 1. Vault path
+    print("  Your vault is the directory where your Markdown notes live.")
+    print("  NeuroStack will create subdirectories for organization.")
+    print("  Point this to an existing notes folder, or a new path to start fresh.\n")
     vault_root = Path(_prompt(
         "\033[1mVault path\033[0m",
         default=str(cfg.vault_root),
@@ -3377,6 +3399,14 @@ def main():
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
+        sys.exit(1)
+
+    # Preflight: nudge user to run init if vault doesn't exist yet
+    _skip_preflight = {"init", "install", "uninstall", "doctor", "status", "demo", "update"}
+    vault_path = Path(args.vault)
+    if args.command not in _skip_preflight and not vault_path.exists():
+        print(f"\n  \033[33m!\033[0m Vault not found at {vault_path}")
+        print("  Run \033[1mneurostack init\033[0m to set up your vault.\n")
         sys.exit(1)
 
     try:

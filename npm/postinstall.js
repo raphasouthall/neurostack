@@ -206,8 +206,8 @@ async function main() {
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(configFile, `# NeuroStack Configuration
 # See: https://github.com/raphasouthall/neurostack#configuration
+# Run 'neurostack init' to set your vault path and preferences.
 
-vault_root = "${os.homedir()}/brain"
 embed_url = "http://localhost:11435"
 llm_url = "http://localhost:11434"
 llm_model = "phi3.5"
