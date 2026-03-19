@@ -75,12 +75,12 @@ export const posts = [
         type: 'table',
         headers: ['Query', 'Category', 'NS cost', 'Vanilla cost', 'Savings', 'Vanilla file reads'],
         rows: [
-          ['Cloud infrastructure overview', 'Thematic', '$0.09', '$0.26', '64%', '15.7'],
+          ['Security posture of cloud env', 'Thematic', '$0.09', '$0.26', '64%', '15.7'],
           ['Neuroscience-architecture link', 'Cross-ref', '$0.07', '$0.11', '32%', '4.0'],
-          ['Shared resources (AppSystem+KPI)', 'Cross-ref', '$0.07', '$0.09', '30%', '3.0'],
+          ['Shared resources between projects', 'Cross-ref', '$0.07', '$0.09', '30%', '3.0'],
           ['Neuroscience theory mapping', 'Thematic', '$0.11', '$0.15', '28%', '18.7'],
           ['vault-oracle evolution', 'Thematic', '$0.16', '$0.19', '15%', '14.3'],
-          ['LicenseTool firewall + subnet', 'Cross-ref', '$0.08', '$0.09', '14%', '5.7'],
+          ['Firewall rule + subnet details', 'Cross-ref', '$0.08', '$0.09', '14%', '5.7'],
         ],
       },
       {
@@ -106,8 +106,8 @@ export const posts = [
         type: 'table',
         headers: ['Query', 'Category', 'NS cost', 'Vanilla cost', 'Why vanilla wins'],
         rows: [
-          ['AppSystem cron schedule', 'Pinpoint', '$0.08', '$0.02', 'One Grep, one Read, done'],
-          ['CloudVendor consultants', 'Adversarial', '$0.07', '$0.03', 'Grep "CloudVendor" found it instantly'],
+          ['Pipeline cron schedule', 'Pinpoint', '$0.08', '$0.02', 'One Grep, one Read, done'],
+          ['External consultant names', 'Adversarial', '$0.07', '$0.03', 'Grep found it in one call'],
           ['VPN sites list', 'Scan', '$0.18', '$0.08', 'One file read vs 5 MCP calls'],
           ['Private endpoints list', 'Scan', '$0.20', '$0.10', 'Same pattern — NeuroStack over-searched'],
           ['Homelab GPU', 'Pinpoint', '$0.04', '$0.03', 'Filename match, direct read'],
@@ -163,7 +163,7 @@ export const posts = [
       },
       {
         type: 'text',
-        content: 'If your vault is 200+ notes and you regularly ask cross-cutting questions ("how does X relate to Y", "what is the security posture of Z", "trace the evolution of W"), NeuroStack saves 15-64% on those queries. The savings compound because complex queries are the expensive ones.',
+        content: 'If your vault is 200+ notes and you regularly ask cross-cutting questions ("how does X relate to Y", "what is the overall status of Z", "trace the evolution of W"), NeuroStack saves 15-64% on those queries. The savings compound because complex queries are the expensive ones.',
       },
       {
         type: 'text',
