@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { useParams, Link, Navigate } from 'react-router-dom'
 import { Nav, Footer } from '../App'
 import { getPost } from './posts'
@@ -43,6 +44,7 @@ export default function BlogPost() {
       <footer className="blog-post-footer">
         <Link to="/blog" className="blog-back">&larr; Back to blog</Link>
       </footer>
+      <ViewCounter slug={slug} />
     </article>
     <Footer />
     </div>
@@ -137,6 +139,41 @@ function Section({ section }) {
     default:
       return null
   }
+}
+
+function ViewCounter({ slug }) {
+  const [count, setCount] = useState(null)
+
+  useEffect(() => {
+    // Increment and fetch view count from localStorage + sessionStorage
+    // Uses a simple hit counter approach: each unique session increments
+    const key = `views:${slug}`
+    const sessionKey = `viewed:${slug}`
+    const current = parseInt(localStorage.getItem(key) || '0', 10)
+
+    if (!sessionStorage.getItem(sessionKey)) {
+      const next = current + 1
+      localStorage.setItem(key, String(next))
+      sessionStorage.setItem(sessionKey, '1')
+      setCount(next)
+    } else {
+      setCount(current)
+    }
+  }, [slug])
+
+  if (count === null) return null
+
+  return (
+    <div style={{
+      textAlign: 'center',
+      padding: '1rem 0 0',
+      fontSize: '0.75rem',
+      color: 'var(--text-muted, #6c7086)',
+      opacity: 0.6,
+    }}>
+      {count} {count === 1 ? 'view' : 'views'}
+    </div>
+  )
 }
 
 function formatDate(iso) {
