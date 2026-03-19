@@ -3,7 +3,8 @@
   "version": "0.7.3",
   "description": "Build, maintain, and search your knowledge vault with AI",
   "bin": {
-    "neurostack": "bin/neurostack.js"
+    "neurostack": "bin/neurostack.js",
+    "ns": "bin/neurostack.js"
   },
   "scripts": {
     "postinstall": "node postinstall.js",
