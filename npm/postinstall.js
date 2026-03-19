@@ -184,14 +184,22 @@ async function main() {
   info("Source: ok");
 
   // ── Step 4: Install Python dependencies ──
-  const mode = process.env.NEUROSTACK_MODE || "full";
+  const mode = process.env.NEUROSTACK_MODE || "lite";
   const extraArgs = mode === "community" ? "--extra full --extra community"
                  : mode === "full" ? "--extra full"
                  : "";
   info(`Installing Python dependencies (${mode} mode)...`);
   run(`"${uv}" sync --python ${PYTHON_VERSION} ${extraArgs}`.trim(), { cwd: INSTALL_DIR });
 
-  // ── Step 5: Default config ──
+  // ── Step 5: Create CLI wrapper at ~/.local/bin/neurostack ──
+  const wrapperDir = path.join(os.homedir(), ".local", "bin");
+  const wrapperPath = path.join(wrapperDir, "neurostack");
+  fs.mkdirSync(wrapperDir, { recursive: true });
+  fs.writeFileSync(wrapperPath, `#!/usr/bin/env bash\nexec uv run --project "${INSTALL_DIR}" python -m neurostack.cli "$@"\n`);
+  fs.chmodSync(wrapperPath, 0o755);
+  info(`CLI wrapper: ${wrapperPath}`);
+
+  // ── Step 6: Default config ──
   const configDir = path.join(os.homedir(), ".config", "neurostack");
   const configFile = path.join(configDir, "config.toml");
   if (!fs.existsSync(configFile)) {
@@ -209,11 +217,20 @@ llm_model = "phi3.5"
     info(`Config exists: ${configFile}`);
   }
 
+  // ── Step 7: Check PATH ──
+  const pathDirs = (process.env.PATH || "").split(":");
+  const onPath = pathDirs.some(d => path.resolve(d) === path.resolve(wrapperDir));
+
   // ── Done ──
   console.log(`
   \x1b[32m✓ NeuroStack installed!\x1b[0m (${mode} mode)
-
-  Get started:
+`);
+  if (!onPath) {
+    console.log(`  \x1b[33m!\x1b[0m Add to PATH (add to ~/.bashrc or ~/.zshrc):
+    export PATH="$HOME/.local/bin:$PATH"
+`);
+  }
+  console.log(`  Get started:
     neurostack init          Set up vault structure
     neurostack index         Index your vault
     neurostack search 'q'    Search
