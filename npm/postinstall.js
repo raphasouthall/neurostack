@@ -195,9 +195,14 @@ async function main() {
   const wrapperDir = path.join(os.homedir(), ".local", "bin");
   const wrapperPath = path.join(wrapperDir, "neurostack");
   fs.mkdirSync(wrapperDir, { recursive: true });
-  fs.writeFileSync(wrapperPath, `#!/usr/bin/env bash\nexec uv run --project "${INSTALL_DIR}" python -m neurostack.cli "$@"\n`);
+  const wrapperContent = `#!/usr/bin/env bash\nexec uv run --project "${INSTALL_DIR}" python -m neurostack.cli "$@"\n`;
+  fs.writeFileSync(wrapperPath, wrapperContent);
   fs.chmodSync(wrapperPath, 0o755);
-  info(`CLI wrapper: ${wrapperPath}`);
+  // Create ns alias
+  const aliasPath = path.join(wrapperDir, "ns");
+  fs.writeFileSync(aliasPath, wrapperContent);
+  fs.chmodSync(aliasPath, 0o755);
+  info(`CLI wrapper: ${wrapperPath} (alias: ns)`);
 
   // ── Step 6: Default config ──
   const configDir = path.join(os.homedir(), ".config", "neurostack");

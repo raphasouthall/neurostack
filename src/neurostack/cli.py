@@ -543,17 +543,25 @@ def cmd_stats(args):
         print(json.dumps(output, indent=2, default=str))
         return
 
+    # Detect if running in lite mode
+    is_lite = False
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        is_lite = True
+    full_tag = " \033[33m(full mode required)\033[0m" if is_lite else ""
+
     print(f"Notes:       {notes}")
     print(f"Chunks:      {chunks}")
     embed_pct = embedded * 100 // max(chunks, 1)
-    print(f"Embedded:    {embedded} ({embed_pct}%)")
+    print(f"Embedded:    {embedded} ({embed_pct}%){full_tag}")
     sum_pct = summaries * 100 // max(notes, 1)
-    print(f"Summarized:  {summaries} ({sum_pct}%)")
+    print(f"Summarized:  {summaries} ({sum_pct}%){full_tag}")
     print(f"Graph edges: {edges}")
     triple_pct = notes_with_triples * 100 // max(notes, 1)
     print(
         f"Triples:     {total_triples} from"
-        f" {notes_with_triples} notes ({triple_pct}%)"
+        f" {notes_with_triples} notes ({triple_pct}%){full_tag}"
     )
     print(
         f"Co-occurrence: {cooc['pairs']} pairs"
@@ -693,6 +701,74 @@ def cmd_watch(args):
         embed_url=args.embed_url,
         summarize_url=args.summarize_url,
     )
+
+
+def _detect_hardware():
+    """Detect RAM and GPU for mode recommendation."""
+    import shutil
+    import subprocess
+
+    ram_gb = 0
+    try:
+        import os as _os
+        mem_bytes = _os.sysconf("SC_PAGE_SIZE") * _os.sysconf("SC_PHYS_PAGES")
+        ram_gb = mem_bytes / (1024 ** 3)
+    except (ValueError, OSError):
+        pass
+
+    gpu_name = None
+    gpu_vram_gb = 0
+    nvidia_smi = shutil.which("nvidia-smi")
+    if nvidia_smi:
+        try:
+            result = subprocess.run(
+                [nvidia_smi, "--query-gpu=name,memory.total",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                line = result.stdout.strip().split("\n")[0]
+                parts = line.split(", ")
+                if len(parts) == 2:
+                    gpu_name = parts[0].strip()
+                    gpu_vram_gb = int(parts[1].strip()) / 1024
+        except Exception:
+            pass
+
+    return ram_gb, gpu_name, gpu_vram_gb
+
+
+def _print_hardware_recommendation():
+    """Print hardware info and recommend lite or full mode."""
+    ram_gb, gpu_name, gpu_vram_gb = _detect_hardware()
+
+    print("  \033[1mSystem\033[0m")
+    if ram_gb > 0:
+        print(f"    RAM:  {ram_gb:.0f} GB")
+    if gpu_name:
+        print(f"    GPU:  {gpu_name} ({gpu_vram_gb:.0f} GB VRAM)")
+    else:
+        print("    GPU:  None detected")
+
+    # Recommendation: full needs 16GB+ RAM and a GPU with 6GB+ VRAM
+    if gpu_name and gpu_vram_gb >= 6 and ram_gb >= 16:
+        print(
+            "    \033[32m✓\033[0m Recommended: \033[1mfull\033[0m mode"
+            " (embeddings + LLM summaries)"
+        )
+        print("      Upgrade anytime: neurostack install --mode full")
+    elif gpu_name and gpu_vram_gb >= 4:
+        print(
+            "    \033[33m!\033[0m Recommended: \033[1mlite\033[0m mode"
+            " (GPU has limited VRAM for full mode)"
+        )
+        print("      Upgrade anytime: neurostack install --mode full")
+    else:
+        print(
+            "    \033[36m▸\033[0m Recommended: \033[1mlite\033[0m mode"
+            " (full mode requires a GPU with 6+ GB VRAM)"
+        )
+        print("      Upgrade anytime: neurostack install --mode full")
 
 
 def _prompt(label, default="", choices=None):
@@ -851,6 +927,10 @@ def cmd_init(args):
 
     # ── Interactive setup wizard ──
     print("\n  \033[1m━━━ NeuroStack Setup ━━━\033[0m\n")
+
+    # Hardware check and mode recommendation
+    _print_hardware_recommendation()
+    print()
 
     # 1. Vault path
     print("  Your vault is the directory where your Markdown notes live.")
@@ -1676,7 +1756,11 @@ def cmd_install(args):
     )
     wrapper.write_text(wrapper_content)
     wrapper.chmod(0o755)
-    print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper}")
+    # Create ns alias
+    alias = wrapper.parent / "ns"
+    alias.write_text(wrapper_content)
+    alias.chmod(0o755)
+    print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper} (alias: ns)")
 
     # 3. Ollama setup (full/community modes)
     if pull_models or (mode in ("full", "community") and not pull_models
@@ -1796,10 +1880,14 @@ def cmd_uninstall(args):
         except OSError:
             print(f"  \033[33m▸\033[0m Directory not empty, kept: {install_dir}")
 
-    # Remove CLI wrapper
+    # Remove CLI wrapper and alias
     if wrapper.exists():
         wrapper.unlink()
         print(f"  \033[36m▸\033[0m Removed CLI wrapper: {wrapper}")
+    alias = wrapper.parent / "ns"
+    if alias.exists():
+        alias.unlink()
+        print(f"  \033[36m▸\033[0m Removed alias: {alias}")
 
     # Config
     if config_dir.exists():
