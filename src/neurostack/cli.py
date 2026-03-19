@@ -840,9 +840,11 @@ def cmd_init(args):
     # Non-interactive mode: use flags directly (backwards compatible)
     if args.path or args.profession or not sys.stdin.isatty():
         vault_root = Path(args.path) if args.path else cfg.vault_root
-        _do_init(vault_root, cfg, profession_name=args.profession)
+        _do_init(vault_root, cfg, profession_name=args.profession,
+                 run_index=args.index)
         print("\nNext steps:")
-        print("  neurostack index          # Index your vault")
+        if not args.index:
+            print("  neurostack index          # Index your vault")
         print("  neurostack search 'query' # Search")
         print("  neurostack doctor         # Check health")
         return
@@ -912,7 +914,7 @@ def cmd_init(args):
             embed_api_key = _prompt("Embedding API key", default=llm_api_key)
 
     # 4. Index after init?
-    run_index = _confirm("Index vault after setup?", default=False)
+    run_index = _confirm("Index vault after setup?", default=True)
 
     # Show summary
     print("\n  \033[1m━━━ Summary ━━━\033[0m\n")
@@ -2892,6 +2894,14 @@ def main():
         help="Apply a profession pack (e.g., developer, writer, "
         "student, devops, data-scientist, researcher). "
         "Use 'scaffold --list' to see all",
+    )
+    p.add_argument(
+        "--index", action="store_true", default=True,
+        help="Index vault after init (default: true)",
+    )
+    p.add_argument(
+        "--no-index", action="store_false", dest="index",
+        help="Skip indexing after init",
     )
     p.set_defaults(func=cmd_init)
 
