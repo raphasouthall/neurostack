@@ -47,7 +47,7 @@ def summarize_note(
             "temperature": 0.3,
             "max_tokens": 200,
         },
-        timeout=120.0,
+        timeout=300.0,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -119,7 +119,7 @@ def summarize_folder(
             "temperature": 0.3,
             "max_tokens": 200,
         },
-        timeout=120.0,
+        timeout=300.0,
     )
     resp.raise_for_status()
     data = resp.json()
