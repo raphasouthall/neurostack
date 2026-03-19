@@ -1387,6 +1387,11 @@ def cmd_update(args):
     """Pull latest source from GitHub and re-sync dependencies."""
     import shutil
     import subprocess
+    import tarfile
+    import tempfile
+    import urllib.request
+
+    TARBALL_URL = "https://github.com/raphasouthall/neurostack/archive/refs/heads/main.tar.gz"
 
     project_root = Path(__file__).resolve().parent.parent.parent
     if not (project_root / "pyproject.toml").exists():
@@ -1397,30 +1402,49 @@ def cmd_update(args):
             print("  \033[31m✗\033[0m Cannot find project root")
             sys.exit(1)
 
-    git = shutil.which("git")
-    if not git:
-        print("  \033[31m✗\033[0m git not found")
-        sys.exit(1)
-
     print(f"  Updating from {project_root}...\n")
-
-    # Show current version
     print(f"  Current version: {__version__}")
 
-    # Git pull
-    result = subprocess.run(
-        ["git", "pull", "--ff-only"],
-        cwd=project_root, capture_output=True, text=True, timeout=30,
-    )
-    if result.returncode != 0:
-        print(f"  \033[31m✗\033[0m git pull failed:\n{result.stderr}")
-        sys.exit(1)
+    is_git_repo = (project_root / ".git").exists()
+    git = shutil.which("git")
 
-    pulled = result.stdout.strip()
-    if "Already up to date" in pulled:
-        print("  \033[32m✓\033[0m Already up to date")
+    if is_git_repo and git:
+        # Git-based install — use git pull
+        result = subprocess.run(
+            ["git", "pull", "--ff-only"],
+            cwd=project_root, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            print(f"  \033[31m✗\033[0m git pull failed:\n{result.stderr}")
+            sys.exit(1)
+        pulled = result.stdout.strip()
+        if "Already up to date" in pulled:
+            print("  \033[32m✓\033[0m Already up to date")
+        else:
+            print(f"  \033[32m✓\033[0m Pulled: {pulled.splitlines()[-1]}")
     else:
-        print(f"  \033[32m✓\033[0m Pulled: {pulled.splitlines()[-1]}")
+        # Tarball-based install — re-download from GitHub
+        print("  Downloading latest source...")
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
+                tmp_path = tmp.name
+                urllib.request.urlretrieve(TARBALL_URL, tmp_path)
+
+            # Extract over existing install (strip top-level dir)
+            with tarfile.open(tmp_path, "r:gz") as tar:
+                members = tar.getmembers()
+                # Strip the first path component (neurostack-main/)
+                for member in members:
+                    parts = Path(member.name).parts
+                    if len(parts) > 1:
+                        member.name = str(Path(*parts[1:]))
+                        tar.extract(member, project_root)
+
+            Path(tmp_path).unlink(missing_ok=True)
+            print("  \033[32m✓\033[0m Source updated")
+        except Exception as e:
+            print(f"  \033[31m✗\033[0m Download failed: {e}")
+            sys.exit(1)
 
     # Detect current mode
     mode = "lite"
@@ -1436,7 +1460,16 @@ def cmd_update(args):
         pass
 
     # uv sync
-    sync_cmd = ["uv", "sync", "--project", str(project_root)]
+    uv = shutil.which("uv")
+    if not uv:
+        uv_fallback = Path.home() / ".local" / "bin" / "uv"
+        if uv_fallback.exists():
+            uv = str(uv_fallback)
+        else:
+            print("  \033[31m✗\033[0m uv not found")
+            sys.exit(1)
+
+    sync_cmd = [uv, "sync", "--project", str(project_root)]
     if mode == "full":
         sync_cmd += ["--extra", "full"]
     elif mode == "community":
@@ -1454,7 +1487,7 @@ def cmd_update(args):
     # Show new version
     try:
         new_ver = subprocess.run(
-            ["uv", "run", "--project", str(project_root),
+            [uv, "run", "--project", str(project_root),
              "python", "-c",
              "from neurostack import __version__; print(__version__)"],
             capture_output=True, text=True, timeout=10,
