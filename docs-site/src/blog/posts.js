@@ -48,6 +48,12 @@ export const posts = [
         content: 'Total cost across all 15 queries: $1.387 for NeuroStack vs $1.385 for vanilla. Effectively a tie. But that aggregate hides two very different stories.',
       },
       {
+        type: 'svg',
+        src: '/screenshots/category_summary.png',
+        alt: 'Mean cost by query category — NeuroStack wins thematic and cross-reference, vanilla wins pinpoint',
+        caption: 'Mean cost by query category across 3 replications. NS = NeuroStack cheaper, VAN = vanilla cheaper.',
+      },
+      {
         type: 'stats',
         items: [
           { label: 'Total runs', value: '90', detail: '15 queries x 2 conditions x 3 reps' },
@@ -80,6 +86,12 @@ export const posts = [
       {
         type: 'text',
         content: 'The pattern: vanilla needs 4-19 file reads for these queries (Glob to find candidates, Read each one, accumulate context). NeuroStack resolves them in 2-5 MCP calls using pre-computed summaries and triples. The token savings come from not re-sending all that file content on every API turn.',
+      },
+      {
+        type: 'svg',
+        src: '/screenshots/savings_waterfall.png',
+        alt: 'Savings waterfall — sorted from best NeuroStack savings to worst',
+        caption: 'Cost savings per query, sorted. Green = NeuroStack cheaper. Red = vanilla cheaper. The split is clear by query type.',
       },
       {
         type: 'heading',
@@ -129,6 +141,18 @@ export const posts = [
         content: 'NeuroStack makes fewer, more targeted tool calls. Vanilla makes more calls but each is simpler. The cost difference comes from what gets sent back: MCP returns pre-computed summaries and structured facts, while file reads return raw Markdown that accumulates in the context window.',
       },
       {
+        type: 'svg',
+        src: '/screenshots/tool_usage.png',
+        alt: 'Tool usage profile — NeuroStack uses compact MCP calls, vanilla uses many file reads',
+        caption: 'Left: NeuroStack uses 1-8 MCP calls per query. Right: vanilla uses 1-33 file reads. Note the scale difference.',
+      },
+      {
+        type: 'svg',
+        src: '/screenshots/cost_vs_complexity.png',
+        alt: 'Scatter plot — cost savings vs query complexity showing the 3-file crossover point',
+        caption: 'The crossover point: queries requiring more than ~3 file reads favor NeuroStack. Below 3, vanilla wins.',
+      },
+      {
         type: 'heading',
         level: 2,
         content: 'What This Actually Means',
@@ -159,6 +183,18 @@ export const posts = [
           { bold: 'Neuroscience features untested.', text: ' Prediction error detection, Hebbian co-occurrence learning, and excitability decay need weeks of accumulated usage data. The vault has only 82 usage records and 3 prediction errors. These features are the long-term bet, not the day-one win.' },
           { bold: 'MCP engagement required CLAUDE.md tuning.', text: ' Without explicit "NEVER use Read/Glob/Grep on vault files" in CLAUDE.md, Claude falls back to file tools ~30% of the time. The strong CLAUDE.md is part of the NeuroStack setup, but it is worth knowing.' },
         ],
+      },
+      {
+        type: 'svg',
+        src: '/screenshots/variance_boxplot.png',
+        alt: 'Box plot — cost variance across replications for each query',
+        caption: 'Cost variance across 3 reps. Vanilla theme_02 had the widest spread ($0.17-$0.38). NeuroStack costs are generally more predictable.',
+      },
+      {
+        type: 'svg',
+        src: '/screenshots/cost_comparison.png',
+        alt: 'Per-query cost comparison bar chart',
+        caption: 'Full per-query cost breakdown. Blue = NeuroStack, red = vanilla. Category colors on x-axis labels.',
       },
       {
         type: 'heading',
