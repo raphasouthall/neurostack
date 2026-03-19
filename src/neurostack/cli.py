@@ -809,7 +809,7 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
             skip_summary=True,
             skip_triples=True,
         )
-        print(f"  \033[32m✓\033[0m Indexing complete")
+        print("  \033[32m✓\033[0m Indexing complete")
 
 
 def cmd_init(args):
@@ -1680,6 +1680,81 @@ def cmd_install(args):
     print("  Next steps:")
     print("    neurostack init          # Set up vault")
     print("    neurostack doctor        # Verify setup")
+    print()
+
+
+def cmd_uninstall(args):
+    """Remove NeuroStack data, database, and CLI wrapper."""
+    import shutil
+
+    cfg = get_config()
+    install_dir = Path.home() / ".local" / "share" / "neurostack"
+    config_dir = Path.home() / ".config" / "neurostack"
+    wrapper = Path.home() / ".local" / "bin" / "neurostack"
+
+    if not args.yes and sys.stdin.isatty():
+        print("\n  \033[1m━━━ NeuroStack Uninstall ━━━\033[0m\n")
+        print("  This will remove:")
+        print(f"    Source + venv:  {install_dir / 'repo'}")
+        if not args.keep_db:
+            print(f"    Database:       {cfg.db_path}")
+        if wrapper.exists():
+            print(f"    CLI wrapper:    {wrapper}")
+        print()
+        if not args.keep_db:
+            print("  \033[33m!\033[0m Your vault will NOT be touched.")
+        if not _confirm("  Proceed with uninstall?", default=False):
+            print("\n  Cancelled.")
+            return
+
+    print("\n  \033[1mUninstalling NeuroStack\033[0m\n")
+
+    # Remove source repo + venv
+    repo_dir = install_dir / "repo"
+    if repo_dir.exists():
+        shutil.rmtree(repo_dir)
+        print(f"  \033[36m▸\033[0m Removed source and venv: {repo_dir}")
+    else:
+        print("  \033[36m▸\033[0m Source directory not found (already clean)")
+
+    # Remove database
+    if not args.keep_db:
+        for suffix in ("", "-wal", "-shm"):
+            db_file = Path(str(cfg.db_path) + suffix)
+            if db_file.exists():
+                db_file.unlink()
+        session_db = cfg.session_db
+        for suffix in ("", "-wal", "-shm"):
+            sf = Path(str(session_db) + suffix)
+            if sf.exists():
+                sf.unlink()
+        if cfg.db_path.exists() or session_db.exists():
+            print(f"  \033[36m▸\033[0m Removed database: {cfg.db_path}")
+
+    # Remove parent dir if empty
+    if install_dir.exists():
+        try:
+            install_dir.rmdir()
+            print(f"  \033[36m▸\033[0m Removed empty directory: {install_dir}")
+        except OSError:
+            print(f"  \033[33m▸\033[0m Directory not empty, kept: {install_dir}")
+
+    # Remove CLI wrapper
+    if wrapper.exists():
+        wrapper.unlink()
+        print(f"  \033[36m▸\033[0m Removed CLI wrapper: {wrapper}")
+
+    # Config
+    if config_dir.exists():
+        print(f"  \033[33m▸\033[0m Config preserved: {config_dir}")
+        print(f"  \033[33m▸\033[0m To remove manually: rm -rf {config_dir}")
+
+    # Hint about npm package
+    print()
+    print("  \033[32m✓ NeuroStack uninstalled.\033[0m")
+    print()
+    print("  To also remove the npm bootstrap package:")
+    print("    npm uninstall -g neurostack")
     print()
 
 
@@ -2872,6 +2947,22 @@ def main():
     p.add_argument("--embed-model", help="Embedding model (default: nomic-embed-text)")
     p.add_argument("--llm-model", help="LLM model (default: phi3.5)")
     p.set_defaults(func=cmd_install)
+
+    # uninstall
+    p = sub.add_parser("uninstall", help="Remove NeuroStack data, database, and CLI wrapper")
+    p.add_argument(
+        "--keep-config", action="store_true", default=False,
+        help="Preserve ~/.config/neurostack/ (default: keep config)",
+    )
+    p.add_argument(
+        "--keep-db", action="store_true", default=False,
+        help="Preserve database files",
+    )
+    p.add_argument(
+        "-y", "--yes", action="store_true", default=False,
+        help="Skip confirmation prompt",
+    )
+    p.set_defaults(func=cmd_uninstall)
 
     # skills
     p = sub.add_parser(
