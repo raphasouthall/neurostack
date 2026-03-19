@@ -37,7 +37,7 @@ def get_embedding(
         f"{base_url}/v1/embeddings",
         headers=_EMBED_HEADERS,
         json={"model": model, "input": text},
-        timeout=30.0,
+        timeout=300.0,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -63,7 +63,7 @@ def get_embeddings_batch(
             f"{base_url}/v1/embeddings",
             headers=_EMBED_HEADERS,
             json={"model": model, "input": batch},
-            timeout=60.0,
+            timeout=300.0,
         )
         resp.raise_for_status()
         data = resp.json()
