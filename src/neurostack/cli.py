@@ -994,7 +994,10 @@ def cmd_init(args):
             embed_api_key = _prompt("Embedding API key", default=llm_api_key)
 
     # 4. Index after init?
-    run_index = _confirm("Index vault after setup?", default=True)
+    if is_full_mode:
+        run_index = _confirm("Index vault after setup?", default=True)
+    else:
+        run_index = True  # Lite mode: always index (FTS5 only, fast)
 
     # Show summary
     print("\n  \033[1m━━━ Summary ━━━\033[0m\n")
