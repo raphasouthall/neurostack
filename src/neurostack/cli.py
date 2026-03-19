@@ -800,12 +800,16 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
     # Run index if requested
     if run_index:
         print("\n  Indexing vault...")
-        from .indexer import index_vault
-        from .schema import get_db
+        from .watcher import full_index
 
-        db = get_db(cfg.db_path)
-        indexed = index_vault(db, vault_root, cfg)
-        print(f"  \033[32m✓\033[0m Indexed {indexed} notes")
+        full_index(
+            vault_root=vault_root,
+            embed_url=cfg.embed_url,
+            summarize_url=cfg.llm_url,
+            skip_summary=True,
+            skip_triples=True,
+        )
+        print(f"  \033[32m✓\033[0m Indexing complete")
 
 
 def cmd_init(args):
@@ -840,50 +844,65 @@ def cmd_init(args):
         prof_choices.append((p.name, f"{p.name.title()} — {p.description}"))
     profession = _prompt("Profession pack", default="none", choices=prof_choices)
 
-    # 3. LLM configuration
-    print("\n  \033[1mLLM Configuration\033[0m")
-    print("  NeuroStack works with any OpenAI-compatible endpoint")
-    print("  (Ollama, vLLM, Together AI, Groq, OpenRouter, etc.)\n")
+    # Detect install mode (full/community have numpy installed)
+    is_full_mode = False
+    try:
+        import numpy  # noqa: F401
+        is_full_mode = True
+    except ImportError:
+        pass
 
-    embed_url = _prompt("Embedding endpoint", default=cfg.embed_url)
-    llm_url = _prompt("LLM endpoint", default=cfg.llm_url)
-
-    model_choices = [
-        ("phi3.5", "phi3.5 — MIT licensed, fast, 3.8B params"),
-        ("qwen3:8b", "qwen3:8b — Apache 2.0, strong reasoning"),
-        ("llama3.1:8b", "llama3.1:8b — Meta community license, popular"),
-        ("mistral:7b", "mistral:7b — Apache 2.0, efficient"),
-    ]
-    llm_model = _prompt("LLM model for summaries", default=cfg.llm_model, choices=model_choices)
-
-    # 3b. API keys (optional — only needed for cloud providers)
+    # 3. LLM configuration (only for full/community mode)
+    embed_url = cfg.embed_url
+    llm_url = cfg.llm_url
+    llm_model = cfg.llm_model
     llm_api_key = ""
     embed_api_key = ""
-    is_local = any(h in llm_url for h in ("localhost", "127.0.0.1", "0.0.0.0"))
-    if not is_local:
-        print("\n  \033[1mAPI Authentication\033[0m")
-        print("  Cloud providers require an API key.\n")
-        llm_api_key = _prompt("LLM API key", default="")
-        if embed_url != llm_url:
-            embed_api_key = _prompt("Embedding API key", default="")
-        else:
-            embed_api_key = llm_api_key
-    elif _confirm("\n  Configure API keys? (only needed for cloud providers)", default=False):
-        llm_api_key = _prompt("LLM API key", default="")
-        embed_api_key = _prompt("Embedding API key", default=llm_api_key)
+
+    if is_full_mode:
+        print("\n  \033[1mLLM Configuration\033[0m")
+        print("  NeuroStack works with any OpenAI-compatible endpoint")
+        print("  (Ollama, vLLM, Together AI, Groq, OpenRouter, etc.)\n")
+
+        embed_url = _prompt("Embedding endpoint", default=cfg.embed_url)
+        llm_url = _prompt("LLM endpoint", default=cfg.llm_url)
+
+        model_choices = [
+            ("phi3.5", "phi3.5 — MIT licensed, fast, 3.8B params"),
+            ("qwen3:8b", "qwen3:8b — Apache 2.0, strong reasoning"),
+            ("llama3.1:8b", "llama3.1:8b — Meta community license, popular"),
+            ("mistral:7b", "mistral:7b — Apache 2.0, efficient"),
+        ]
+        llm_model = _prompt("LLM model for summaries", default=cfg.llm_model, choices=model_choices)
+
+        # API keys (optional — only needed for cloud providers)
+        is_local = any(h in llm_url for h in ("localhost", "127.0.0.1", "0.0.0.0"))
+        if not is_local:
+            print("\n  \033[1mAPI Authentication\033[0m")
+            print("  Cloud providers require an API key.\n")
+            llm_api_key = _prompt("LLM API key", default="")
+            if embed_url != llm_url:
+                embed_api_key = _prompt("Embedding API key", default="")
+            else:
+                embed_api_key = llm_api_key
+        elif _confirm("\n  Configure API keys? (only needed for cloud providers)", default=False):
+            llm_api_key = _prompt("LLM API key", default="")
+            embed_api_key = _prompt("Embedding API key", default=llm_api_key)
 
     # 4. Index after init?
     run_index = _confirm("Index vault after setup?", default=False)
 
     # Show summary
-    auth_label = "yes" if (llm_api_key or embed_api_key) else "no"
     print("\n  \033[1m━━━ Summary ━━━\033[0m\n")
     print(f"  Vault:      {vault_root}")
     print(f"  Profession: {profession}")
-    print(f"  Embed URL:  {embed_url}")
-    print(f"  LLM URL:    {llm_url}")
-    print(f"  LLM model:  {llm_model}")
-    print(f"  API auth:   {auth_label}")
+    print(f"  Mode:       {'full' if is_full_mode else 'lite'}")
+    if is_full_mode:
+        auth_label = "yes" if (llm_api_key or embed_api_key) else "no"
+        print(f"  Embed URL:  {embed_url}")
+        print(f"  LLM URL:    {llm_url}")
+        print(f"  LLM model:  {llm_model}")
+        print(f"  API auth:   {auth_label}")
     print(f"  Index now:  {'yes' if run_index else 'no'}")
 
     if not _confirm("\n  Proceed?", default=True):
