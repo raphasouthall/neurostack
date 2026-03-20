@@ -57,10 +57,28 @@ fi
 info "uv: $(uv --version)"
 
 # --- Clone/Update ---
+# History was rewritten on 2026-03-20 to remove sensitive references.
+# Existing clones with old history are re-cloned to drop stale objects.
+NEEDS_RECLONE=false
 if [ -d "$INSTALL_DIR/.git" ]; then
-    info "Updating existing installation..."
-    git -C "$INSTALL_DIR" pull --ff-only
-else
+    # Check if local history contains the pre-rewrite commit marker.
+    # If the old root commit exists, this clone has stale history.
+    OLD_ROOT="e146d12"  # first commit that contained sensitive refs (truncated SHA)
+    if git -C "$INSTALL_DIR" cat-file -t "${OLD_ROOT}" &>/dev/null 2>&1; then
+        info "Outdated history detected — re-cloning for clean history..."
+        NEEDS_RECLONE=true
+    else
+        info "Updating existing installation..."
+        git -C "$INSTALL_DIR" fetch --all --prune 2>/dev/null
+        git -C "$INSTALL_DIR" reset --hard origin/main 2>/dev/null
+    fi
+fi
+
+if $NEEDS_RECLONE || [ ! -d "$INSTALL_DIR/.git" ]; then
+    if [ -d "$INSTALL_DIR" ]; then
+        # Preserve config — only remove the repo
+        rm -rf "$INSTALL_DIR"
+    fi
     info "Cloning NeuroStack..."
     mkdir -p "$(dirname "$INSTALL_DIR")"
     git clone "$REPO" "$INSTALL_DIR"
