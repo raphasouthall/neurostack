@@ -1516,19 +1516,41 @@ def cmd_update(args):
     git = shutil.which("git")
 
     if is_git_repo and git:
-        # Git-based install — use git pull
-        result = subprocess.run(
-            ["git", "pull", "--ff-only"],
-            cwd=project_root, capture_output=True, text=True, timeout=30,
+        # Check for stale pre-rewrite history (sensitive refs removed 2026-03-20).
+        # If old root commit exists, re-clone to drop stale objects.
+        old_root_check = subprocess.run(
+            ["git", "cat-file", "-t", "e146d12"],
+            cwd=project_root, capture_output=True, text=True,
         )
-        if result.returncode != 0:
-            print(f"  \033[31m✗\033[0m git pull failed:\n{result.stderr}")
-            sys.exit(1)
-        pulled = result.stdout.strip()
-        if "Already up to date" in pulled:
-            print("  \033[32m✓\033[0m Already up to date")
+        if old_root_check.returncode == 0:
+            print("  \033[33m!\033[0m Outdated history detected — re-cloning for clean history...")
+            repo_url = "https://github.com/raphasouthall/neurostack.git"
+            parent = project_root.parent
+            import tempfile
+            tmp = Path(tempfile.mkdtemp(dir=parent))
+            subprocess.run(["git", "clone", repo_url, str(tmp / "repo")],
+                           capture_output=True, text=True, timeout=120)
+            # Swap directories
+            old_dir = project_root.with_name(project_root.name + ".old")
+            project_root.rename(old_dir)
+            (tmp / "repo").rename(project_root)
+            shutil.rmtree(old_dir, ignore_errors=True)
+            shutil.rmtree(tmp, ignore_errors=True)
+            print("  \033[32m✓\033[0m Re-cloned with clean history")
         else:
-            print(f"  \033[32m✓\033[0m Pulled: {pulled.splitlines()[-1]}")
+            # Normal git pull
+            result = subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=project_root, capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                print(f"  \033[31m✗\033[0m git pull failed:\n{result.stderr}")
+                sys.exit(1)
+            pulled = result.stdout.strip()
+            if "Already up to date" in pulled:
+                print("  \033[32m✓\033[0m Already up to date")
+            else:
+                print(f"  \033[32m✓\033[0m Pulled: {pulled.splitlines()[-1]}")
     else:
         # Tarball-based install — re-download from GitHub
         print("  Downloading latest source...")
