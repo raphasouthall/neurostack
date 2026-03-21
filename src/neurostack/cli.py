@@ -828,11 +828,11 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
     # Copy base templates from vault-template/
     base_template = Path(__file__).resolve().parent.parent.parent / "vault-template"
     if base_template.exists():
-        src_claude = base_template / "CLAUDE.md"
-        dst_claude = vault_root / "CLAUDE.md"
-        if src_claude.exists() and not dst_claude.exists():
-            shutil.copy2(src_claude, dst_claude)
-            created.append("CLAUDE.md")
+        src_agents = base_template / "AGENTS.md"
+        dst_agents = vault_root / "AGENTS.md"
+        if src_agents.exists() and not dst_agents.exists():
+            shutil.copy2(src_agents, dst_agents)
+            created.append("AGENTS.md")
 
         src_templates = base_template / "templates"
         dst_templates = vault_root / "templates"
@@ -1119,7 +1119,7 @@ def cmd_onboard(args):
     today = date.today().isoformat()
     write_fm = getattr(args, "write_frontmatter", False)
     # Files to skip — NeuroStack scaffolding, not user notes
-    skip_names = {"index.md", "CLAUDE.md"}
+    skip_names = {"index.md", "AGENTS.md", "CLAUDE.md"}
     skip_dirs = {"templates", ".obsidian", ".claude"}
 
     # Collect metadata for SQLite insertion after indexing
@@ -1221,17 +1221,17 @@ def cmd_onboard(args):
             print(f"  {prefix}+ {d}/")
             dirs_created += 1
 
-    # 5. Copy CLAUDE.md and base templates if missing
+    # 5. Copy AGENTS.md and base templates if missing
     base_template = (
         Path(__file__).resolve().parent.parent.parent / "vault-template"
     )
     if base_template.exists():
-        src_claude = base_template / "CLAUDE.md"
-        dst_claude = target / "CLAUDE.md"
-        if src_claude.exists() and not dst_claude.exists():
+        src_agents = base_template / "AGENTS.md"
+        dst_agents = target / "AGENTS.md"
+        if src_agents.exists() and not dst_agents.exists():
             if not dry_run:
-                shutil.copy2(src_claude, dst_claude)
-            print(f"  {prefix}+ CLAUDE.md")
+                shutil.copy2(src_agents, dst_agents)
+            print(f"  {prefix}+ AGENTS.md")
 
         src_templates = base_template / "templates"
         dst_templates = target / "templates"
@@ -2159,7 +2159,7 @@ def cmd_demo(args):
         md_files = [
             f for f in md_files
             if ".git" not in f.parts
-            and f.name != "CLAUDE.md"
+            and f.name not in ("AGENTS.md", "CLAUDE.md")
         ]
 
         now = datetime.now(timezone.utc).isoformat()
