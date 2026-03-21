@@ -1,6 +1,6 @@
-# Vault — Claude Code Instructions
+# Vault — AI Agent Instructions
 
-This is your knowledge base. Claude Code should consult it before relying on general knowledge for any system-specific topic.
+This is your knowledge base. AI agents should consult it before relying on general knowledge for any system-specific topic.
 
 ## Vault Structure
 
