@@ -4,7 +4,7 @@ Each profession pack adds:
 - Extra templates (in vault-template/professions/<name>/templates/)
 - Seed research notes (in vault-template/professions/<name>/research/)
 - Extra directories to scaffold
-- CLAUDE.md overlay with domain context
+- AGENTS.md overlay with domain context
 """
 
 from __future__ import annotations
@@ -337,14 +337,16 @@ def apply_profession(vault_root: Path, profession: Profession) -> list[str]:
                     shutil.copy2(note, dst)
                     actions.append(f"  + {extra_dir}/{note.name}")
 
-    # 6. Append profession section to CLAUDE.md
-    claude_md = vault_root / "CLAUDE.md"
-    if claude_md.exists() and profession.claude_md_section:
-        content = claude_md.read_text()
+    # 6. Append profession section to AGENTS.md (legacy CLAUDE.md also supported)
+    agents_md = vault_root / "AGENTS.md"
+    if not agents_md.exists():
+        agents_md = vault_root / "CLAUDE.md"
+    if agents_md.exists() and profession.claude_md_section:
+        content = agents_md.read_text()
         marker = f"## {profession.name.title()} Workflow"
         if marker not in content:
             content = content.rstrip() + "\n" + profession.claude_md_section + "\n"
-            claude_md.write_text(content)
-            actions.append("  + CLAUDE.md (appended profession section)")
+            agents_md.write_text(content)
+            actions.append(f"  + {agents_md.name} (appended profession section)")
 
     return actions
