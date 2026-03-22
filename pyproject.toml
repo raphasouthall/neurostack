@@ -50,10 +50,9 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
 ]
-# Cloud infrastructure (GCP: Cloud Storage, Vertex AI)
+# Cloud infrastructure (GCP: Cloud Storage, Gemini API)
 cloud = [
     "google-cloud-storage>=2.18",
-    "google-auth>=2.35",
 ]
 # OpenAI-compatible HTTP API
 api = [
