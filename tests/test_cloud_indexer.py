@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""Unit tests for the CloudIndexer cloud indexing pipeline (GCP: Vertex AI + GCS).
+"""Unit tests for the CloudIndexer cloud indexing pipeline (GCP: Gemini API + GCS).
 
 The CloudIndexer runs indexing in a subprocess for tenant isolation.
-Tests mock subprocess.run and google.auth to verify the correct env vars,
-arguments, and error handling without invoking real indexing or GCP credentials.
+Tests mock subprocess.run to verify the correct env vars, arguments, and
+error handling without invoking real indexing or GCP credentials.
 """
 
 import json
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from neurostack.cloud.config import CloudConfig
+from neurostack.cloud.config import GEMINI_BASE_URL, CloudConfig
 from neurostack.cloud.indexer import CloudIndexer
 
 
@@ -24,13 +24,15 @@ from neurostack.cloud.indexer import CloudIndexer
 
 @pytest.fixture()
 def cloud_config() -> CloudConfig:
-    """CloudConfig with Vertex AI settings."""
+    """CloudConfig with Gemini API settings."""
     return CloudConfig(
         gcp_project="test-project",
         gcp_region="us-central1",
         gcs_bucket_name="test-bucket",
-        vertex_embed_model="text-embedding-005",
-        vertex_llm_model="gemini-2.0-flash",
+        gemini_api_key="test-gemini-key-123",
+        gemini_embed_model="gemini-embedding-001",
+        gemini_llm_model="gemini-2.5-flash",
+        gemini_embed_dim=768,
     )
 
 
@@ -43,22 +45,8 @@ def mock_storage() -> MagicMock:
 
 
 @pytest.fixture()
-def mock_google_auth():
-    """Mock google.auth.default() to return a fake credential with a token."""
-    mock_credentials = MagicMock()
-    mock_credentials.token = "fake-gcp-access-token-123"
-
-    with (
-        patch("google.auth.default", return_value=(mock_credentials, "test-project")),
-        patch("google.auth.transport.requests.Request", return_value=MagicMock()),
-    ):
-        import google.auth as real_auth
-        yield real_auth, mock_credentials
-
-
-@pytest.fixture()
-def indexer(cloud_config, mock_storage, mock_google_auth) -> CloudIndexer:
-    """CloudIndexer with mocked storage and google.auth."""
+def indexer(cloud_config, mock_storage) -> CloudIndexer:
+    """CloudIndexer with mocked storage."""
     return CloudIndexer(cloud_config, mock_storage)
 
 
@@ -113,7 +101,7 @@ def _make_failed_run(stderr="Error: something broke"):
 class TestCloudIndexerInit:
     """Tests for CloudIndexer construction."""
 
-    def test_accepts_config_and_storage(self, cloud_config, mock_storage, mock_google_auth):
+    def test_accepts_config_and_storage(self, cloud_config, mock_storage):
         """CloudIndexer.__init__ accepts CloudConfig and GCSStorageClient."""
         indexer = CloudIndexer(cloud_config, mock_storage)
         assert indexer._config is cloud_config
@@ -129,47 +117,47 @@ class TestCloudIndexerSubprocess:
     """Tests for subprocess-based indexing with proper tenant isolation."""
 
     @patch("neurostack.cloud.indexer.subprocess.run")
-    def test_passes_vertex_ai_env_vars_to_subprocess(self, mock_run, indexer, cloud_config):
-        """Subprocess receives Vertex AI URLs and model names in env."""
+    def test_passes_gemini_api_env_vars_to_subprocess(self, mock_run, indexer, cloud_config):
+        """Subprocess receives Gemini API URLs and model names in env."""
         mock_run.side_effect = _make_successful_run()
         indexer.index_vault("user-1", SAMPLE_FILES)
 
         mock_run.assert_called_once()
         env = mock_run.call_args.kwargs["env"]
-        assert env["NEUROSTACK_EMBED_URL"] == cloud_config.vertex_base_url
-        assert env["NEUROSTACK_LLM_URL"] == cloud_config.vertex_base_url
-        assert env["NEUROSTACK_EMBED_MODEL"] == "text-embedding-005"
-        assert env["NEUROSTACK_LLM_MODEL"] == "gemini-2.0-flash"
+        assert env["NEUROSTACK_EMBED_URL"] == GEMINI_BASE_URL
+        assert env["NEUROSTACK_LLM_URL"] == GEMINI_BASE_URL
+        assert env["NEUROSTACK_EMBED_MODEL"] == "gemini-embedding-001"
+        assert env["NEUROSTACK_LLM_MODEL"] == "gemini-2.5-flash"
 
     @patch("neurostack.cloud.indexer.subprocess.run")
-    def test_embed_url_points_to_vertex_ai(self, mock_run, indexer):
-        """NEUROSTACK_EMBED_URL points to Vertex AI, not Fireworks."""
+    def test_embed_url_points_to_gemini_api(self, mock_run, indexer):
+        """NEUROSTACK_EMBED_URL points to Gemini API, not Vertex AI or Fireworks."""
         mock_run.side_effect = _make_successful_run()
         indexer.index_vault("user-1", SAMPLE_FILES)
 
         env = mock_run.call_args.kwargs["env"]
-        assert "aiplatform.googleapis.com" in env["NEUROSTACK_EMBED_URL"]
+        assert "generativelanguage.googleapis.com" in env["NEUROSTACK_EMBED_URL"]
+        assert "aiplatform" not in env["NEUROSTACK_EMBED_URL"]
         assert "fireworks" not in env["NEUROSTACK_EMBED_URL"].lower()
 
     @patch("neurostack.cloud.indexer.subprocess.run")
-    def test_gcp_access_token_used_as_api_key(self, mock_run, indexer):
-        """NEUROSTACK_EMBED_API_KEY is set to the GCP access token from ADC."""
+    def test_gemini_api_key_used_as_api_key(self, mock_run, indexer):
+        """NEUROSTACK_EMBED_API_KEY and NEUROSTACK_LLM_API_KEY are set to the Gemini API key."""
         mock_run.side_effect = _make_successful_run()
         indexer.index_vault("user-1", SAMPLE_FILES)
 
         env = mock_run.call_args.kwargs["env"]
-        assert env["NEUROSTACK_EMBED_API_KEY"] == "fake-gcp-access-token-123"
-        assert env["NEUROSTACK_LLM_API_KEY"] == "fake-gcp-access-token-123"
+        assert env["NEUROSTACK_EMBED_API_KEY"] == "test-gemini-key-123"
+        assert env["NEUROSTACK_LLM_API_KEY"] == "test-gemini-key-123"
 
     @patch("neurostack.cloud.indexer.subprocess.run")
-    def test_google_auth_default_called(self, mock_run, indexer, mock_google_auth):
-        """google.auth.default() is called to obtain the access token."""
-        mock_auth, mock_credentials = mock_google_auth
+    def test_embed_dim_passed_to_subprocess(self, mock_run, indexer):
+        """NEUROSTACK_EMBED_DIM is set to the configured embed dimension."""
         mock_run.side_effect = _make_successful_run()
         indexer.index_vault("user-1", SAMPLE_FILES)
 
-        mock_auth.default.assert_called_once()
-        mock_credentials.refresh.assert_called_once()
+        env = mock_run.call_args.kwargs["env"]
+        assert env["NEUROSTACK_EMBED_DIM"] == "768"
 
     @patch("neurostack.cloud.indexer.subprocess.run")
     def test_passes_isolated_db_dir_to_subprocess(self, mock_run, indexer):
@@ -215,41 +203,6 @@ class TestCloudIndexerSubprocess:
         indexer.index_vault("user-1", SAMPLE_FILES)
 
         assert mock_run.call_args.kwargs["timeout"] == 600
-
-    def test_vertex_base_url_does_not_include_v1(self, cloud_config):
-        """Base URL must NOT include /v1 — embedder/summarizer append it."""
-        assert not cloud_config.vertex_base_url.endswith("/v1")
-        assert "aiplatform.googleapis.com" in cloud_config.vertex_base_url
-
-
-# ---------------------------------------------------------------------------
-# Test: graceful handling when google.auth fails
-# ---------------------------------------------------------------------------
-
-
-class TestCloudIndexerAuthFallback:
-    """Tests for graceful fallback when GCP auth is unavailable."""
-
-    @patch("neurostack.cloud.indexer.subprocess.run")
-    def test_continues_without_token_when_auth_fails(self, mock_run, cloud_config, mock_storage):
-        """Indexer continues (without API key) when google.auth.default() fails."""
-        mock_auth = MagicMock()
-        mock_auth.default.side_effect = Exception("No credentials found")
-
-        with patch.dict("sys.modules", {
-            "google.auth": mock_auth,
-            "google.auth.transport": mock_auth.transport,
-            "google.auth.transport.requests": mock_auth.transport.requests,
-        }):
-            indexer = CloudIndexer(cloud_config, mock_storage)
-            mock_run.side_effect = _make_successful_run()
-
-            result = indexer.index_vault("user-1", SAMPLE_FILES)
-
-            assert result["status"] == "complete"
-            env = mock_run.call_args.kwargs["env"]
-            # API key should NOT be set when auth fails
-            assert "NEUROSTACK_EMBED_API_KEY" not in env
 
 
 # ---------------------------------------------------------------------------
@@ -347,12 +300,12 @@ class TestCloudIndexerResult:
     @patch("neurostack.cloud.indexer.subprocess.run")
     def test_returns_failed_on_subprocess_error(self, mock_run, indexer):
         """index_vault returns status=failed when subprocess exits non-zero."""
-        mock_run.side_effect = _make_failed_run("Vertex AI unreachable")
+        mock_run.side_effect = _make_failed_run("Gemini API unreachable")
 
         result = indexer.index_vault("user-1", SAMPLE_FILES)
 
         assert result["status"] == "failed"
-        assert "Vertex AI unreachable" in result["error"]
+        assert "Gemini API unreachable" in result["error"]
 
     @patch("neurostack.cloud.indexer.subprocess.run")
     def test_returns_failed_on_timeout(self, mock_run, indexer):

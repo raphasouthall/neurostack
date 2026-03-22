@@ -3,7 +3,7 @@
 """Cloud indexing pipeline for NeuroStack.
 
 Accepts uploaded vault files, delegates AI work (embeddings + LLM
-extraction) to Vertex AI via OpenAI-compatible endpoints, and
+extraction) to the Gemini API via its OpenAI-compatible endpoint, and
 produces indexed SQLite databases stored in Google Cloud Storage.
 
 Tenant isolation guarantees:
@@ -24,7 +24,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .config import CloudConfig
+from .config import GEMINI_BASE_URL, CloudConfig
 from .storage import GCSStorageClient
 
 log = logging.getLogger("neurostack.cloud.indexer")
@@ -68,21 +68,21 @@ print(json.dumps(result))
 
 
 class CloudIndexer:
-    """Orchestrates cloud indexing via Vertex AI and GCS."""
+    """Orchestrates cloud indexing via Gemini API and GCS."""
 
     def __init__(self, config: CloudConfig, storage: GCSStorageClient) -> None:
         self._config = config
         self._storage = storage
 
     def index_vault(self, user_id: str, vault_files: dict[str, bytes]) -> dict:
-        """Index vault files using Vertex AI and store result in GCS.
+        """Index vault files using Gemini API and store result in GCS.
 
         Runs indexing in a subprocess for complete isolation from the
         parent process's config, DB path, and env vars.
 
-        Vertex AI auth uses Application Default Credentials (ADC),
-        which Cloud Run provides automatically via its service account.
-        No API key needed — the subprocess inherits the ADC from the parent.
+        Auth uses a Gemini API key (passed as NEUROSTACK_EMBED_API_KEY
+        and NEUROSTACK_LLM_API_KEY env vars). The NeuroStack embedder
+        and summarizer send this as a Bearer token on their httpx calls.
 
         Args:
             user_id: Tenant identifier for GCS key prefix.
@@ -93,8 +93,6 @@ class CloudIndexer:
             Dict with keys: status, db_size, note_count (on success)
             or status, error (on failure).
         """
-        vertex_base_url = self._config.vertex_base_url
-
         with tempfile.TemporaryDirectory(prefix=f"ns-cloud-{user_id}-") as tmpdir:
             tmp_path = Path(tmpdir)
             vault_dir = tmp_path / "vault"
@@ -109,37 +107,19 @@ class CloudIndexer:
                 filepath.write_bytes(content)
 
             # Build env for subprocess — inherits parent env but overrides
-            # NeuroStack config to point at Vertex AI and the temp DB.
-            # Vertex AI uses ADC (Application Default Credentials) inherited
-            # from the Cloud Run service account — no API key env var needed.
+            # NeuroStack config to point at Gemini API and the temp DB.
             env = os.environ.copy()
             env.update({
                 "NEUROSTACK_VAULT_ROOT": str(vault_dir),
                 "NEUROSTACK_DB_DIR": str(db_dir),
-                "NEUROSTACK_EMBED_URL": vertex_base_url,
-                "NEUROSTACK_LLM_URL": vertex_base_url,
-                "NEUROSTACK_EMBED_MODEL": self._config.vertex_embed_model,
-                "NEUROSTACK_LLM_MODEL": self._config.vertex_llm_model,
-                # Vertex AI OpenAI-compat uses ADC bearer tokens, not static keys.
-                # The httpx calls in embedder.py/summarizer.py will use the
-                # NEUROSTACK_EMBED_API_KEY / NEUROSTACK_LLM_API_KEY if set.
-                # For Vertex AI, we generate a short-lived access token.
+                "NEUROSTACK_EMBED_URL": GEMINI_BASE_URL,
+                "NEUROSTACK_LLM_URL": GEMINI_BASE_URL,
+                "NEUROSTACK_EMBED_MODEL": self._config.gemini_embed_model,
+                "NEUROSTACK_LLM_MODEL": self._config.gemini_llm_model,
+                "NEUROSTACK_EMBED_DIM": str(self._config.gemini_embed_dim),
+                "NEUROSTACK_EMBED_API_KEY": self._config.gemini_api_key,
+                "NEUROSTACK_LLM_API_KEY": self._config.gemini_api_key,
             })
-
-            # Generate a GCP access token for the subprocess to use.
-            # On Cloud Run, this comes from the metadata server automatically.
-            # For local dev, it uses `gcloud auth print-access-token`.
-            try:
-                import google.auth
-                import google.auth.transport.requests
-
-                credentials, _ = google.auth.default()
-                credentials.refresh(google.auth.transport.requests.Request())
-                if credentials.token:
-                    env["NEUROSTACK_EMBED_API_KEY"] = credentials.token
-                    env["NEUROSTACK_LLM_API_KEY"] = credentials.token
-            except Exception:
-                log.warning("Could not obtain GCP access token for Vertex AI")
 
             try:
                 result = subprocess.run(

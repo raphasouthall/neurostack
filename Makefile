@@ -26,6 +26,8 @@ deploy-storage:
 ## Push secrets to GCP Secret Manager
 deploy-secrets:
 	@echo "Pushing secrets to GCP Secret Manager..."
+	@echo -n "$(NEUROSTACK_CLOUD_GEMINI_API_KEY)" | gcloud secrets create gemini-api-key --data-file=- --project=$(GCP_PROJECT) 2>/dev/null || \
+		echo -n "$(NEUROSTACK_CLOUD_GEMINI_API_KEY)" | gcloud secrets versions add gemini-api-key --data-file=- --project=$(GCP_PROJECT)
 	@echo -n '$(NEUROSTACK_CLOUD_API_KEYS)' | gcloud secrets create cloud-api-keys --data-file=- --project=$(GCP_PROJECT) 2>/dev/null || \
 		echo -n '$(NEUROSTACK_CLOUD_API_KEYS)' | gcloud secrets versions add cloud-api-keys --data-file=- --project=$(GCP_PROJECT)
 
@@ -44,7 +46,7 @@ deploy-api:
 		--cpu 1 \
 		--timeout 300 \
 		--set-env-vars "NEUROSTACK_CLOUD_GCP_PROJECT=$(GCP_PROJECT),NEUROSTACK_CLOUD_GCP_REGION=$(GCP_REGION),NEUROSTACK_CLOUD_GCS_BUCKET_NAME=$(GCS_BUCKET)" \
-		--set-secrets "NEUROSTACK_CLOUD_API_KEYS=cloud-api-keys:latest"
+		--set-secrets "NEUROSTACK_CLOUD_GEMINI_API_KEY=gemini-api-key:latest,NEUROSTACK_CLOUD_API_KEYS=cloud-api-keys:latest"
 
 ## Show service status
 status:
