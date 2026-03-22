@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""R2-compatible object storage client for NeuroStack Cloud.
+"""Google Cloud Storage client for NeuroStack Cloud.
 
-Uses boto3 with S3-compatible API to interact with Cloudflare R2.
+Uses google-cloud-storage to interact with GCS.
 Tenant isolation is enforced via prefix-based key structure:
   - vaults/{user_id}/neurostack.db  (indexed database)
   - uploads/{user_id}/{filename}    (raw vault files)
@@ -15,8 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import boto3
-from botocore.config import Config as BotoConfig
+from google.cloud import storage as gcs
 
 from .config import CloudConfig
 
@@ -26,7 +25,7 @@ _VALID_USER_ID = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
 
 def _validate_user_id(user_id: str) -> str:
-    """Validate user_id to prevent R2 prefix traversal."""
+    """Validate user_id to prevent GCS prefix traversal."""
     if not _VALID_USER_ID.match(user_id):
         raise ValueError(
             f"Invalid user_id: must be 1-128 alphanumeric/hyphen/underscore chars, got {user_id!r}"
@@ -34,42 +33,36 @@ def _validate_user_id(user_id: str) -> str:
     return user_id
 
 
-class R2StorageClient:
-    """S3-compatible client for Cloudflare R2 with tenant isolation."""
+class GCSStorageClient:
+    """Google Cloud Storage client with tenant isolation."""
 
     def __init__(self, config: CloudConfig) -> None:
         self._config = config
-        self._client = boto3.client(
-            "s3",
-            endpoint_url=config.r2_endpoint_url,
-            aws_access_key_id=config.r2_access_key_id,
-            aws_secret_access_key=config.r2_secret_access_key,
-            config=BotoConfig(signature_version="s3v4"),
-        )
+        self._client = gcs.Client(project=config.gcp_project)
+        self._bucket = self._client.bucket(config.gcs_bucket_name)
 
     def upload_db(self, user_id: str, db_path: Path) -> str:
         """Upload an indexed database for a user.
 
-        Returns the S3 key.
+        Returns the GCS blob name.
         """
         _validate_user_id(user_id)
-        key = f"vaults/{user_id}/neurostack.db"
-        self._client.upload_file(str(db_path), self._config.r2_bucket_name, key)
-        return key
+        blob_name = f"vaults/{user_id}/neurostack.db"
+        blob = self._bucket.blob(blob_name)
+        blob.upload_from_filename(str(db_path))
+        return blob_name
 
     def generate_download_url(self, user_id: str, expires_in: int = 3600) -> str:
-        """Generate a presigned download URL for a user's database.
+        """Generate a signed download URL for a user's database.
 
         Default expiry is 1 hour (3600 seconds).
         """
         _validate_user_id(user_id)
-        return self._client.generate_presigned_url(
-            "get_object",
-            Params={
-                "Bucket": self._config.r2_bucket_name,
-                "Key": f"vaults/{user_id}/neurostack.db",
-            },
-            ExpiresIn=expires_in,
+        blob = self._bucket.blob(f"vaults/{user_id}/neurostack.db")
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=expires_in,
+            method="GET",
         )
 
     def upload_vault_files(self, user_id: str, files: dict[str, bytes]) -> list[str]:
@@ -80,17 +73,16 @@ class R2StorageClient:
             files: Mapping of filename -> content bytes.
 
         Returns:
-            List of S3 keys for the uploaded files.
+            List of GCS blob names for the uploaded files.
         """
         _validate_user_id(user_id)
-        keys: list[str] = []
+        blob_names: list[str] = []
         for filename, content in files.items():
-            key = f"uploads/{user_id}/{filename}"
-            self._client.put_object(
-                Bucket=self._config.r2_bucket_name, Key=key, Body=content
-            )
-            keys.append(key)
-        return keys
+            blob_name = f"uploads/{user_id}/{filename}"
+            blob = self._bucket.blob(blob_name)
+            blob.upload_from_string(content)
+            blob_names.append(blob_name)
+        return blob_names
 
     def download_vault_files(self, user_id: str) -> dict[str, bytes]:
         """Download all uploaded vault files for a user.
@@ -102,16 +94,11 @@ class R2StorageClient:
         prefix = f"uploads/{user_id}/"
         files: dict[str, bytes] = {}
 
-        response = self._client.list_objects_v2(
-            Bucket=self._config.r2_bucket_name, Prefix=prefix
-        )
-        for obj in response.get("Contents", []):
-            obj_key = obj["Key"]
-            filename = obj_key[len(prefix):]
-            resp = self._client.get_object(
-                Bucket=self._config.r2_bucket_name, Key=obj_key
-            )
-            files[filename] = resp["Body"].read()
+        for blob in self._client.list_blobs(
+            self._config.gcs_bucket_name, prefix=prefix
+        ):
+            filename = blob.name[len(prefix):]
+            files[filename] = blob.download_as_bytes()
 
         return files
 
@@ -133,26 +120,10 @@ class R2StorageClient:
         Returns number of objects deleted.
         """
         deleted = 0
-        paginator_kwargs = {
-            "Bucket": self._config.r2_bucket_name,
-            "Prefix": prefix,
-        }
-
-        while True:
-            response = self._client.list_objects_v2(**paginator_kwargs)
-            contents = response.get("Contents", [])
-            if not contents:
-                break
-
-            objects = [{"Key": obj["Key"]} for obj in contents]
-            self._client.delete_objects(
-                Bucket=self._config.r2_bucket_name,
-                Delete={"Objects": objects},
-            )
-            deleted += len(objects)
-
-            if not response.get("IsTruncated", False):
-                break
-            paginator_kwargs["ContinuationToken"] = response["NextContinuationToken"]
-
+        blobs = list(
+            self._client.list_blobs(self._config.gcs_bucket_name, prefix=prefix)
+        )
+        for blob in blobs:
+            blob.delete()
+            deleted += 1
         return deleted
