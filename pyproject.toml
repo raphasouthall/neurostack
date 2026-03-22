@@ -50,6 +50,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
 ]
+# Cloud infrastructure (R2, Fireworks AI)
+cloud = [
+    "boto3>=1.35",
+]
 # OpenAI-compatible HTTP API
 api = [
     "fastapi>=0.115",
