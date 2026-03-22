@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from .auth import require_api_key
 from .config import CloudConfig, load_cloud_config
 from .indexer import CloudIndexer
-from .storage import R2StorageClient
+from .storage import GCSStorageClient
 
 log = logging.getLogger("neurostack.cloud.api")
 
@@ -122,7 +122,7 @@ class DownloadResponse(BaseModel):
 async def lifespan(app: FastAPI):
     """Initialize cloud infrastructure on startup."""
     config = load_cloud_config()
-    storage = R2StorageClient(config)
+    storage = GCSStorageClient(config)
     indexer = CloudIndexer(config, storage)
 
     app.state.config = config
