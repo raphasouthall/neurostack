@@ -35,10 +35,10 @@ def _reset_api_keys_cache():
 
 @pytest.fixture
 def mock_storage():
-    """Mocked R2StorageClient."""
+    """Mocked GCSStorageClient."""
     storage = MagicMock()
     storage.upload_vault_files.return_value = ["uploads/user-1/test.md"]
-    storage.generate_download_url.return_value = "https://presigned.r2.dev/neurostack.db"
+    storage.generate_download_url.return_value = "https://storage.googleapis.com/signed-url/neurostack.db"
     return storage
 
 
@@ -58,9 +58,9 @@ def mock_indexer():
 def client(mock_storage, mock_indexer):
     """FastAPI TestClient with mocked cloud services."""
     with patch.dict(os.environ, {"NEUROSTACK_CLOUD_API_KEYS": TEST_API_KEYS_JSON}):
-        # Patch R2StorageClient and CloudIndexer to avoid real cloud calls
+        # Patch GCSStorageClient and CloudIndexer to avoid real cloud calls
         with (
-            patch("neurostack.cloud.api.R2StorageClient", return_value=mock_storage),
+            patch("neurostack.cloud.api.GCSStorageClient", return_value=mock_storage),
             patch("neurostack.cloud.api.CloudIndexer", return_value=mock_indexer),
         ):
             from neurostack.cloud.api import app
@@ -185,8 +185,8 @@ class TestUpload:
         assert resp.status_code == 202
         assert "2 files" in resp.json()["message"]
 
-    def test_upload_stores_files_in_r2(self, client, mock_storage):
-        """Upload stores vault files in R2 via storage.upload_vault_files."""
+    def test_upload_stores_files_in_gcs(self, client, mock_storage):
+        """Upload stores vault files in GCS via storage.upload_vault_files."""
         client.post(
             "/v1/vault/upload",
             headers=auth_header(),
@@ -305,11 +305,11 @@ class TestDownload:
         assert resp.status_code == 401
 
     def test_download_with_auth_returns_presigned_url(self, client, mock_storage):
-        """Download endpoint returns a presigned R2 URL."""
+        """Download endpoint returns a signed GCS URL."""
         resp = client.get("/v1/vault/download", headers=auth_header())
         assert resp.status_code == 200
         data = resp.json()
-        assert data["download_url"] == "https://presigned.r2.dev/neurostack.db"
+        assert data["download_url"] == "https://storage.googleapis.com/signed-url/neurostack.db"
         assert data["expires_in"] == 3600
 
     def test_download_calls_storage_with_user_id(self, client, mock_storage):
@@ -472,7 +472,7 @@ class TestUploadLimits:
 
 
 class TestStorageUserIdValidation:
-    """Tests for R2 storage user_id validation."""
+    """Tests for GCS storage user_id validation."""
 
     def test_rejects_traversal_user_id(self):
         """user_id with path traversal characters is rejected."""

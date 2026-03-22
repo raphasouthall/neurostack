@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""Unit tests for cloud storage client and config."""
+"""Unit tests for cloud storage client and config (GCP: Cloud Storage + Vertex AI)."""
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from neurostack.cloud.config import CloudConfig, load_cloud_config
-from neurostack.cloud.storage import R2StorageClient
+from neurostack.cloud.storage import GCSStorageClient, _validate_user_id
 
 
 # ---------------------------------------------------------------------------
@@ -20,192 +20,233 @@ from neurostack.cloud.storage import R2StorageClient
 class TestCloudConfig:
     """Tests for CloudConfig dataclass and loader."""
 
-    def test_loads_r2_settings_from_env(self):
-        """CloudConfig loads R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME."""
+    def test_loads_gcp_settings_from_env(self):
+        """CloudConfig loads GCP_PROJECT, GCP_REGION, GCS_BUCKET_NAME."""
         env = {
-            "NEUROSTACK_CLOUD_R2_ACCOUNT_ID": "abc123",
-            "NEUROSTACK_CLOUD_R2_ACCESS_KEY_ID": "key-id",
-            "NEUROSTACK_CLOUD_R2_SECRET_ACCESS_KEY": "secret-key",
-            "NEUROSTACK_CLOUD_R2_BUCKET_NAME": "my-bucket",
+            "NEUROSTACK_CLOUD_GCP_PROJECT": "my-gcp-project",
+            "NEUROSTACK_CLOUD_GCP_REGION": "europe-west1",
+            "NEUROSTACK_CLOUD_GCS_BUCKET_NAME": "my-bucket",
         }
         with patch.dict(os.environ, env, clear=False):
             cfg = load_cloud_config()
 
-        assert cfg.r2_account_id == "abc123"
-        assert cfg.r2_access_key_id == "key-id"
-        assert cfg.r2_secret_access_key == "secret-key"
-        assert cfg.r2_bucket_name == "my-bucket"
+        assert cfg.gcp_project == "my-gcp-project"
+        assert cfg.gcp_region == "europe-west1"
+        assert cfg.gcs_bucket_name == "my-bucket"
 
-    def test_loads_fireworks_settings_from_env(self):
-        """CloudConfig loads FIREWORKS_API_KEY, FIREWORKS_EMBED_MODEL, FIREWORKS_LLM_MODEL."""
+    def test_loads_vertex_settings_from_env(self):
+        """CloudConfig loads VERTEX_EMBED_MODEL and VERTEX_LLM_MODEL."""
         env = {
-            "NEUROSTACK_CLOUD_FIREWORKS_API_KEY": "fw-key-123",
-            "NEUROSTACK_CLOUD_FIREWORKS_EMBED_MODEL": "custom-embed",
-            "NEUROSTACK_CLOUD_FIREWORKS_LLM_MODEL": "custom-llm",
+            "NEUROSTACK_CLOUD_VERTEX_EMBED_MODEL": "custom-embed-model",
+            "NEUROSTACK_CLOUD_VERTEX_LLM_MODEL": "custom-llm-model",
         }
         with patch.dict(os.environ, env, clear=False):
             cfg = load_cloud_config()
 
-        assert cfg.fireworks_api_key == "fw-key-123"
-        assert cfg.fireworks_embed_model == "custom-embed"
-        assert cfg.fireworks_llm_model == "custom-llm"
+        assert cfg.vertex_embed_model == "custom-embed-model"
+        assert cfg.vertex_llm_model == "custom-llm-model"
 
-    def test_r2_endpoint_url_property(self):
-        """CloudConfig.r2_endpoint_url returns https://{account_id}.r2.cloudflarestorage.com."""
-        cfg = CloudConfig(r2_account_id="myaccount")
-        assert cfg.r2_endpoint_url == "https://myaccount.r2.cloudflarestorage.com"
+    def test_vertex_base_url_property(self):
+        """CloudConfig.vertex_base_url returns correct Vertex AI OpenAI-compatible URL."""
+        cfg = CloudConfig(gcp_project="my-project", gcp_region="us-central1")
+        expected = (
+            "https://us-central1-aiplatform.googleapis.com/"
+            "v1beta1/projects/my-project/locations/us-central1/"
+            "endpoints/openapi"
+        )
+        assert cfg.vertex_base_url == expected
+
+    def test_vertex_base_url_different_region(self):
+        """vertex_base_url reflects the configured region."""
+        cfg = CloudConfig(gcp_project="proj-2", gcp_region="europe-west4")
+        assert "europe-west4-aiplatform.googleapis.com" in cfg.vertex_base_url
+        assert "projects/proj-2" in cfg.vertex_base_url
+        assert "locations/europe-west4" in cfg.vertex_base_url
+
+    def test_vertex_base_url_does_not_end_with_v1(self):
+        """Base URL must NOT end with /v1 — embedder/summarizer append it."""
+        cfg = CloudConfig(gcp_project="p", gcp_region="us-central1")
+        assert not cfg.vertex_base_url.endswith("/v1")
 
     def test_defaults(self):
         """CloudConfig has sensible defaults."""
         cfg = CloudConfig()
-        assert cfg.r2_bucket_name == "neurostack-prod"
-        assert cfg.fireworks_embed_model == "nomic-ai/nomic-embed-text-v1.5"
-        assert cfg.fireworks_llm_model == "accounts/fireworks/models/qwen2p5-7b-instruct"
-        assert cfg.r2_account_id == ""
-        assert cfg.fireworks_api_key == ""
+        assert cfg.gcs_bucket_name == "neurostack-prod"
+        assert cfg.vertex_embed_model == "text-embedding-005"
+        assert cfg.vertex_llm_model == "gemini-2.0-flash"
+        assert cfg.gcp_project == ""
+        assert cfg.gcp_region == "us-central1"
+        assert cfg.cloud_api_url == ""
+        assert cfg.cloud_api_key == ""
 
 
 # ---------------------------------------------------------------------------
-# R2StorageClient tests
+# GCSStorageClient tests
 # ---------------------------------------------------------------------------
 
 
-class TestR2StorageClient:
-    """Tests for R2StorageClient with mocked boto3."""
+class TestGCSStorageClient:
+    """Tests for GCSStorageClient with mocked google.cloud.storage."""
 
     @pytest.fixture()
     def config(self):
         return CloudConfig(
-            r2_account_id="testaccount",
-            r2_access_key_id="test-key-id",
-            r2_secret_access_key="test-secret",
-            r2_bucket_name="test-bucket",
+            gcp_project="test-project",
+            gcp_region="us-central1",
+            gcs_bucket_name="test-bucket",
         )
 
     @pytest.fixture()
-    def mock_s3(self):
-        with patch("neurostack.cloud.storage.boto3") as mock_boto3:
-            mock_client = MagicMock()
-            mock_boto3.client.return_value = mock_client
-            yield mock_client, mock_boto3
+    def mock_gcs(self):
+        with patch("neurostack.cloud.storage.gcs") as mock_gcs_module:
+            mock_client_instance = MagicMock()
+            mock_bucket = MagicMock()
+            mock_gcs_module.Client.return_value = mock_client_instance
+            mock_client_instance.bucket.return_value = mock_bucket
+            yield mock_client_instance, mock_bucket, mock_gcs_module
 
     @pytest.fixture()
-    def client(self, config, mock_s3):
-        mock_client, _ = mock_s3
-        return R2StorageClient(config)
+    def storage(self, config, mock_gcs):
+        return GCSStorageClient(config)
 
-    def test_creates_s3_client_with_r2_endpoint(self, config, mock_s3):
-        """R2StorageClient creates boto3 S3 client with R2 endpoint and s3v4 signing."""
-        mock_client, mock_boto3 = mock_s3
-        storage = R2StorageClient(config)
+    def test_creates_gcs_client_with_project(self, config, mock_gcs):
+        """GCSStorageClient creates google.cloud.storage.Client with project."""
+        _, _, mock_gcs_module = mock_gcs
+        GCSStorageClient(config)
 
-        mock_boto3.client.assert_called_once()
-        call_kwargs = mock_boto3.client.call_args
-        assert call_kwargs[0][0] == "s3"
-        assert call_kwargs[1]["endpoint_url"] == "https://testaccount.r2.cloudflarestorage.com"
-        assert call_kwargs[1]["aws_access_key_id"] == "test-key-id"
-        assert call_kwargs[1]["aws_secret_access_key"] == "test-secret"
+        mock_gcs_module.Client.assert_called_once_with(project="test-project")
 
-    def test_upload_db(self, client, mock_s3):
-        """upload_db calls s3.upload_file with key 'vaults/{user_id}/neurostack.db'."""
-        mock_client, _ = mock_s3
+    def test_selects_correct_bucket(self, config, mock_gcs):
+        """GCSStorageClient selects the configured bucket."""
+        mock_client_instance, _, _ = mock_gcs
+        GCSStorageClient(config)
+
+        mock_client_instance.bucket.assert_called_once_with("test-bucket")
+
+    def test_upload_db(self, storage, mock_gcs):
+        """upload_db calls blob.upload_from_filename with correct path."""
+        _, mock_bucket, _ = mock_gcs
+        mock_blob = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
         db_path = Path("/tmp/neurostack.db")
 
-        key = client.upload_db("user-42", db_path)
+        key = storage.upload_db("user-42", db_path)
 
         assert key == "vaults/user-42/neurostack.db"
-        mock_client.upload_file.assert_called_once_with(
-            str(db_path), "test-bucket", "vaults/user-42/neurostack.db"
+        mock_bucket.blob.assert_called_once_with("vaults/user-42/neurostack.db")
+        mock_blob.upload_from_filename.assert_called_once_with(str(db_path))
+
+    def test_generate_download_url(self, storage, mock_gcs):
+        """generate_download_url calls blob.generate_signed_url with v4 and expiration."""
+        _, mock_bucket, _ = mock_gcs
+        mock_blob = MagicMock()
+        mock_blob.generate_signed_url.return_value = "https://storage.googleapis.com/signed-url"
+        mock_bucket.blob.return_value = mock_blob
+
+        url = storage.generate_download_url("user-42")
+
+        assert url == "https://storage.googleapis.com/signed-url"
+        mock_bucket.blob.assert_called_once_with("vaults/user-42/neurostack.db")
+        mock_blob.generate_signed_url.assert_called_once_with(
+            version="v4",
+            expiration=3600,
+            method="GET",
         )
 
-    def test_generate_download_url(self, client, mock_s3):
-        """generate_download_url returns presigned URL with 1-hour default expiry."""
-        mock_client, _ = mock_s3
-        mock_client.generate_presigned_url.return_value = "https://presigned.example.com/db"
-
-        url = client.generate_download_url("user-42")
-
-        assert url == "https://presigned.example.com/db"
-        mock_client.generate_presigned_url.assert_called_once_with(
-            "get_object",
-            Params={"Bucket": "test-bucket", "Key": "vaults/user-42/neurostack.db"},
-            ExpiresIn=3600,
-        )
-
-    def test_generate_download_url_custom_expiry(self, client, mock_s3):
+    def test_generate_download_url_custom_expiry(self, storage, mock_gcs):
         """generate_download_url respects custom expires_in."""
-        mock_client, _ = mock_s3
-        mock_client.generate_presigned_url.return_value = "https://example.com"
+        _, mock_bucket, _ = mock_gcs
+        mock_blob = MagicMock()
+        mock_blob.generate_signed_url.return_value = "https://example.com"
+        mock_bucket.blob.return_value = mock_blob
 
-        client.generate_download_url("user-42", expires_in=7200)
+        storage.generate_download_url("user-42", expires_in=7200)
 
-        mock_client.generate_presigned_url.assert_called_once_with(
-            "get_object",
-            Params={"Bucket": "test-bucket", "Key": "vaults/user-42/neurostack.db"},
-            ExpiresIn=7200,
+        mock_blob.generate_signed_url.assert_called_once_with(
+            version="v4",
+            expiration=7200,
+            method="GET",
         )
 
-    def test_upload_vault_files(self, client, mock_s3):
-        """upload_vault_files uploads to 'uploads/{user_id}/{filename}'."""
-        mock_client, _ = mock_s3
+    def test_upload_vault_files(self, storage, mock_gcs):
+        """upload_vault_files calls blob.upload_from_string for each file."""
+        _, mock_bucket, _ = mock_gcs
+        mock_blob = MagicMock()
+        mock_bucket.blob.return_value = mock_blob
         files = {"note1.md": b"# Hello", "note2.md": b"# World"}
 
-        keys = client.upload_vault_files("user-42", files)
+        keys = storage.upload_vault_files("user-42", files)
 
         assert set(keys) == {"uploads/user-42/note1.md", "uploads/user-42/note2.md"}
-        assert mock_client.put_object.call_count == 2
+        assert mock_blob.upload_from_string.call_count == 2
 
-    def test_delete_user_data(self, client, mock_s3):
-        """delete_user_data deletes all objects under vaults/{user_id}/ and uploads/{user_id}/."""
-        mock_client, _ = mock_s3
+    def test_download_vault_files(self, storage, mock_gcs):
+        """download_vault_files lists blobs and downloads each one."""
+        mock_client_instance, _, _ = mock_gcs
 
-        # Mock list_objects_v2 to return objects for both prefixes
-        def list_side_effect(**kwargs):
-            prefix = kwargs.get("Prefix", "")
-            if prefix == "vaults/user-42/":
-                return {
-                    "Contents": [{"Key": "vaults/user-42/neurostack.db"}],
-                    "IsTruncated": False,
-                }
-            elif prefix == "uploads/user-42/":
-                return {
-                    "Contents": [
-                        {"Key": "uploads/user-42/note1.md"},
-                        {"Key": "uploads/user-42/note2.md"},
-                    ],
-                    "IsTruncated": False,
-                }
-            return {"IsTruncated": False}
+        blob1 = MagicMock()
+        blob1.name = "uploads/user-42/note1.md"
+        blob1.download_as_bytes.return_value = b"# Hello"
 
-        mock_client.list_objects_v2.side_effect = list_side_effect
+        blob2 = MagicMock()
+        blob2.name = "uploads/user-42/note2.md"
+        blob2.download_as_bytes.return_value = b"# World"
 
-        count = client.delete_user_data("user-42")
+        mock_client_instance.list_blobs.return_value = [blob1, blob2]
 
-        assert count == 3
-        assert mock_client.delete_objects.call_count == 2
-
-    def test_download_vault_files(self, client, mock_s3):
-        """download_vault_files retrieves all files under uploads/{user_id}/."""
-        mock_client, _ = mock_s3
-        mock_client.list_objects_v2.return_value = {
-            "Contents": [
-                {"Key": "uploads/user-42/note1.md"},
-                {"Key": "uploads/user-42/note2.md"},
-            ],
-            "IsTruncated": False,
-        }
-
-        body1 = MagicMock()
-        body1.read.return_value = b"# Hello"
-        body2 = MagicMock()
-        body2.read.return_value = b"# World"
-
-        mock_client.get_object.side_effect = [
-            {"Body": body1},
-            {"Body": body2},
-        ]
-
-        files = client.download_vault_files("user-42")
+        files = storage.download_vault_files("user-42")
 
         assert files == {"note1.md": b"# Hello", "note2.md": b"# World"}
-        assert mock_client.get_object.call_count == 2
+        mock_client_instance.list_blobs.assert_called_once_with(
+            "test-bucket", prefix="uploads/user-42/"
+        )
+
+    def test_delete_user_data(self, storage, mock_gcs):
+        """delete_user_data deletes blobs under both vaults/ and uploads/ prefixes."""
+        mock_client_instance, _, _ = mock_gcs
+
+        vault_blob = MagicMock()
+        upload_blob1 = MagicMock()
+        upload_blob2 = MagicMock()
+
+        def list_blobs_side_effect(bucket_name, prefix=""):
+            if prefix == "vaults/user-42/":
+                return [vault_blob]
+            elif prefix == "uploads/user-42/":
+                return [upload_blob1, upload_blob2]
+            return []
+
+        mock_client_instance.list_blobs.side_effect = list_blobs_side_effect
+
+        count = storage.delete_user_data("user-42")
+
+        assert count == 3
+        vault_blob.delete.assert_called_once()
+        upload_blob1.delete.assert_called_once()
+        upload_blob2.delete.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _validate_user_id tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidateUserId:
+    """Tests for _validate_user_id preventing prefix traversal."""
+
+    def test_rejects_traversal_user_id(self):
+        with pytest.raises(ValueError, match="Invalid user_id"):
+            _validate_user_id("../other-user")
+
+    def test_rejects_slash_in_user_id(self):
+        with pytest.raises(ValueError, match="Invalid user_id"):
+            _validate_user_id("user/evil")
+
+    def test_rejects_empty_user_id(self):
+        with pytest.raises(ValueError, match="Invalid user_id"):
+            _validate_user_id("")
+
+    def test_accepts_valid_user_id(self):
+        assert _validate_user_id("user-1") == "user-1"
+        assert _validate_user_id("user_2") == "user_2"
+        assert _validate_user_id("abc123") == "abc123"

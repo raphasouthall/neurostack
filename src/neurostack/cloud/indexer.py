@@ -2,9 +2,9 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """Cloud indexing pipeline for NeuroStack.
 
-Accepts uploaded vault files, delegates GPU work (embeddings + LLM
-extraction) to Fireworks AI via OpenAI-compatible endpoints, and
-produces indexed SQLite databases stored in Cloudflare R2.
+Accepts uploaded vault files, delegates AI work (embeddings + LLM
+extraction) to Vertex AI via OpenAI-compatible endpoints, and
+produces indexed SQLite databases stored in Google Cloud Storage.
 
 Tenant isolation guarantees:
 - Each indexing job runs in a subprocess with its own env and DB path.
@@ -25,14 +25,9 @@ import tempfile
 from pathlib import Path
 
 from .config import CloudConfig
-from .storage import R2StorageClient
+from .storage import GCSStorageClient
 
 log = logging.getLogger("neurostack.cloud.indexer")
-
-# Fireworks AI base URL. NeuroStack's embedder appends /v1/embeddings
-# and summarizer appends /v1/chat/completions, so the base must NOT
-# include /v1 -- that would double-up the path segment.
-FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference"
 
 # Subprocess script that runs full_index in an isolated environment.
 # This avoids mutating the parent process's module-level globals
@@ -73,20 +68,24 @@ print(json.dumps(result))
 
 
 class CloudIndexer:
-    """Orchestrates cloud indexing via Fireworks AI and R2 storage."""
+    """Orchestrates cloud indexing via Vertex AI and GCS."""
 
-    def __init__(self, config: CloudConfig, storage: R2StorageClient) -> None:
+    def __init__(self, config: CloudConfig, storage: GCSStorageClient) -> None:
         self._config = config
         self._storage = storage
 
     def index_vault(self, user_id: str, vault_files: dict[str, bytes]) -> dict:
-        """Index vault files using Fireworks AI and store result in R2.
+        """Index vault files using Vertex AI and store result in GCS.
 
         Runs indexing in a subprocess for complete isolation from the
         parent process's config, DB path, and env vars.
 
+        Vertex AI auth uses Application Default Credentials (ADC),
+        which Cloud Run provides automatically via its service account.
+        No API key needed — the subprocess inherits the ADC from the parent.
+
         Args:
-            user_id: Tenant identifier for R2 key prefix.
+            user_id: Tenant identifier for GCS key prefix.
             vault_files: Mapping of filename -> file content bytes.
                          Filenames must already be sanitised by the caller.
 
@@ -94,6 +93,8 @@ class CloudIndexer:
             Dict with keys: status, db_size, note_count (on success)
             or status, error (on failure).
         """
+        vertex_base_url = self._config.vertex_base_url
+
         with tempfile.TemporaryDirectory(prefix=f"ns-cloud-{user_id}-") as tmpdir:
             tmp_path = Path(tmpdir)
             vault_dir = tmp_path / "vault"
@@ -108,18 +109,37 @@ class CloudIndexer:
                 filepath.write_bytes(content)
 
             # Build env for subprocess — inherits parent env but overrides
-            # NeuroStack config to point at Fireworks AI and the temp DB.
+            # NeuroStack config to point at Vertex AI and the temp DB.
+            # Vertex AI uses ADC (Application Default Credentials) inherited
+            # from the Cloud Run service account — no API key env var needed.
             env = os.environ.copy()
             env.update({
                 "NEUROSTACK_VAULT_ROOT": str(vault_dir),
                 "NEUROSTACK_DB_DIR": str(db_dir),
-                "NEUROSTACK_EMBED_URL": FIREWORKS_BASE_URL,
-                "NEUROSTACK_LLM_URL": FIREWORKS_BASE_URL,
-                "NEUROSTACK_EMBED_MODEL": self._config.fireworks_embed_model,
-                "NEUROSTACK_LLM_MODEL": self._config.fireworks_llm_model,
-                "NEUROSTACK_EMBED_API_KEY": self._config.fireworks_api_key,
-                "NEUROSTACK_LLM_API_KEY": self._config.fireworks_api_key,
+                "NEUROSTACK_EMBED_URL": vertex_base_url,
+                "NEUROSTACK_LLM_URL": vertex_base_url,
+                "NEUROSTACK_EMBED_MODEL": self._config.vertex_embed_model,
+                "NEUROSTACK_LLM_MODEL": self._config.vertex_llm_model,
+                # Vertex AI OpenAI-compat uses ADC bearer tokens, not static keys.
+                # The httpx calls in embedder.py/summarizer.py will use the
+                # NEUROSTACK_EMBED_API_KEY / NEUROSTACK_LLM_API_KEY if set.
+                # For Vertex AI, we generate a short-lived access token.
             })
+
+            # Generate a GCP access token for the subprocess to use.
+            # On Cloud Run, this comes from the metadata server automatically.
+            # For local dev, it uses `gcloud auth print-access-token`.
+            try:
+                import google.auth
+                import google.auth.transport.requests
+
+                credentials, _ = google.auth.default()
+                credentials.refresh(google.auth.transport.requests.Request())
+                if credentials.token:
+                    env["NEUROSTACK_EMBED_API_KEY"] = credentials.token
+                    env["NEUROSTACK_LLM_API_KEY"] = credentials.token
+            except Exception:
+                log.warning("Could not obtain GCP access token for Vertex AI")
 
             try:
                 result = subprocess.run(
