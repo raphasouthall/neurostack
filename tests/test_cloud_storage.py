@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""Unit tests for cloud storage client and config (GCP: Cloud Storage + Vertex AI)."""
+"""Unit tests for cloud storage client and config (GCP: Cloud Storage + Gemini API)."""
 
 import os
 from pathlib import Path
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from neurostack.cloud.config import CloudConfig, load_cloud_config
+from neurostack.cloud.config import GEMINI_BASE_URL, CloudConfig, load_cloud_config
 from neurostack.cloud.storage import GCSStorageClient, _validate_user_id
 
 
@@ -34,46 +34,42 @@ class TestCloudConfig:
         assert cfg.gcp_region == "europe-west1"
         assert cfg.gcs_bucket_name == "my-bucket"
 
-    def test_loads_vertex_settings_from_env(self):
-        """CloudConfig loads VERTEX_EMBED_MODEL and VERTEX_LLM_MODEL."""
+    def test_loads_gemini_settings_from_env(self):
+        """CloudConfig loads GEMINI_API_KEY, GEMINI_EMBED_MODEL, and GEMINI_LLM_MODEL."""
         env = {
-            "NEUROSTACK_CLOUD_VERTEX_EMBED_MODEL": "custom-embed-model",
-            "NEUROSTACK_CLOUD_VERTEX_LLM_MODEL": "custom-llm-model",
+            "NEUROSTACK_CLOUD_GEMINI_API_KEY": "test-api-key-xyz",
+            "NEUROSTACK_CLOUD_GEMINI_EMBED_MODEL": "custom-embed-model",
+            "NEUROSTACK_CLOUD_GEMINI_LLM_MODEL": "custom-llm-model",
         }
         with patch.dict(os.environ, env, clear=False):
             cfg = load_cloud_config()
 
-        assert cfg.vertex_embed_model == "custom-embed-model"
-        assert cfg.vertex_llm_model == "custom-llm-model"
+        assert cfg.gemini_api_key == "test-api-key-xyz"
+        assert cfg.gemini_embed_model == "custom-embed-model"
+        assert cfg.gemini_llm_model == "custom-llm-model"
 
-    def test_vertex_base_url_property(self):
-        """CloudConfig.vertex_base_url returns correct Vertex AI OpenAI-compatible URL."""
-        cfg = CloudConfig(gcp_project="my-project", gcp_region="us-central1")
-        expected = (
-            "https://us-central1-aiplatform.googleapis.com/"
-            "v1beta1/projects/my-project/locations/us-central1/"
-            "endpoints/openapi"
-        )
-        assert cfg.vertex_base_url == expected
+    def test_loads_gemini_embed_dim_from_env(self):
+        """CloudConfig loads GEMINI_EMBED_DIM as an integer."""
+        env = {
+            "NEUROSTACK_CLOUD_GEMINI_EMBED_DIM": "1024",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            cfg = load_cloud_config()
 
-    def test_vertex_base_url_different_region(self):
-        """vertex_base_url reflects the configured region."""
-        cfg = CloudConfig(gcp_project="proj-2", gcp_region="europe-west4")
-        assert "europe-west4-aiplatform.googleapis.com" in cfg.vertex_base_url
-        assert "projects/proj-2" in cfg.vertex_base_url
-        assert "locations/europe-west4" in cfg.vertex_base_url
+        assert cfg.gemini_embed_dim == 1024
 
-    def test_vertex_base_url_does_not_end_with_v1(self):
-        """Base URL must NOT end with /v1 — embedder/summarizer append it."""
-        cfg = CloudConfig(gcp_project="p", gcp_region="us-central1")
-        assert not cfg.vertex_base_url.endswith("/v1")
+    def test_gemini_base_url_constant(self):
+        """GEMINI_BASE_URL constant equals the Gemini API OpenAI-compatible URL."""
+        assert GEMINI_BASE_URL == "https://generativelanguage.googleapis.com/v1beta/openai"
 
     def test_defaults(self):
         """CloudConfig has sensible defaults."""
         cfg = CloudConfig()
         assert cfg.gcs_bucket_name == "neurostack-prod"
-        assert cfg.vertex_embed_model == "text-embedding-005"
-        assert cfg.vertex_llm_model == "gemini-2.0-flash"
+        assert cfg.gemini_embed_model == "gemini-embedding-001"
+        assert cfg.gemini_llm_model == "gemini-2.5-flash"
+        assert cfg.gemini_embed_dim == 768
+        assert cfg.gemini_api_key == ""
         assert cfg.gcp_project == ""
         assert cfg.gcp_region == "us-central1"
         assert cfg.cloud_api_url == ""
