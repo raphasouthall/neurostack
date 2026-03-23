@@ -474,6 +474,7 @@ class TestSyncEnginePull:
         """pull() downloads DB from presigned URL and saves to db_dir."""
         engine = _make_engine(vault_env)
 
+        # Client 1: API client that gets the download URL
         mock_download_info_resp = MagicMock()
         mock_download_info_resp.status_code = 200
         mock_download_info_resp.json.return_value = {
@@ -482,24 +483,31 @@ class TestSyncEnginePull:
         }
         mock_download_info_resp.raise_for_status = MagicMock()
 
+        mock_api_client = MagicMock()
+        mock_api_client.get.return_value = mock_download_info_resp
+        mock_api_client.__enter__ = MagicMock(return_value=mock_api_client)
+        mock_api_client.__exit__ = MagicMock(return_value=False)
+
+        # Client 2: Download client that streams the DB file
         db_content = b"SQLite format 3\x00fake-db-content"
         mock_db_resp = MagicMock()
         mock_db_resp.status_code = 200
-        mock_db_resp.content = db_content
+        mock_db_resp.headers = {"content-length": str(len(db_content))}
         mock_db_resp.raise_for_status = MagicMock()
-
-        # iter_bytes for streaming
         mock_db_resp.iter_bytes = MagicMock(return_value=iter([db_content]))
         mock_db_resp.__enter__ = MagicMock(return_value=mock_db_resp)
         mock_db_resp.__exit__ = MagicMock(return_value=False)
 
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_download_info_resp
-        mock_client.stream.return_value = mock_db_resp
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_dl_client = MagicMock()
+        mock_dl_client.stream.return_value = mock_db_resp
+        mock_dl_client.__enter__ = MagicMock(return_value=mock_dl_client)
+        mock_dl_client.__exit__ = MagicMock(return_value=False)
 
-        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+        # First call creates API client, second creates download client
+        with patch(
+            "neurostack.cloud.sync.httpx.Client",
+            side_effect=[mock_api_client, mock_dl_client],
+        ):
             result_path = engine.pull()
 
         expected_db = vault_env["db_dir"] / "neurostack.db"
@@ -509,9 +517,6 @@ class TestSyncEnginePull:
 
     def test_pull_creates_db_dir_if_missing(self, vault_env):
         """pull() creates db_dir if it does not exist."""
-        import shutil
-
-        # Remove db_dir
         new_db_dir = vault_env["db_dir"] / "new_subdir"
         engine = _make_engine(vault_env, db_dir=new_db_dir)
 
@@ -523,25 +528,117 @@ class TestSyncEnginePull:
         }
         mock_download_info_resp.raise_for_status = MagicMock()
 
+        mock_api_client = MagicMock()
+        mock_api_client.get.return_value = mock_download_info_resp
+        mock_api_client.__enter__ = MagicMock(return_value=mock_api_client)
+        mock_api_client.__exit__ = MagicMock(return_value=False)
+
         db_content = b"SQLite format 3\x00fake-db"
         mock_db_resp = MagicMock()
         mock_db_resp.status_code = 200
+        mock_db_resp.headers = {"content-length": str(len(db_content))}
         mock_db_resp.iter_bytes = MagicMock(return_value=iter([db_content]))
         mock_db_resp.__enter__ = MagicMock(return_value=mock_db_resp)
         mock_db_resp.__exit__ = MagicMock(return_value=False)
         mock_db_resp.raise_for_status = MagicMock()
 
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_download_info_resp
-        mock_client.stream.return_value = mock_db_resp
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_dl_client = MagicMock()
+        mock_dl_client.stream.return_value = mock_db_resp
+        mock_dl_client.__enter__ = MagicMock(return_value=mock_dl_client)
+        mock_dl_client.__exit__ = MagicMock(return_value=False)
 
-        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+        with patch(
+            "neurostack.cloud.sync.httpx.Client",
+            side_effect=[mock_api_client, mock_dl_client],
+        ):
             result_path = engine.pull()
 
         assert new_db_dir.exists()
         assert result_path.exists()
+
+    def test_pull_detects_incomplete_download(self, vault_env):
+        """pull() raises SyncError when downloaded bytes don't match Content-Length."""
+        from neurostack.cloud.sync import SyncError
+
+        engine = _make_engine(vault_env)
+
+        mock_download_info_resp = MagicMock()
+        mock_download_info_resp.status_code = 200
+        mock_download_info_resp.json.return_value = {
+            "download_url": "https://storage.example.com/db.sqlite?sig=abc",
+        }
+        mock_download_info_resp.raise_for_status = MagicMock()
+
+        mock_api_client = MagicMock()
+        mock_api_client.get.return_value = mock_download_info_resp
+        mock_api_client.__enter__ = MagicMock(return_value=mock_api_client)
+        mock_api_client.__exit__ = MagicMock(return_value=False)
+
+        # Claim 1000 bytes but only deliver 10
+        mock_db_resp = MagicMock()
+        mock_db_resp.status_code = 200
+        mock_db_resp.headers = {"content-length": "1000"}
+        mock_db_resp.raise_for_status = MagicMock()
+        mock_db_resp.iter_bytes = MagicMock(return_value=iter([b"short data"]))
+        mock_db_resp.__enter__ = MagicMock(return_value=mock_db_resp)
+        mock_db_resp.__exit__ = MagicMock(return_value=False)
+
+        mock_dl_client = MagicMock()
+        mock_dl_client.stream.return_value = mock_db_resp
+        mock_dl_client.__enter__ = MagicMock(return_value=mock_dl_client)
+        mock_dl_client.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "neurostack.cloud.sync.httpx.Client",
+            side_effect=[mock_api_client, mock_dl_client],
+        ):
+            with pytest.raises(SyncError, match="Download incomplete"):
+                engine.pull()
+
+    def test_pull_download_uses_no_auth_headers(self, vault_env):
+        """pull() download client must NOT include Bearer auth headers."""
+        engine = _make_engine(vault_env)
+
+        mock_download_info_resp = MagicMock()
+        mock_download_info_resp.status_code = 200
+        mock_download_info_resp.json.return_value = {
+            "download_url": "https://storage.example.com/db.sqlite?sig=abc",
+        }
+        mock_download_info_resp.raise_for_status = MagicMock()
+
+        db_content = b"SQLite format 3\x00test"
+        mock_db_resp = MagicMock()
+        mock_db_resp.status_code = 200
+        mock_db_resp.headers = {"content-length": str(len(db_content))}
+        mock_db_resp.raise_for_status = MagicMock()
+        mock_db_resp.iter_bytes = MagicMock(return_value=iter([db_content]))
+        mock_db_resp.__enter__ = MagicMock(return_value=mock_db_resp)
+        mock_db_resp.__exit__ = MagicMock(return_value=False)
+
+        mock_dl_client = MagicMock()
+        mock_dl_client.stream.return_value = mock_db_resp
+        mock_dl_client.__enter__ = MagicMock(return_value=mock_dl_client)
+        mock_dl_client.__exit__ = MagicMock(return_value=False)
+
+        mock_api_client = MagicMock()
+        mock_api_client.get.return_value = mock_download_info_resp
+        mock_api_client.__enter__ = MagicMock(return_value=mock_api_client)
+        mock_api_client.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "neurostack.cloud.sync.httpx.Client",
+            side_effect=[mock_api_client, mock_dl_client],
+        ) as mock_cls:
+            engine.pull()
+
+        # First call (API client) should have auth headers
+        api_call = mock_cls.call_args_list[0]
+        assert "Authorization" in api_call.kwargs.get("headers", {})
+
+        # Second call (download client) should NOT have auth headers
+        dl_call = mock_cls.call_args_list[1]
+        dl_headers = dl_call.kwargs.get("headers", {})
+        assert "Authorization" not in dl_headers
 
 
 class TestSyncEngineQuery:
