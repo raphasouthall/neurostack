@@ -5,15 +5,12 @@
 from __future__ import annotations
 
 import json
-import sys
-import time
 from argparse import Namespace
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from neurostack.cloud.config import CloudConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -375,7 +372,8 @@ class TestCloudDeviceLogin:
         mock_httpx.HTTPStatusError = Exception
 
         # Simulate time passing past deadline
-        mock_time.monotonic.side_effect = [0, 0, 3, 999]  # start, first check, after poll, past deadline
+        # start, first check, after poll, past deadline
+        mock_time.monotonic.side_effect = [0, 0, 3, 999]
         mock_time.sleep = MagicMock()
 
         from neurostack.cli import _cmd_cloud_device_login
