@@ -11,6 +11,8 @@ from pathlib import Path
 
 from . import __version__
 from .config import CONFIG_PATH, get_config
+from .cloud.client import CloudClient
+from .cloud.config import load_cloud_config, save_cloud_config, clear_cloud_credentials, CloudConfig
 
 
 def cmd_index(args):
@@ -2988,6 +2990,107 @@ def cmd_harvest(args):
     print(f"\n  Total: {n_saved} saved, {n_skip} skipped ({total} found)")
 
 
+def cmd_cloud(args):
+    """Manage cloud authentication and configuration."""
+    subcmd = getattr(args, "cloud_command", None)
+
+    if subcmd == "login":
+        # Get API key from --key flag or prompt
+        api_key = args.key
+        if not api_key:
+            api_key = input("  Enter your NeuroStack Cloud API key: ").strip()
+        if not api_key:
+            print("  Error: API key is required.")
+            sys.exit(1)
+
+        # Get cloud URL from config or default
+        cfg = load_cloud_config()
+        cloud_url = cfg.cloud_api_url or "https://neurostack-api-911077737485.us-central1.run.app"
+
+        # Validate key against cloud API
+        test_cfg = CloudConfig(cloud_api_url=cloud_url, cloud_api_key=api_key)
+        client = CloudClient(test_cfg)
+        try:
+            if client.validate_key():
+                save_cloud_config(cloud_api_url=cloud_url, cloud_api_key=api_key)
+                print(f"  Logged in to {cloud_url}")
+            else:
+                print("  Error: Invalid API key.")
+                sys.exit(1)
+        except ConnectionError as e:
+            print(f"  Error: {e}")
+            sys.exit(1)
+
+    elif subcmd == "logout":
+        clear_cloud_credentials()
+        print("  Logged out. Cloud credentials cleared.")
+
+    elif subcmd == "status":
+        cfg = load_cloud_config()
+        client = CloudClient(cfg)
+
+        result = {
+            "authenticated": client.is_configured,
+            "cloud_url": cfg.cloud_api_url or "(not configured)",
+        }
+
+        if client.is_configured:
+            try:
+                status = client.status()
+                result.update(status)
+            except (ConnectionError, Exception):
+                result["connection"] = "unreachable"
+
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            if result["authenticated"]:
+                print(f"  Status: Authenticated")
+                print(f"  Cloud:  {result['cloud_url']}")
+                tier = result.get("tier", "unknown")
+                print(f"  Tier:   {tier}")
+                if result.get("connection") == "unreachable":
+                    print(f"  Note:   Cloud API unreachable (credentials stored locally)")
+            else:
+                print(f"  Status: Not authenticated")
+                url = result["cloud_url"]
+                print(f"  Cloud:  {url}")
+                print(f"  Run:    neurostack cloud login")
+
+    elif subcmd == "setup":
+        cfg = load_cloud_config()
+        default_url = cfg.cloud_api_url or "https://neurostack-api-911077737485.us-central1.run.app"
+
+        url = input(f"  Cloud API URL [{default_url}]: ").strip() or default_url
+        api_key = input("  API key: ").strip()
+        if not api_key:
+            print("  Error: API key is required.")
+            sys.exit(1)
+
+        # Validate
+        test_cfg = CloudConfig(cloud_api_url=url, cloud_api_key=api_key)
+        client = CloudClient(test_cfg)
+        try:
+            if client.validate_key():
+                save_cloud_config(cloud_api_url=url, cloud_api_key=api_key)
+                print(f"  Cloud configured: {url}")
+                print(f"  Authenticated successfully.")
+            else:
+                print("  Error: Invalid API key.")
+                sys.exit(1)
+        except ConnectionError as e:
+            print(f"  Error: {e}")
+            sys.exit(1)
+
+    else:
+        print("Usage: neurostack cloud {login|logout|status|setup}")
+        print("\nCommands:")
+        print("  login   Authenticate with an API key")
+        print("  logout  Clear stored credentials")
+        print("  status  Show authentication state and usage")
+        print("  setup   Interactive cloud configuration")
+
+
 def main():
     cfg = get_config()
 
@@ -3059,6 +3162,22 @@ def main():
     # status
     p = sub.add_parser("status", help="Show NeuroStack status")
     p.set_defaults(func=cmd_status)
+
+    # cloud
+    p = sub.add_parser("cloud", help="Manage NeuroStack Cloud authentication")
+    cloud_sub = p.add_subparsers(dest="cloud_command")
+
+    cp = cloud_sub.add_parser("login", help="Authenticate with an API key")
+    cp.add_argument("--key", "-k", help="API key (or prompted interactively)")
+
+    cloud_sub.add_parser("logout", help="Clear stored cloud credentials")
+
+    cp = cloud_sub.add_parser("status", help="Show cloud auth state and usage")
+    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
+
+    cloud_sub.add_parser("setup", help="Interactive cloud endpoint and key configuration")
+
+    p.set_defaults(func=cmd_cloud)
 
     # memories
     p = sub.add_parser("memories", help="Manage agent-written memories")
@@ -3525,7 +3644,7 @@ def main():
         sys.exit(1)
 
     # Preflight: nudge user to run init if vault doesn't exist yet
-    _skip_preflight = {"init", "install", "uninstall", "doctor", "status", "demo", "update"}
+    _skip_preflight = {"init", "install", "uninstall", "doctor", "status", "demo", "update", "cloud"}
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():
         print(f"\n  \033[33m!\033[0m Vault not found at {vault_path}")
