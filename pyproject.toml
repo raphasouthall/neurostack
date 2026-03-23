@@ -30,6 +30,7 @@ dependencies = [
     "watchdog>=4.0",
     "mcp[cli]>=1.0",
     "httpx>=0.27",
+    "tomli_w>=1.0",
 ]
 
 [project.optional-dependencies]
