@@ -51,7 +51,7 @@
 	async function handleUpgrade() {
 		upgradeLoading = true;
 		try {
-			const res = await apiFetch('/v1/billing/checkout', {
+			const res = await apiFetch('/api/v1/billing/checkout', {
 				method: 'POST',
 				body: JSON.stringify({
 					price_id: 'price_pro',
@@ -71,7 +71,7 @@
 	async function handlePortal() {
 		portalLoading = true;
 		try {
-			const res = await apiFetch('/v1/billing/portal', {
+			const res = await apiFetch('/api/v1/billing/portal', {
 				method: 'POST',
 				body: JSON.stringify({
 					return_url: window.location.origin + '/dashboard/usage'
