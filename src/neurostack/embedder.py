@@ -33,10 +33,13 @@ def get_embedding(
             "Embedding functions require numpy. "
             "Install with: pip install neurostack[full]"
         )
+    payload = {"model": model, "input": text}
+    if EMBED_DIM:
+        payload["dimensions"] = EMBED_DIM
     resp = httpx.post(
         f"{base_url}/v1/embeddings",
         headers=_EMBED_HEADERS,
-        json={"model": model, "input": text},
+        json=payload,
         timeout=300.0,
     )
     resp.raise_for_status()
@@ -59,10 +62,13 @@ def get_embeddings_batch(
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
+        payload = {"model": model, "input": batch}
+        if EMBED_DIM:
+            payload["dimensions"] = EMBED_DIM
         resp = httpx.post(
             f"{base_url}/v1/embeddings",
             headers=_EMBED_HEADERS,
-            json={"model": model, "input": batch},
+            json=payload,
             timeout=300.0,
         )
         resp.raise_for_status()

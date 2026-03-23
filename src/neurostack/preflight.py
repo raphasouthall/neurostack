@@ -53,10 +53,28 @@ def check_ollama(
 def _check_model(
     base_url: str, model: str, timeout: float
 ) -> tuple[bool, str]:
-    """Check if a specific model is available on an Ollama instance.
+    """Check if a specific model is available on an inference endpoint.
+
+    For Ollama endpoints (localhost), checks /api/tags for model availability.
+    For remote OpenAI-compatible APIs (Gemini, OpenAI, etc.), checks that the
+    /v1/models endpoint is reachable or falls back to trusting the config.
 
     Returns (ok, error_message).
     """
+    # Remote API endpoints (non-Ollama) — skip Ollama-specific /api/tags check
+    if not base_url.startswith("http://localhost") and not base_url.startswith("http://127.0.0.1"):
+        try:
+            # Try OpenAI-compatible /v1/models endpoint
+            resp = httpx.get(f"{base_url}/v1/models", timeout=timeout)
+            if resp.status_code in (200, 401, 403):
+                # API is reachable (401/403 means auth needed but endpoint exists)
+                return True, ""
+        except Exception:
+            pass
+        # For remote APIs, trust the config — the actual call will fail
+        # with a clear error if the model doesn't exist
+        return True, ""
+
     try:
         resp = httpx.get(f"{base_url}/api/tags", timeout=timeout)
         resp.raise_for_status()
