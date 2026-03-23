@@ -26,17 +26,17 @@
 		error = '';
 		loading = true;
 		try {
-			const result = await signInWithPopup(auth, provider);
-			const idToken = await result.user.getIdToken();
+			await signInWithPopup(auth, provider);
 
-			// Register user in backend (will 404 gracefully until Plan 03 creates the endpoint)
-			try {
-				await apiFetch('/api/v1/user/register', {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' }
-				});
-			} catch {
-				// Backend registration endpoint may not exist yet -- continue
+			// Register with backend (creates user + Stripe customer on first login)
+			const response = await apiFetch('/api/v1/user/register', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' }
+			});
+
+			if (!response.ok) {
+				console.warn('Registration call failed:', response.status);
+				// Non-fatal: user is authenticated in Firebase even if backend fails
 			}
 
 			goto('/dashboard');
