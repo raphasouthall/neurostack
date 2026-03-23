@@ -1,0 +1,19 @@
+{
+  "hosting": {
+    "public": "frontend/build",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "run": {
+          "serviceId": "neurostack-api",
+          "region": "us-central1"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/200.html"
+      }
+    ]
+  }
+}
