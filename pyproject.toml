@@ -54,6 +54,9 @@ dev = [
 # Cloud infrastructure (GCP: Cloud Storage, Gemini API)
 cloud = [
     "google-cloud-storage>=2.18",
+    "google-cloud-firestore>=2.19",
+    "firebase-admin>=6.5",
+    "stripe>=8.0",
 ]
 # OpenAI-compatible HTTP API
 api = [
