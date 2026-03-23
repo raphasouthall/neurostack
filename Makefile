@@ -2,7 +2,7 @@
 # Usage: make deploy (deploys everything)
 # Prerequisites: gcloud CLI authenticated, .env file with GCP_PROJECT_ID
 
-.PHONY: deploy deploy-storage deploy-secrets deploy-api status logs-api doctor
+.PHONY: deploy deploy-storage deploy-secrets deploy-api deploy-frontend deploy-firebase-init deploy-all status logs-api doctor
 
 # Load .env if it exists
 -include cloud/.env
@@ -30,23 +30,45 @@ deploy-secrets:
 		echo -n "$(NEUROSTACK_CLOUD_GEMINI_API_KEY)" | gcloud secrets versions add gemini-api-key --data-file=- --project=$(GCP_PROJECT)
 	@echo -n '$(NEUROSTACK_CLOUD_API_KEYS)' | gcloud secrets create cloud-api-keys --data-file=- --project=$(GCP_PROJECT) 2>/dev/null || \
 		echo -n '$(NEUROSTACK_CLOUD_API_KEYS)' | gcloud secrets versions add cloud-api-keys --data-file=- --project=$(GCP_PROJECT)
+	@echo -n "$(STRIPE_SECRET_KEY)" | gcloud secrets create stripe-secret-key --data-file=- --project=$(GCP_PROJECT) 2>/dev/null || \
+		echo -n "$(STRIPE_SECRET_KEY)" | gcloud secrets versions add stripe-secret-key --data-file=- --project=$(GCP_PROJECT)
+	@echo -n "$(STRIPE_WEBHOOK_SECRET)" | gcloud secrets create stripe-webhook-secret --data-file=- --project=$(GCP_PROJECT) 2>/dev/null || \
+		echo -n "$(STRIPE_WEBHOOK_SECRET)" | gcloud secrets versions add stripe-webhook-secret --data-file=- --project=$(GCP_PROJECT)
 
 ## Deploy Cloud Run service
 deploy-api:
 	@echo "Deploying Cloud Run service..."
 	gcloud run deploy $(SERVICE) \
 		--source . \
-		--dockerfile cloud/Dockerfile \
 		--region $(GCP_REGION) \
 		--project $(GCP_PROJECT) \
 		--allow-unauthenticated \
 		--min-instances 0 \
 		--max-instances 5 \
-		--memory 1Gi \
-		--cpu 1 \
+		--memory 2Gi \
+		--cpu 2 \
 		--timeout 300 \
-		--set-env-vars "NEUROSTACK_CLOUD_GCP_PROJECT=$(GCP_PROJECT),NEUROSTACK_CLOUD_GCP_REGION=$(GCP_REGION),NEUROSTACK_CLOUD_GCS_BUCKET_NAME=$(GCS_BUCKET)" \
-		--set-secrets "NEUROSTACK_CLOUD_GEMINI_API_KEY=gemini-api-key:latest,NEUROSTACK_CLOUD_API_KEYS=cloud-api-keys:latest"
+		--no-cpu-throttling \
+		--set-env-vars "NEUROSTACK_CLOUD_GCP_PROJECT=$(GCP_PROJECT),NEUROSTACK_CLOUD_GCP_REGION=$(GCP_REGION),NEUROSTACK_CLOUD_GCS_BUCKET_NAME=$(GCS_BUCKET),STRIPE_PRICE_PRO=price_1TE6M5JMyXpOiPfvVJb68GvE,STRIPE_PRICE_TEAM=price_1TE6MKJMyXpOiPfvUf59xVt3" \
+		--set-secrets "NEUROSTACK_CLOUD_GEMINI_API_KEY=gemini-api-key:latest,NEUROSTACK_CLOUD_API_KEYS=cloud-api-keys:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest"
+
+## Build and deploy SvelteKit frontend to Firebase Hosting
+deploy-frontend:
+	@echo "Building SvelteKit frontend..."
+	cd frontend && npm ci && npm run build
+	@echo "Deploying to Firebase Hosting..."
+	firebase deploy --only hosting --project $(GCP_PROJECT)
+
+## Initialize Firebase project (run once)
+deploy-firebase-init:
+	@echo "Enabling Firebase APIs..."
+	gcloud services enable firebase.googleapis.com --project=$(GCP_PROJECT)
+	gcloud services enable identitytoolkit.googleapis.com --project=$(GCP_PROJECT)
+	gcloud services enable firestore.googleapis.com --project=$(GCP_PROJECT)
+	@echo "Firebase APIs enabled. Complete setup in Firebase Console."
+
+## Full deployment (API + Frontend)
+deploy-all: deploy deploy-frontend  ## Deploy Cloud Run API and Firebase Hosting frontend
 
 ## Show service status
 status:
