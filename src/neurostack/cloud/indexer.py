@@ -127,7 +127,7 @@ class CloudIndexer:
                     env=env,
                     capture_output=True,
                     text=True,
-                    timeout=600,  # 10 minute timeout per indexing job
+                    timeout=3600,  # 1 hour timeout per indexing job
                 )
 
                 if result.returncode != 0:
