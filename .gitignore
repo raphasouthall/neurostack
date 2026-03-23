@@ -14,3 +14,6 @@ venv/
 .pytest_cache/
 .mypy_cache/
 uv.lock
+.firebase/
+.planning/
+.claude/
