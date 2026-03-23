@@ -40,8 +40,8 @@ class VaultSyncEngine:
         vault_root: Path,
         db_dir: Path,
         manifest_path: Path | None = None,
-        poll_interval: float = 2.0,
-        poll_timeout: float = 300.0,
+        poll_interval: float = 5.0,
+        poll_timeout: float = 3600.0,
     ) -> None:
         self._api_url = cloud_api_url.rstrip("/")
         self._api_key = cloud_api_key
