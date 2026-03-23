@@ -500,3 +500,174 @@ class TestApiKeyEndpoints:
 
             resp = await client.delete("/api/v1/user/keys/some-id")
             assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Vault stats, health, and job history endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestVaultStatsEndpoint:
+    """Tests for GET /v1/vault/stats."""
+
+    @pytest.fixture
+    def app_client(self, mock_firestore, mock_firebase_admin):
+        app = _get_app()
+        app.state.meter = MagicMock()
+        app.state.meter.check_query_limit = AsyncMock(return_value=(True, ""))
+        app.state.meter.check_note_limit = AsyncMock(return_value=(True, ""))
+        app.state.tier_store = None
+        app.state.query_engine = MagicMock()
+        app.state.job_store = MagicMock()
+        return app
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {'x' * 250}"}
+
+    @pytest.mark.asyncio
+    async def test_vault_stats_returns_counts(self, app_client):
+        """GET /v1/vault/stats returns note/chunk/embedding counts for authenticated user."""
+        app_client.state.query_engine.get_db_stats.return_value = {
+            "note_count": 42,
+            "chunk_count": 200,
+            "embedding_count": 200,
+            "last_sync": "2026-03-20T10:00:00Z",
+        }
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get("/v1/vault/stats", headers=self._auth_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["note_count"] == 42
+        assert data["chunk_count"] == 200
+        assert data["embedding_count"] == 200
+        assert data["last_sync"] == "2026-03-20T10:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_vault_stats_returns_zeros_no_vault(self, app_client):
+        """GET /v1/vault/stats returns zeros when user has no vault."""
+        app_client.state.query_engine.get_db_stats.side_effect = FileNotFoundError("no db")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get("/v1/vault/stats", headers=self._auth_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["note_count"] == 0
+        assert data["chunk_count"] == 0
+        assert data["embedding_count"] == 0
+        assert data["last_sync"] is None
+
+
+class TestVaultHealthEndpoint:
+    """Tests for GET /v1/vault/health."""
+
+    @pytest.fixture
+    def app_client(self, mock_firestore, mock_firebase_admin):
+        app = _get_app()
+        app.state.meter = MagicMock()
+        app.state.meter.check_query_limit = AsyncMock(return_value=(True, ""))
+        app.state.meter.check_note_limit = AsyncMock(return_value=(True, ""))
+        app.state.tier_store = None
+        app.state.query_engine = MagicMock()
+        app.state.job_store = MagicMock()
+        return app
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {'x' * 250}"}
+
+    @pytest.mark.asyncio
+    async def test_vault_health_returns_coverage(self, app_client):
+        """GET /v1/vault/health returns embedding/summary coverage and triple count."""
+        app_client.state.query_engine.get_health_stats.return_value = {
+            "embedding_coverage_pct": 95.5,
+            "summary_coverage_pct": 80.0,
+            "triple_count": 1200,
+        }
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get("/v1/vault/health", headers=self._auth_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["embedding_coverage_pct"] == 95.5
+        assert data["summary_coverage_pct"] == 80.0
+        assert data["triple_count"] == 1200
+
+    @pytest.mark.asyncio
+    async def test_vault_health_returns_zeros_no_vault(self, app_client):
+        """GET /v1/vault/health returns zeros when user has no vault."""
+        app_client.state.query_engine.get_health_stats.side_effect = FileNotFoundError("no db")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get("/v1/vault/health", headers=self._auth_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["embedding_coverage_pct"] == 0.0
+        assert data["summary_coverage_pct"] == 0.0
+        assert data["triple_count"] == 0
+
+
+class TestVaultJobsEndpoint:
+    """Tests for GET /v1/vault/jobs."""
+
+    @pytest.fixture
+    def app_client(self, mock_firestore, mock_firebase_admin):
+        app = _get_app()
+        app.state.meter = MagicMock()
+        app.state.meter.check_query_limit = AsyncMock(return_value=(True, ""))
+        app.state.meter.check_note_limit = AsyncMock(return_value=(True, ""))
+        app.state.tier_store = None
+        app.state.query_engine = MagicMock()
+        app.state.job_store = MagicMock()
+        return app
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {'x' * 250}"}
+
+    @pytest.mark.asyncio
+    async def test_vault_jobs_returns_paginated_history(self, app_client):
+        """GET /v1/vault/jobs returns paginated job history."""
+        app_client.state.job_store.list_user_jobs.return_value = [
+            {
+                "job_id": "job-1",
+                "status": "complete",
+                "note_count": 100,
+                "started": "2026-03-19T10:00:00Z",
+                "duration": 45.2,
+            },
+            {
+                "job_id": "job-2",
+                "status": "failed",
+                "note_count": 50,
+                "started": "2026-03-18T08:00:00Z",
+                "duration": 10.0,
+            },
+        ]
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get("/v1/vault/jobs", headers=self._auth_headers())
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        assert data[0]["job_id"] == "job-1"
+        assert data[0]["status"] == "complete"
+        assert data[0]["note_count"] == 100
