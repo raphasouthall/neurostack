@@ -96,7 +96,7 @@ class VaultSyncEngine:
             progress_callback(f"Uploading {len(upload_files)} files...")
 
         # 5-7: Upload and poll
-        with httpx.Client(headers=self._headers(), timeout=60.0) as client:
+        with httpx.Client(headers=self._headers(), timeout=300.0) as client:
             # Build multipart file list
             files = []
             for rel_path in upload_files:
