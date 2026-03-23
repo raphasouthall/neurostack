@@ -3082,13 +3082,131 @@ def cmd_cloud(args):
             print(f"  Error: {e}")
             sys.exit(1)
 
+    elif subcmd == "push":
+        cmd_cloud_push(args)
+
+    elif subcmd == "pull":
+        cmd_cloud_pull(args)
+
+    elif subcmd == "query":
+        cmd_cloud_query(args)
+
     else:
-        print("Usage: neurostack cloud {login|logout|status|setup}")
+        print("Usage: neurostack cloud {login|logout|status|setup|push|pull|query}")
         print("\nCommands:")
         print("  login   Authenticate with an API key")
         print("  logout  Clear stored credentials")
         print("  status  Show authentication state and usage")
         print("  setup   Interactive cloud configuration")
+        print("  push    Upload vault files for cloud indexing")
+        print("  pull    Download indexed database from cloud")
+        print("  query   Query vault via cloud API")
+
+
+def cmd_cloud_push(args):
+    """Upload vault files to cloud for indexing."""
+    from .cloud.config import load_cloud_config
+    from .cloud.sync import VaultSyncEngine, SyncError
+
+    cfg = get_config()
+    cloud_cfg = load_cloud_config()
+
+    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
+        print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
+        sys.exit(1)
+
+    engine = VaultSyncEngine(
+        cloud_api_url=cloud_cfg.cloud_api_url,
+        cloud_api_key=cloud_cfg.cloud_api_key,
+        vault_root=cfg.vault_root,
+        db_dir=cfg.db_dir,
+    )
+
+    def on_progress(msg: str):
+        print(f"  {msg}")
+
+    try:
+        result = engine.push(progress_callback=on_progress)
+    except SyncError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, "json", False):
+        print(json.dumps(result))
+    else:
+        print(f"Push complete: {result.get('message', 'done')}")
+
+
+def cmd_cloud_pull(args):
+    """Download indexed database from cloud."""
+    from .cloud.config import load_cloud_config
+    from .cloud.sync import VaultSyncEngine, SyncError
+
+    cfg = get_config()
+    cloud_cfg = load_cloud_config()
+
+    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
+        print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
+        sys.exit(1)
+
+    engine = VaultSyncEngine(
+        cloud_api_url=cloud_cfg.cloud_api_url,
+        cloud_api_key=cloud_cfg.cloud_api_key,
+        vault_root=cfg.vault_root,
+        db_dir=cfg.db_dir,
+    )
+
+    try:
+        db_path = engine.pull()
+    except SyncError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, "json", False):
+        print(json.dumps({"db_path": str(db_path), "size": db_path.stat().st_size}))
+    else:
+        size_mb = db_path.stat().st_size / (1024 * 1024)
+        print(f"Downloaded database to {db_path} ({size_mb:.1f} MB)")
+
+
+def cmd_cloud_query(args):
+    """Query vault via cloud API."""
+    from .cloud.config import load_cloud_config
+    from .cloud.sync import VaultSyncEngine, SyncError
+
+    cfg = get_config()
+    cloud_cfg = load_cloud_config()
+
+    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
+        print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
+        sys.exit(1)
+
+    engine = VaultSyncEngine(
+        cloud_api_url=cloud_cfg.cloud_api_url,
+        cloud_api_key=cloud_cfg.cloud_api_key,
+        vault_root=cfg.vault_root,
+        db_dir=cfg.db_dir,
+    )
+
+    try:
+        results = engine.query(args.query, top_k=args.top_k, mode=args.mode)
+    except SyncError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, "json", False):
+        print(json.dumps(results))
+    else:
+        if not results:
+            print("No results found.")
+        else:
+            for i, r in enumerate(results, 1):
+                title = r.get("title", r.get("path", "untitled"))
+                score = r.get("score", 0)
+                snippet = r.get("snippet", "")[:120]
+                print(f"  {i}. [{score:.3f}] {title}")
+                if snippet:
+                    print(f"     {snippet}")
 
 
 def main():
@@ -3176,6 +3294,18 @@ def main():
     cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
 
     cloud_sub.add_parser("setup", help="Interactive cloud endpoint and key configuration")
+
+    cp = cloud_sub.add_parser("push", help="Upload vault files for cloud indexing")
+    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
+
+    cp = cloud_sub.add_parser("pull", help="Download indexed database from cloud")
+    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
+
+    cp = cloud_sub.add_parser("query", help="Query vault via cloud API")
+    cp.add_argument("query", help="Search text")
+    cp.add_argument("--top-k", type=int, default=10, help="Number of results")
+    cp.add_argument("--mode", default="hybrid", choices=["hybrid", "semantic", "keyword"], help="Search mode")
+    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
 
     p.set_defaults(func=cmd_cloud)
 
