@@ -77,6 +77,21 @@ class JobStore:
                 self._cache[job_id].update(patch)
                 self._persist(job_id, self._cache[job_id])
 
+    def list_user_jobs(self, user_id: str, limit: int = 10) -> list[dict]:
+        """Return recent jobs for a user, sorted by creation time desc.
+
+        Scans the in-memory cache (which is populated on create/get).
+        """
+        with self._lock:
+            user_jobs = [
+                {"job_id": jid, **data}
+                for jid, data in self._cache.items()
+                if data.get("user_id") == user_id
+            ]
+        # Sort by started timestamp descending (newest first)
+        user_jobs.sort(key=lambda j: j.get("started") or "", reverse=True)
+        return user_jobs[:limit]
+
     # ------------------------------------------------------------------
     # GCS persistence (called under lock)
     # ------------------------------------------------------------------
