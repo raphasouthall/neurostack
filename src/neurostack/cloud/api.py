@@ -152,12 +152,6 @@ def _run_indexing(
     """
     try:
         with app_state.jobs_lock:
-            app_state.jobs[job_id]["status"] = "uploading"
-
-        # Upload raw vault files to GCS (can be slow for many files)
-        app_state.storage.upload_vault_files(user_id, vault_files)
-
-        with app_state.jobs_lock:
             app_state.jobs[job_id]["status"] = "indexing"
 
         result = app_state.indexer.index_vault(user_id, vault_files)
