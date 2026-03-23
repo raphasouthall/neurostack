@@ -30,12 +30,22 @@ from .billing import (
     verify_webhook_signature,
 )
 from .config import load_cloud_config
+from .firebase_auth import verify_firebase_token
 from .indexer import CloudIndexer
 from .job_store import JobStore
 from .metering import TIER_LIMITS, UsageMeter
 from .query import CloudQueryEngine
 from .storage import GCSStorageClient
 from .tier_store import TierStore
+from .user_store import (
+    create_api_key,
+    create_user,
+    ensure_stripe_customer,
+    get_user,
+    list_api_keys,
+    revoke_api_key,
+    update_last_login,
+)
 
 log = logging.getLogger("neurostack.cloud.api")
 
@@ -179,6 +189,34 @@ class SummaryRequest(BaseModel):
 class WebhookResponse(BaseModel):
     received: bool
     action: str
+
+
+class RegisterResponse(BaseModel):
+    uid: str
+    email: str
+    display_name: str
+    tier: str
+    provider: str
+    stripe_customer_id: str | None = None
+
+
+class CreateKeyRequest(BaseModel):
+    name: str
+
+
+class CreateKeyResponse(BaseModel):
+    key: str
+    key_id: str
+    name: str
+    prefix: str
+
+
+class KeyInfo(BaseModel):
+    key_id: str
+    name: str
+    prefix: str
+    created_at: str | None = None
+    last_used: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +505,90 @@ async def get_usage(
             "index_jobs_per_month": limits.index_jobs_per_month,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# User registration & API key endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/v1/user/register", response_model=RegisterResponse)
+async def register_user(request: Request, user: dict = Depends(require_auth)):
+    """Register or update user on login. Idempotent.
+
+    On first call: creates Firestore user doc and Stripe customer.
+    On subsequent calls: updates last_login and returns existing profile.
+    """
+    uid = user["user_id"]
+
+    existing = await get_user(uid)
+    if existing:
+        await update_last_login(uid)
+        return RegisterResponse(
+            uid=uid,
+            email=existing.get("email", ""),
+            display_name=existing.get("display_name", ""),
+            tier=existing.get("tier", "free"),
+            provider=existing.get("provider", ""),
+            stripe_customer_id=existing.get("stripe_customer_id"),
+        )
+
+    # For new users, re-extract claims from the Firebase token
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:]
+    decoded = verify_firebase_token(token)
+
+    email = decoded.get("email", "")
+    name = decoded.get("name", email.split("@")[0] if email else "")
+    provider = decoded.get("provider", "unknown")
+
+    await create_user(uid, email, name, provider)
+
+    # Auto-create Stripe customer (AUTH-06)
+    stripe_id = await ensure_stripe_customer(uid, email, name)
+
+    return RegisterResponse(
+        uid=uid,
+        email=email,
+        display_name=name,
+        tier="free",
+        provider=provider,
+        stripe_customer_id=stripe_id,
+    )
+
+
+@app.post("/api/v1/user/keys", response_model=CreateKeyResponse, status_code=201)
+async def create_key(req: CreateKeyRequest, user: dict = Depends(require_auth)):
+    """Create a new API key. Returns plaintext key once (never stored)."""
+    result = await create_api_key(user["user_id"], req.name)
+    return CreateKeyResponse(**result)
+
+
+@app.get("/api/v1/user/keys", response_model=list[KeyInfo])
+async def list_keys(user: dict = Depends(require_auth)):
+    """List all API keys for the authenticated user."""
+    keys = await list_api_keys(user["user_id"])
+    result = []
+    for k in keys:
+        # Convert Firestore timestamps to ISO strings
+        created = k.get("created_at")
+        last_used = k.get("last_used")
+        result.append(KeyInfo(
+            key_id=k["key_id"],
+            name=k["name"],
+            prefix=k["prefix"],
+            created_at=str(created) if created and not isinstance(created, str) else created,
+            last_used=str(last_used) if last_used and not isinstance(last_used, str) else last_used,
+        ))
+    return result
+
+
+@app.delete("/api/v1/user/keys/{key_id}", status_code=204)
+async def delete_key(key_id: str, user: dict = Depends(require_auth)):
+    """Revoke an API key."""
+    deleted = await revoke_api_key(user["user_id"], key_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="API key not found")
 
 
 # ---------------------------------------------------------------------------
