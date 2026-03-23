@@ -185,15 +185,19 @@ class TestUpload:
         assert resp.status_code == 202
         assert "2 files" in resp.json()["message"]
 
-    def test_upload_stores_files_in_gcs(self, client, mock_storage):
-        """Upload stores vault files in GCS via storage.upload_vault_files."""
+    def test_upload_passes_files_to_indexer(self, client, mock_indexer):
+        """Upload passes vault files to the indexer for processing."""
+        import time
+
         client.post(
             "/v1/vault/upload",
             headers=auth_header(),
             files=[("files", ("test.md", b"# Test", "text/markdown"))],
         )
-        mock_storage.upload_vault_files.assert_called_once()
-        call_args = mock_storage.upload_vault_files.call_args
+        # Give background thread time to call indexer
+        time.sleep(0.3)
+        mock_indexer.index_vault.assert_called_once()
+        call_args = mock_indexer.index_vault.call_args
         assert call_args[0][0] == "user-1"  # user_id
         assert "test.md" in call_args[0][1]  # vault_files dict
 

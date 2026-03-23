@@ -100,7 +100,7 @@ class UploadResponse(BaseModel):
 
 class JobStatusResponse(BaseModel):
     job_id: str
-    status: str  # "queued" | "indexing" | "complete" | "failed"
+    status: str  # "queued" | "indexing" | "search_ready" | "complete" | "failed"
     progress: float | None = None
     download_url: str | None = None
     error: str | None = None
