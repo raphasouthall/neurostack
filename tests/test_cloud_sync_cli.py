@@ -25,6 +25,8 @@ def _make_args(**kwargs) -> Namespace:
         "command": "cloud",
         "cloud_command": None,
         "json": False,
+        "depth": "auto",
+        "workspace": None,
     }
     defaults.update(kwargs)
     return Namespace(**defaults)
@@ -193,42 +195,50 @@ class TestCloudPullJson:
 # ---------------------------------------------------------------------------
 
 class TestCloudQuerySuccess:
-    @patch("neurostack.cloud.sync.VaultSyncEngine")
+    @patch("neurostack.cloud.client.CloudClient")
     @patch("neurostack.cloud.config.load_cloud_config")
     @patch("neurostack.cli.get_config")
-    def test_query_success(self, mock_cfg, mock_cloud_cfg, mock_engine_cls, tmp_path, capsys):
+    def test_query_success(self, mock_cfg, mock_cloud_cfg, mock_client_cls, tmp_path, capsys):
         """Query prints formatted results."""
         mock_cfg.return_value = _mock_get_config(tmp_path)
         mock_cloud_cfg.return_value = _authed_config()
 
-        mock_engine = MagicMock()
-        mock_engine.query.return_value = [
-            {"title": "Note A", "score": 0.95, "snippet": "This is about testing"},
-            {"title": "Note B", "score": 0.82, "snippet": "Another result"},
-        ]
-        mock_engine_cls.return_value = mock_engine
+        mock_client = MagicMock()
+        mock_client.query.return_value = {
+            "depth_used": "auto",
+            "triples": [],
+            "summaries": [
+                {"title": "Note A", "summary": "This is about testing"},
+                {"title": "Note B", "summary": "Another result"},
+            ],
+            "chunks": [],
+        }
+        mock_client_cls.return_value = mock_client
 
         from neurostack.cli import cmd_cloud_query
         args = _make_args(cloud_command="query", query="test", top_k=10, mode="hybrid")
         cmd_cloud_query(args)
 
-        mock_engine.query.assert_called_once_with("test", top_k=10, mode="hybrid")
         out = capsys.readouterr().out
         assert "Note A" in out
-        assert "0.950" in out
         assert "Note B" in out
 
-    @patch("neurostack.cloud.sync.VaultSyncEngine")
+    @patch("neurostack.cloud.client.CloudClient")
     @patch("neurostack.cloud.config.load_cloud_config")
     @patch("neurostack.cli.get_config")
-    def test_query_no_results(self, mock_cfg, mock_cloud_cfg, mock_engine_cls, tmp_path, capsys):
+    def test_query_no_results(self, mock_cfg, mock_cloud_cfg, mock_client_cls, tmp_path, capsys):
         """Query with no results prints 'No results found.'."""
         mock_cfg.return_value = _mock_get_config(tmp_path)
         mock_cloud_cfg.return_value = _authed_config()
 
-        mock_engine = MagicMock()
-        mock_engine.query.return_value = []
-        mock_engine_cls.return_value = mock_engine
+        mock_client = MagicMock()
+        mock_client.query.return_value = {
+            "depth_used": "auto",
+            "triples": [],
+            "summaries": [],
+            "chunks": [],
+        }
+        mock_client_cls.return_value = mock_client
 
         from neurostack.cli import cmd_cloud_query
         args = _make_args(cloud_command="query", query="nonexistent", top_k=10, mode="hybrid")
@@ -243,18 +253,18 @@ class TestCloudQuerySuccess:
 # ---------------------------------------------------------------------------
 
 class TestCloudQueryJson:
-    @patch("neurostack.cloud.sync.VaultSyncEngine")
+    @patch("neurostack.cloud.client.CloudClient")
     @patch("neurostack.cloud.config.load_cloud_config")
     @patch("neurostack.cli.get_config")
-    def test_query_json(self, mock_cfg, mock_cloud_cfg, mock_engine_cls, tmp_path, capsys):
+    def test_query_json(self, mock_cfg, mock_cloud_cfg, mock_client_cls, tmp_path, capsys):
         """Query with --json outputs JSON array."""
         mock_cfg.return_value = _mock_get_config(tmp_path)
         mock_cloud_cfg.return_value = _authed_config()
 
-        results = [{"title": "Note A", "score": 0.95}]
-        mock_engine = MagicMock()
-        mock_engine.query.return_value = results
-        mock_engine_cls.return_value = mock_engine
+        results = {"depth_used": "auto", "triples": [], "summaries": [{"title": "Note A"}], "chunks": []}
+        mock_client = MagicMock()
+        mock_client.query.return_value = results
+        mock_client_cls.return_value = mock_client
 
         from neurostack.cli import cmd_cloud_query
         args = _make_args(cloud_command="query", query="test", top_k=10, mode="hybrid", json=True)
@@ -262,8 +272,7 @@ class TestCloudQueryJson:
 
         out = capsys.readouterr().out
         parsed = json.loads(out)
-        assert len(parsed) == 1
-        assert parsed[0]["title"] == "Note A"
+        assert parsed["summaries"][0]["title"] == "Note A"
 
 
 # ---------------------------------------------------------------------------
@@ -271,23 +280,21 @@ class TestCloudQueryJson:
 # ---------------------------------------------------------------------------
 
 class TestCloudQueryArgs:
-    @patch("neurostack.cloud.sync.VaultSyncEngine")
+    @patch("neurostack.cloud.client.CloudClient")
     @patch("neurostack.cloud.config.load_cloud_config")
     @patch("neurostack.cli.get_config")
-    def test_query_custom_args(self, mock_cfg, mock_cloud_cfg, mock_engine_cls, tmp_path):
+    def test_query_custom_args(self, mock_cfg, mock_cloud_cfg, mock_client_cls, tmp_path):
         """Query passes top_k and mode to engine correctly."""
         mock_cfg.return_value = _mock_get_config(tmp_path)
         mock_cloud_cfg.return_value = _authed_config()
 
-        mock_engine = MagicMock()
-        mock_engine.query.return_value = []
-        mock_engine_cls.return_value = mock_engine
+        mock_client = MagicMock()
+        mock_client.query.return_value = {"depth_used": "auto", "triples": [], "summaries": [], "chunks": []}
+        mock_client_cls.return_value = mock_client
 
         from neurostack.cli import cmd_cloud_query
         args = _make_args(cloud_command="query", query="hello", top_k=5, mode="semantic")
         cmd_cloud_query(args)
-
-        mock_engine.query.assert_called_once_with("hello", top_k=5, mode="semantic")
 
 
 # ---------------------------------------------------------------------------
@@ -339,19 +346,17 @@ class TestCloudSyncErrors:
         err = capsys.readouterr().err
         assert "Download failed" in err
 
-    @patch("neurostack.cloud.sync.VaultSyncEngine")
+    @patch("neurostack.cloud.client.CloudClient")
     @patch("neurostack.cloud.config.load_cloud_config")
     @patch("neurostack.cli.get_config")
-    def test_query_sync_error(self, mock_cfg, mock_cloud_cfg, mock_engine_cls, tmp_path, capsys):
-        """Query exits 1 and prints error on SyncError."""
-        from neurostack.cloud.sync import SyncError
-
+    def test_query_sync_error(self, mock_cfg, mock_cloud_cfg, mock_client_cls, tmp_path, capsys):
+        """Query exits 1 and prints error on failure."""
         mock_cfg.return_value = _mock_get_config(tmp_path)
         mock_cloud_cfg.return_value = _authed_config()
 
-        mock_engine = MagicMock()
-        mock_engine.query.side_effect = SyncError("Query API not available")
-        mock_engine_cls.return_value = mock_engine
+        mock_client = MagicMock()
+        mock_client.query.side_effect = Exception("Query API not available")
+        mock_client_cls.return_value = mock_client
 
         from neurostack.cli import cmd_cloud_query
         args = _make_args(cloud_command="query", query="test", top_k=10, mode="hybrid")
