@@ -1638,7 +1638,7 @@ def cmd_update(args):
 
 
 def cmd_install(args):
-    """Streamlined installation: mode selection, deps, and optional Ollama setup."""
+    """Streamlined installation: local or cloud, deps, and setup."""
     import platform
     import shutil
     import sqlite3
@@ -1652,6 +1652,7 @@ def cmd_install(args):
         pull_models = args.pull_models
         embed_model = args.embed_model or cfg.embed_model
         llm_model = args.llm_model or cfg.llm_model
+        use_cloud = False
     else:
         # ── Interactive wizard ──
         print("\n  \033[1m━━━ NeuroStack Install ━━━\033[0m\n")
@@ -1661,78 +1662,132 @@ def cmd_install(args):
         print(f"  Python:   {py_ver}")
         try:
             conn = sqlite3.connect(":memory:")
-            conn.execute("CREATE VIRTUAL TABLE _t USING fts5(c)")
+            conn.execute(
+                "CREATE VIRTUAL TABLE _t USING fts5(c)"
+            )
             conn.close()
             print("  FTS5:     available")
         except Exception:
-            print("  \033[31mFTS5:     MISSING — SQLite compiled without FTS5\033[0m")
+            print(
+                "  \033[31mFTS5:     MISSING"
+                " — SQLite compiled without FTS5\033[0m"
+            )
             sys.exit(1)
 
         uv_path = shutil.which("uv")
         if uv_path:
             try:
                 uv_ver = subprocess.run(
-                    ["uv", "--version"], capture_output=True, text=True, timeout=5
+                    ["uv", "--version"],
+                    capture_output=True, text=True, timeout=5,
                 ).stdout.strip()
                 print(f"  uv:       {uv_ver}")
             except Exception:
                 print(f"  uv:       {uv_path}")
         else:
             print("  \033[31muv:       NOT FOUND\033[0m")
-            print("  Install:  curl -LsSf https://astral.sh/uv/install.sh | sh")
+            print(
+                "  Install:  curl -LsSf"
+                " https://astral.sh/uv/install.sh | sh"
+            )
             sys.exit(1)
 
-        # 2. Detect current mode
-        current_mode = "lite"
-        try:
-            import numpy  # noqa: F401
-            current_mode = "full"
+        # 2. Local or Cloud?
+        setup_choices = [
+            ("cloud", "Cloud — Gemini indexes your vault, no GPU needed"),
+            ("local", "Local — self-hosted with Ollama (requires GPU)"),
+        ]
+        setup = _prompt(
+            "How do you want to run NeuroStack?",
+            default="cloud", choices=setup_choices,
+        )
+        use_cloud = setup == "cloud"
+
+        if use_cloud:
+            # ── Cloud path: lite deps, then login + push ──
+            mode = "lite"
+            pull_models = False
+            embed_model = cfg.embed_model
+            llm_model = cfg.llm_model
+
+            print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
+            print("  Mode:     lite (cloud handles indexing)")
+            print("  Auth:     browser login via Google")
+            print("  Index:    neurostack cloud push")
+            if not _confirm("\n  Proceed?", default=True):
+                print("\n  Cancelled.")
+                return
+        else:
+            # ── Local path: existing flow ──
+            # Detect current mode
+            current_mode = "lite"
             try:
-                import leidenalg  # noqa: F401
-                current_mode = "community"
+                import numpy  # noqa: F401
+                current_mode = "full"
+                try:
+                    import leidenalg  # noqa: F401
+                    current_mode = "community"
+                except ImportError:
+                    pass
             except ImportError:
                 pass
-        except ImportError:
-            pass
-        print(f"  Current:  {current_mode} mode\n")
+            print(f"  Current:  {current_mode} mode\n")
 
-        # 3. Choose mode
-        mode_choices = [
-            ("lite", "Lite — FTS5 search + graph, no ML (~130 MB)"),
-            ("full", "Full — + embeddings, summaries, reranking (~560 MB)"),
-            ("community", "Community — + GraphRAG Leiden detection (~575 MB)"),
-        ]
-        mode = _prompt("Installation mode", default=current_mode, choices=mode_choices)
+            mode_choices = [
+                ("lite",
+                 "Lite — FTS5 search + graph, no ML (~130 MB)"),
+                ("full",
+                 "Full — + embeddings, summaries (~560 MB)"),
+                ("community",
+                 "Community — + GraphRAG Leiden (~575 MB)"),
+            ]
+            mode = _prompt(
+                "Installation mode",
+                default=current_mode, choices=mode_choices,
+            )
 
-        # 4. Ollama models (only for full/community)
-        pull_models = False
-        embed_model = cfg.embed_model
-        llm_model = cfg.llm_model
-        if mode in ("full", "community"):
-            print("\n  \033[1mOllama Models\033[0m")
-            print("  Full mode uses Ollama for embeddings and summaries.")
-            pull_models = _confirm("Pull Ollama models now?", default=True)
+            pull_models = False
+            embed_model = cfg.embed_model
+            llm_model = cfg.llm_model
+            if mode in ("full", "community"):
+                print("\n  \033[1mOllama Models\033[0m")
+                print(
+                    "  Full mode uses Ollama for embeddings"
+                    " and summaries."
+                )
+                pull_models = _confirm(
+                    "Pull Ollama models now?", default=True,
+                )
+                if pull_models:
+                    embed_model = _prompt(
+                        "Embedding model", default=cfg.embed_model,
+                    )
+                    model_choices = [
+                        ("phi3.5",
+                         "phi3.5 — MIT, fast, 3.8B"),
+                        ("qwen3:8b",
+                         "qwen3:8b — Apache 2.0, strong"),
+                        ("llama3.1:8b",
+                         "llama3.1:8b — Meta license"),
+                        ("mistral:7b",
+                         "mistral:7b — Apache 2.0"),
+                    ]
+                    llm_model = _prompt(
+                        "LLM model",
+                        default=cfg.llm_model,
+                        choices=model_choices,
+                    )
+
+            print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
+            print(f"  Mode:     {mode}")
             if pull_models:
-                embed_model = _prompt("Embedding model", default=cfg.embed_model)
-                model_choices = [
-                    ("phi3.5", "phi3.5 — MIT, fast, 3.8B"),
-                    ("qwen3:8b", "qwen3:8b — Apache 2.0, strong reasoning"),
-                    ("llama3.1:8b", "llama3.1:8b — Meta license, popular"),
-                    ("mistral:7b", "mistral:7b — Apache 2.0, efficient"),
-                ]
-                llm_model = _prompt("LLM model", default=cfg.llm_model, choices=model_choices)
-
-        # Confirm
-        print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
-        print(f"  Mode:     {mode}")
-        if pull_models:
-            print(f"  Embed:    ollama pull {embed_model}")
-            print(f"  LLM:      ollama pull {llm_model}")
-        else:
-            print("  Models:   skip")
-        if not _confirm("\n  Proceed?", default=True):
-            print("\n  Cancelled.")
-            return
+                print(f"  Embed:    ollama pull {embed_model}")
+                print(f"  LLM:      ollama pull {llm_model}")
+            else:
+                print("  Models:   skip")
+            if not _confirm("\n  Proceed?", default=True):
+                print("\n  Cancelled.")
+                return
 
     # ── Execute installation ──
     print()
@@ -1846,7 +1901,41 @@ def cmd_install(args):
         print("\n  \033[33m!\033[0m Add to PATH:"
               " export PATH=\"$HOME/.local/bin:$PATH\"")
 
-    # Summary
+    # 5. Cloud setup (if cloud path was chosen)
+    if use_cloud:
+        print("\n  \033[32m✓\033[0m Dependencies installed (lite)")
+        print("\n  \033[1m━━━ Cloud Setup ━━━\033[0m\n")
+        print("  Logging in to NeuroStack Cloud...")
+        _cmd_cloud_device_login()
+
+        # Check if login succeeded
+        from .cloud.config import load_cloud_config
+        cloud_cfg = load_cloud_config()
+        if cloud_cfg.cloud_api_key:
+            print("\n  \033[32m✓\033[0m Logged in")
+            print("\n  \033[32mReady!\033[0m")
+            print()
+            print("  Next steps:")
+            print("    neurostack init"
+                  "          # Set up vault")
+            print("    neurostack cloud push"
+                  "    # Index vault in cloud")
+            print("    neurostack cloud pull"
+                  "    # Download indexed DB")
+            print()
+        else:
+            print("\n  \033[33m!\033[0m Login skipped")
+            print("\n  \033[32mInstalled!\033[0m (lite)")
+            print()
+            print("  Next steps:")
+            print("    neurostack init"
+                  "          # Set up vault")
+            print("    neurostack cloud login"
+                  "   # Sign in later")
+            print()
+        return
+
+    # Summary (local path)
     print(f"\n  \033[32mInstalled!\033[0m ({mode} mode)")
     print()
     print("  Next steps:")
