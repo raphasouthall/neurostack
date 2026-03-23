@@ -14,15 +14,19 @@ Tenant isolation guarantees:
 
 from __future__ import annotations
 
+import datetime
 import logging
+import secrets
+import string
 import threading
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .auth import require_api_key, require_auth
+from .auth import require_auth
 from .billing import (
     create_checkout_session,
     create_portal_session,
@@ -40,6 +44,7 @@ from .tier_store import TierStore
 from .user_store import (
     create_api_key,
     create_user,
+    delete_user_account,
     ensure_stripe_customer,
     get_user,
     list_api_keys,
@@ -180,6 +185,40 @@ class VaultHealthResponse(BaseModel):
     embedding_coverage_pct: float = 0.0
     summary_coverage_pct: float = 0.0
     triple_count: int = 0
+
+
+class DeviceCodeResponse(BaseModel):
+    device_code: str
+    user_code: str
+    verification_uri: str
+    expires_in: int
+    interval: int
+
+
+class DeviceConfirmRequest(BaseModel):
+    user_code: str
+
+
+class DeviceTokenRequest(BaseModel):
+    device_code: str
+
+
+class DeviceTokenResponse(BaseModel):
+    api_key: str
+    key_id: str
+    name: str
+
+
+class DashboardBillingPortalResponse(BaseModel):
+    portal_url: str
+
+
+class DashboardCheckoutRequest(BaseModel):
+    price_id: str | None = None
+
+
+class DashboardCheckoutResponse(BaseModel):
+    checkout_url: str
 
 
 class QueryRequest(BaseModel):
@@ -650,7 +689,201 @@ async def delete_key(key_id: str, user: dict = Depends(require_auth)):
 
 
 # ---------------------------------------------------------------------------
-# Billing endpoints
+# Account management endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.delete("/api/v1/user/account", status_code=204)
+async def account_delete(user: dict = Depends(require_auth)):
+    """Delete user account: Firestore data, GCS vault, Stripe customer."""
+    user_id = user["user_id"]
+    try:
+        app.state.storage.delete_user_data(user_id)
+        await delete_user_account(user_id)
+    except Exception as exc:
+        log.exception("Account deletion failed for %s", user_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/v1/user/export")
+async def user_export(user: dict = Depends(require_auth)):
+    """Export user vault data as a downloadable zip archive."""
+    user_id = user["user_id"]
+    zip_bytes = app.state.storage.export_user_vault(user_id)
+    if zip_bytes is None:
+        raise HTTPException(status_code=404, detail="No vault data found")
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="neurostack-export-{user_id[:8]}.zip"'
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Device code flow (CLI-to-browser auth handoff)
+# ---------------------------------------------------------------------------
+
+# In-memory device code store (in production, use Firestore)
+_device_codes: dict[str, dict] = {}
+_device_codes_lock = threading.Lock()
+
+_UNAMBIGUOUS_CHARS = (
+    string.ascii_uppercase.replace("O", "").replace("I", "")
+    + string.digits.replace("0", "").replace("1", "")
+)
+
+
+def _generate_user_code(length: int = 8) -> str:
+    """Generate an unambiguous alphanumeric user code."""
+    return "".join(secrets.choice(_UNAMBIGUOUS_CHARS) for _ in range(length))
+
+
+@app.post("/api/v1/auth/device-code", response_model=DeviceCodeResponse)
+async def device_code_create():
+    """Start a device code flow. Returns codes for CLI display."""
+    user_code = _generate_user_code()
+    code = secrets.token_urlsafe(32)
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    expires_at = now + datetime.timedelta(minutes=10)
+
+    with _device_codes_lock:
+        _device_codes[code] = {
+            "user_code": user_code,
+            "device_code": code,
+            "status": "pending",
+            "created_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "uid": None,
+        }
+
+    return DeviceCodeResponse(
+        device_code=code,
+        user_code=user_code,
+        verification_uri="https://app.neurostack.sh/device",
+        expires_in=600,
+        interval=5,
+    )
+
+
+@app.post("/api/v1/auth/device-confirm")
+async def device_code_confirm(
+    req: DeviceConfirmRequest,
+    user: dict = Depends(require_auth),
+):
+    """Confirm a device code from the browser (authenticated user)."""
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+
+    with _device_codes_lock:
+        for code_data in _device_codes.values():
+            if (
+                code_data["user_code"] == req.user_code
+                and code_data["status"] == "pending"
+                and datetime.datetime.fromisoformat(code_data["expires_at"]) > now
+            ):
+                code_data["status"] = "confirmed"
+                code_data["uid"] = user["user_id"]
+                return {"status": "confirmed"}
+
+    raise HTTPException(status_code=404, detail="Invalid or expired user code")
+
+
+@app.post("/api/v1/auth/device-token")
+async def device_code_token(req: DeviceTokenRequest):
+    """Exchange a device code for an API key (polled by CLI)."""
+    now = datetime.datetime.now(tz=datetime.timezone.utc)
+
+    with _device_codes_lock:
+        code_data = _device_codes.get(req.device_code)
+
+    if code_data is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "expired_token",
+                "error_description": "Device code not found or expired",
+            },
+        )
+
+    expires_at = datetime.datetime.fromisoformat(code_data["expires_at"])
+    if expires_at < now:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "expired_token", "error_description": "Device code expired"},
+        )
+
+    if code_data["status"] == "pending":
+        raise HTTPException(
+            status_code=428,
+            detail={
+                "error": "authorization_pending",
+                "error_description": "Waiting for user to authorize",
+            },
+        )
+
+    if code_data["status"] == "confirmed":
+        uid = code_data["uid"]
+        # Create an API key for this user
+        result = await create_api_key(uid, "CLI (device flow)")
+
+        # Mark as consumed
+        with _device_codes_lock:
+            code_data["status"] = "consumed"
+
+        return DeviceTokenResponse(
+            api_key=result["key"],
+            key_id=result["key_id"],
+            name="CLI (device flow)",
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail={"error": "expired_token", "error_description": "Device code already used"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dashboard billing endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/v1/billing/portal")
+async def dashboard_billing_portal(user: dict = Depends(require_auth)):
+    """Create Stripe billing portal URL using user's stored stripe_customer_id."""
+    uid = user["user_id"]
+    user_data = await get_user(uid)
+
+    if not user_data or not user_data.get("stripe_customer_id"):
+        raise HTTPException(status_code=400, detail="No billing account found")
+
+    url = create_portal_session(
+        user_data["stripe_customer_id"],
+        "https://app.neurostack.sh/dashboard/usage",
+    )
+    return {"portal_url": url}
+
+
+@app.post("/api/v1/billing/checkout")
+async def dashboard_billing_checkout(
+    req: DashboardCheckoutRequest | None = None,
+    user: dict = Depends(require_auth),
+):
+    """Create Stripe checkout session for dashboard upgrade flow."""
+    import os
+
+    price_id = (req.price_id if req else None) or os.environ.get("STRIPE_PRICE_PRO", "")
+    url = create_checkout_session(
+        user["user_id"],
+        price_id,
+        "https://app.neurostack.sh/dashboard/usage",
+        "https://app.neurostack.sh/dashboard/usage",
+    )
+    return {"checkout_url": url}
+
+
+# ---------------------------------------------------------------------------
+# Billing endpoints (existing)
 # ---------------------------------------------------------------------------
 
 

@@ -189,3 +189,44 @@ async def revoke_api_key(
         return False
     await key_ref.delete()
     return True
+
+
+async def delete_user_account(
+    uid: str, db: AsyncClient | None = None
+) -> bool:
+    """Delete all user data from Firestore and Stripe.
+
+    Removes:
+    - All API keys in users/{uid}/api_keys/*
+    - All usage docs in users/{uid}/usage/*
+    - The user document users/{uid}
+    - Stripe customer if stripe_customer_id exists
+    """
+    client = db or _get_db()
+    user_ref = client.collection("users").document(uid)
+
+    # Get user to check for Stripe customer
+    user_doc = await user_ref.get()
+    user_data = user_doc.to_dict() if user_doc.exists else {}
+
+    # Delete API keys subcollection
+    api_keys_ref = user_ref.collection("api_keys")
+    async for doc in api_keys_ref.stream():
+        await api_keys_ref.document(doc.id).delete()
+
+    # Delete usage subcollection
+    usage_ref = user_ref.collection("usage")
+    async for doc in usage_ref.stream():
+        await usage_ref.document(doc.id).delete()
+
+    # Delete Stripe customer if exists
+    if user_data and user_data.get("stripe_customer_id"):
+        try:
+            stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+            stripe.Customer.delete(user_data["stripe_customer_id"])
+        except Exception:
+            pass  # Best-effort Stripe cleanup
+
+    # Delete user document
+    await user_ref.delete()
+    return True

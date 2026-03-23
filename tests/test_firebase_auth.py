@@ -947,7 +947,7 @@ class TestBillingPortalEndpoint:
         await create_user("firebase-user-123", "test@example.com", "Test", "google.com")
         mock_firestore.collection("users")._data["firebase-user-123"]["stripe_customer_id"] = "cus_test"
 
-        with patch("neurostack.cloud.billing.create_portal_session", return_value="https://billing.stripe.com/session/test"):
+        with patch("neurostack.cloud.api.create_portal_session", return_value="https://billing.stripe.com/session/test"):
             async with AsyncClient(
                 transport=ASGITransport(app=app_client),
                 base_url="http://test",
@@ -1003,7 +1003,7 @@ class TestBillingCheckoutEndpoint:
     @pytest.mark.asyncio
     async def test_billing_checkout_returns_url(self, app_client, mock_firestore):
         """POST /v1/billing/checkout with valid price_id returns checkout_url."""
-        with patch("neurostack.cloud.billing.create_checkout_session", return_value="https://checkout.stripe.com/test"):
+        with patch("neurostack.cloud.api.create_checkout_session", return_value="https://checkout.stripe.com/test"):
             async with AsyncClient(
                 transport=ASGITransport(app=app_client),
                 base_url="http://test",

@@ -115,6 +115,32 @@ class GCSStorageClient:
 
         return files
 
+    def export_user_vault(self, user_id: str) -> bytes | None:
+        """Create a zip archive of a user's vault files.
+
+        Returns zip bytes, or None if no files found.
+        """
+        import io
+        import zipfile
+
+        _validate_user_id(user_id)
+        prefix = f"uploads/{user_id}/"
+        buf = io.BytesIO()
+        file_count = 0
+
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for blob in self._client.list_blobs(
+                self._config.gcs_bucket_name, prefix=prefix
+            ):
+                filename = blob.name[len(prefix):]
+                if filename:
+                    zf.writestr(filename, blob.download_as_bytes())
+                    file_count += 1
+
+        if file_count == 0:
+            return None
+        return buf.getvalue()
+
     def delete_user_data(self, user_id: str) -> int:
         """Delete all objects for a user (vaults and uploads).
 
