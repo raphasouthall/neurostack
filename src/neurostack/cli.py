@@ -2007,8 +2007,9 @@ def cmd_install(args):
 
 
 def cmd_uninstall(args):
-    """Remove NeuroStack data, database, and CLI wrapper."""
+    """Remove NeuroStack data, config, CLI wrapper, and npm package."""
     import shutil
+    import subprocess
 
     cfg = get_config()
     install_dir = Path.home() / ".local" / "share" / "neurostack"
@@ -2018,70 +2019,64 @@ def cmd_uninstall(args):
     if not args.yes and sys.stdin.isatty():
         print("\n  \033[1m━━━ NeuroStack Uninstall ━━━\033[0m\n")
         print("  This will remove:")
-        print(f"    Source + venv:  {install_dir / 'repo'}")
+        print(f"    Data:     {install_dir}")
+        print(f"    Config:   {config_dir}")
         if not args.keep_db:
-            print(f"    Database:       {cfg.db_path}")
+            print(f"    Database: {cfg.db_path}")
         if wrapper.exists():
-            print(f"    CLI wrapper:    {wrapper}")
+            print(f"    CLI:      {wrapper}")
+        print("    npm:      neurostack (global)")
         print()
-        if not args.keep_db:
-            print("  \033[33m!\033[0m Your vault will NOT be touched.")
+        print("  \033[33m!\033[0m Your vault will NOT be touched.")
         if not _confirm("  Proceed with uninstall?", default=False):
             print("\n  Cancelled.")
             return
 
     print("\n  \033[1mUninstalling NeuroStack\033[0m\n")
 
-    # Remove source repo + venv
-    repo_dir = install_dir / "repo"
-    if repo_dir.exists():
-        shutil.rmtree(repo_dir)
-        print(f"  \033[36m▸\033[0m Removed source and venv: {repo_dir}")
-    else:
-        print("  \033[36m▸\033[0m Source directory not found (already clean)")
-
-    # Remove database
+    # Remove database files
     if not args.keep_db:
-        for suffix in ("", "-wal", "-shm"):
-            db_file = Path(str(cfg.db_path) + suffix)
-            if db_file.exists():
-                db_file.unlink()
-        session_db = cfg.session_db
-        for suffix in ("", "-wal", "-shm"):
-            sf = Path(str(session_db) + suffix)
-            if sf.exists():
-                sf.unlink()
-        if cfg.db_path.exists() or session_db.exists():
-            print(f"  \033[36m▸\033[0m Removed database: {cfg.db_path}")
+        for db in (cfg.db_path, cfg.session_db):
+            for suffix in ("", "-wal", "-shm"):
+                f = Path(str(db) + suffix)
+                if f.exists():
+                    f.unlink()
+        print("  \033[36m▸\033[0m Removed databases")
 
-    # Remove parent dir if empty
+    # Remove entire data directory (repo, memories, harvest state, etc.)
     if install_dir.exists():
-        try:
-            install_dir.rmdir()
-            print(f"  \033[36m▸\033[0m Removed empty directory: {install_dir}")
-        except OSError:
-            print(f"  \033[33m▸\033[0m Directory not empty, kept: {install_dir}")
+        shutil.rmtree(install_dir)
+        print(f"  \033[36m▸\033[0m Removed data: {install_dir}")
+
+    # Remove config directory
+    if config_dir.exists():
+        shutil.rmtree(config_dir)
+        print(f"  \033[36m▸\033[0m Removed config: {config_dir}")
 
     # Remove CLI wrapper and alias
-    if wrapper.exists():
-        wrapper.unlink()
-        print(f"  \033[36m▸\033[0m Removed CLI wrapper: {wrapper}")
-    alias = wrapper.parent / "ns"
-    if alias.exists():
-        alias.unlink()
-        print(f"  \033[36m▸\033[0m Removed alias: {alias}")
+    for p in (wrapper, wrapper.parent / "ns"):
+        if p.exists():
+            p.unlink()
+            print(f"  \033[36m▸\033[0m Removed: {p}")
 
-    # Config
-    if config_dir.exists():
-        print(f"  \033[33m▸\033[0m Config preserved: {config_dir}")
-        print(f"  \033[33m▸\033[0m To remove manually: rm -rf {config_dir}")
+    # Remove npm package
+    npm = shutil.which("npm")
+    if npm:
+        try:
+            result = subprocess.run(
+                [npm, "uninstall", "-g", "neurostack"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                print("  \033[36m▸\033[0m Removed npm package")
+            else:
+                print("  \033[33m▸\033[0m npm uninstall failed"
+                      " (may not be installed via npm)")
+        except Exception:
+            print("  \033[33m▸\033[0m Could not run npm uninstall")
 
-    # Hint about npm package
     print()
-    print("  \033[32m✓ NeuroStack uninstalled.\033[0m")
-    print()
-    print("  To also remove the npm bootstrap package:")
-    print("    npm uninstall -g neurostack")
+    print("  \033[32m✓ NeuroStack fully uninstalled.\033[0m")
     print()
 
 
