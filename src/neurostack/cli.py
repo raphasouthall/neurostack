@@ -1042,13 +1042,52 @@ def cmd_init(args):
         profession_name=profession, run_index=run_index,
     )
 
-    print("\n  \033[1mNext steps:\033[0m")
-    if not run_index:
-        print("    neurostack index          # Index your vault")
-    print("    neurostack search 'query' # Search")
-    print("    neurostack doctor         # Check health")
-    print("    neurostack serve          # Start MCP server")
-    print()
+    # Cloud-aware next steps
+    from .cloud.config import load_cloud_config as _load_cc
+    _cc = _load_cc()
+    if _cc.cloud_api_key:
+        # Cloud user — offer to push now
+        print()
+        print("  \033[1m━━━ What works now ━━━\033[0m")
+        print("    neurostack search 'query'"
+              "    # Keyword search (FTS5)")
+        print()
+        print("  \033[1m━━━ Unlock full search ━━━\033[0m")
+        print("  Cloud indexing adds semantic search,"
+              " summaries, and knowledge graph.")
+        print()
+        if sys.stdin.isatty() and _confirm(
+            "Push vault to cloud now?", default=True,
+        ):
+            print()
+            cmd_cloud_push(args)
+            print()
+            print("  When indexing finishes, run:")
+            print("    neurostack cloud pull"
+                  "        # Download indexed DB")
+            print()
+            print("  Check progress:"
+                  "  https://app.neurostack.sh")
+            print()
+        else:
+            print()
+            print("  Run this next:")
+            print("    neurostack cloud push"
+                  "        # Upload vault for indexing")
+            print()
+    else:
+        # Local user
+        print("\n  \033[1mNext steps:\033[0m")
+        if not run_index:
+            print("    neurostack index"
+                  "          # Index your vault")
+        print("    neurostack search 'query'"
+              " # Search")
+        print("    neurostack doctor"
+              "         # Check health")
+        print("    neurostack serve"
+              "          # Start MCP server")
+        print()
 
 
 def cmd_scaffold(args):
@@ -1920,25 +1959,19 @@ def cmd_install(args):
         cloud_cfg = load_cloud_config()
         if cloud_cfg.cloud_api_key:
             print("\n  \033[32m✓\033[0m Logged in")
-            print("\n  \033[32mReady!\033[0m")
-            print()
-            print("  Next steps:")
+            print("\n  \033[32mReady!\033[0m"
+                  " Run this next:")
             print("    neurostack init"
-                  "          # Set up vault")
-            print("    neurostack cloud push"
-                  "    # Index vault in cloud")
-            print("    neurostack cloud pull"
-                  "    # Download indexed DB")
+                  "              # Set up your vault")
             print()
         else:
             print("\n  \033[33m!\033[0m Login skipped")
-            print("\n  \033[32mInstalled!\033[0m (lite)")
-            print()
-            print("  Next steps:")
+            print("\n  \033[32mInstalled!\033[0m (lite)"
+                  " Run this next:")
             print("    neurostack init"
-                  "          # Set up vault")
+                  "              # Set up your vault")
             print("    neurostack cloud login"
-                  "   # Sign in later")
+                  "       # Sign in later")
             print()
         return
 
@@ -3286,17 +3319,37 @@ def cmd_cloud(args):
         print("  summary  Get a note summary")
 
 
+def _ensure_cloud_auth():
+    """Check cloud auth, trigger login if missing. Returns config."""
+    from .cloud.config import load_cloud_config
+    cloud_cfg = load_cloud_config()
+    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
+        if sys.stdin.isatty():
+            print("  Not logged in. Starting login...")
+            print()
+            _cmd_cloud_device_login()
+            cloud_cfg = load_cloud_config()
+            if not cloud_cfg.cloud_api_key:
+                print("Error: Login failed.",
+                      file=sys.stderr)
+                sys.exit(1)
+            print()
+        else:
+            print(
+                "Error: Not authenticated."
+                " Run `neurostack cloud login` first.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    return cloud_cfg
+
+
 def cmd_cloud_push(args):
     """Upload vault files to cloud for indexing."""
-    from .cloud.config import load_cloud_config
     from .cloud.sync import SyncError, VaultSyncEngine
 
     cfg = get_config()
-    cloud_cfg = load_cloud_config()
-
-    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
-        print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
-        sys.exit(1)
+    cloud_cfg = _ensure_cloud_auth()
 
     engine = VaultSyncEngine(
         cloud_api_url=cloud_cfg.cloud_api_url,
@@ -3322,15 +3375,10 @@ def cmd_cloud_push(args):
 
 def cmd_cloud_pull(args):
     """Download indexed database from cloud."""
-    from .cloud.config import load_cloud_config
     from .cloud.sync import SyncError, VaultSyncEngine
 
     cfg = get_config()
-    cloud_cfg = load_cloud_config()
-
-    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
-        print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
-        sys.exit(1)
+    cloud_cfg = _ensure_cloud_auth()
 
     engine = VaultSyncEngine(
         cloud_api_url=cloud_cfg.cloud_api_url,
@@ -3346,22 +3394,35 @@ def cmd_cloud_pull(args):
         sys.exit(1)
 
     if getattr(args, "json", False):
-        print(json.dumps({"db_path": str(db_path), "size": db_path.stat().st_size}))
+        print(json.dumps({
+            "db_path": str(db_path),
+            "size": db_path.stat().st_size,
+        }))
     else:
         size_mb = db_path.stat().st_size / (1024 * 1024)
-        print(f"Downloaded database to {db_path} ({size_mb:.1f} MB)")
+        print(f"  \033[32m✓\033[0m Downloaded"
+              f" ({size_mb:.1f} MB)")
+        print()
+        print("  \033[1m━━━ Setup complete ━━━\033[0m")
+        print()
+        print("  All search modes now available:")
+        print("    neurostack search 'query'"
+              "    # Hybrid search")
+        print("    neurostack ask 'question'"
+              "     # RAG Q&A with citations")
+        print("    neurostack serve"
+              "             # Start MCP server")
+        print()
+        print("  Dashboard:"
+              "  https://app.neurostack.sh")
+        print()
 
 
 def cmd_cloud_query(args):
     """Query vault via cloud API with tiered search."""
     from .cloud.client import CloudClient
-    from .cloud.config import load_cloud_config
 
-    cloud_cfg = load_cloud_config()
-    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
-        print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
-        sys.exit(1)
-
+    cloud_cfg = _ensure_cloud_auth()
     client = CloudClient(cloud_cfg)
 
     try:
