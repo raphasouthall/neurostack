@@ -56,13 +56,26 @@ class GCSStorageClient:
         """Generate a signed download URL for a user's database.
 
         Default expiry is 1 hour (3600 seconds).
+        On Cloud Run, uses IAM signBlob via service_account_email +
+        access_token params (compute credentials can't sign locally).
         """
+        import datetime
+
+        import google.auth
+        import google.auth.transport.requests
+
         _validate_user_id(user_id)
         blob = self._bucket.blob(f"vaults/{user_id}/neurostack.db")
+
+        credentials, _ = google.auth.default()
+        credentials.refresh(google.auth.transport.requests.Request())
+
         return blob.generate_signed_url(
             version="v4",
-            expiration=expires_in,
+            expiration=datetime.timedelta(seconds=expires_in),
             method="GET",
+            service_account_email=credentials.service_account_email,
+            access_token=credentials.token,
         )
 
     def upload_vault_files(self, user_id: str, files: dict[str, bytes]) -> list[str]:
