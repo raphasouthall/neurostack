@@ -862,19 +862,30 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
             label = d.split("/")[-1].replace("-", " ").title()
             idx.write_text(f"# {label}\n\n")
 
-    # Write config
-    config_text = (
-        f'vault_root = "{vault_root}"\n'
-        f'embed_url = "{cfg.embed_url}"\n'
-        f'llm_url = "{cfg.llm_url}"\n'
-        f'llm_model = "{cfg.llm_model}"\n'
-    )
+    # Write config — preserve existing [cloud] section
+    try:
+        import tomllib as _tomllib
+    except ImportError:
+        import tomli as _tomllib  # type: ignore
+    import tomli_w as _tomli_w
+
+    existing = {}
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "rb") as f:
+            existing = _tomllib.load(f)
+
+    existing["vault_root"] = str(vault_root)
+    existing["embed_url"] = cfg.embed_url
+    existing["llm_url"] = cfg.llm_url
+    existing["llm_model"] = cfg.llm_model
     if cfg.llm_api_key:
-        config_text += f'llm_api_key = "{cfg.llm_api_key}"\n'
+        existing["llm_api_key"] = cfg.llm_api_key
     if cfg.embed_api_key:
-        config_text += f'embed_api_key = "{cfg.embed_api_key}"\n'
+        existing["embed_api_key"] = cfg.embed_api_key
+
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(config_text)
+    with open(CONFIG_PATH, "wb") as f:
+        _tomli_w.dump(existing, f)
 
     # Create DB directory
     cfg.db_dir.mkdir(parents=True, exist_ok=True)
