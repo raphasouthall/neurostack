@@ -3,7 +3,7 @@
 import json
 import sqlite3
 import textwrap
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -205,7 +205,10 @@ class MockFirestoreCollection:
 
     _auto_id_counter = 0
 
-    def __init__(self, data: dict | None = None, *, parent_data: dict | None = None, sub_key: str | None = None):
+    def __init__(
+        self, data: dict | None = None, *,
+        parent_data: dict | None = None, sub_key: str | None = None,
+    ):
         self._data = data or {}  # {doc_id: {field: value}}
         # Track parent so subcollection writes propagate
         self._parent_data = parent_data
