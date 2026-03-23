@@ -58,10 +58,10 @@ class CloudClient:
     def validate_key(self) -> bool:
         """Validate stored API key against the cloud API.
 
-        Calls ``GET /health`` with the Bearer token. Returns True on 200,
-        False on 401. Other errors propagate as ConnectionError.
+        Calls ``GET /v1/usage`` (authenticated) to verify the key.
+        Returns True on 200, False on 401.
         """
-        url = f"{self._base_url}/health"
+        url = f"{self._base_url}/v1/usage"
         try:
             resp = httpx.get(url, headers=self._auth_headers(), timeout=10.0)
         except httpx.ConnectError:
@@ -83,14 +83,41 @@ class CloudClient:
 
         Returns:
             Dict with ``authenticated`` (bool), ``tier`` (str or None),
-            and ``cloud_url`` (str). Full tier/usage comes from Phase 7
-            billing endpoints.
+            ``cloud_url`` (str), and ``usage`` (dict or None).
         """
-        is_valid = self.validate_key()
+        url = f"{self._base_url}/v1/usage"
+        try:
+            resp = httpx.get(url, headers=self._auth_headers(), timeout=10.0)
+        except (httpx.ConnectError, httpx.TimeoutException):
+            return {
+                "authenticated": False,
+                "tier": None,
+                "cloud_url": self._base_url,
+                "usage": None,
+            }
+
+        if resp.status_code == 401:
+            return {
+                "authenticated": False,
+                "tier": None,
+                "cloud_url": self._base_url,
+                "usage": None,
+            }
+
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "authenticated": True,
+                "tier": data.get("tier", "free"),
+                "cloud_url": self._base_url,
+                "usage": data.get("usage"),
+            }
+
         return {
-            "authenticated": is_valid,
-            "tier": "free" if is_valid else None,
+            "authenticated": False,
+            "tier": None,
             "cloud_url": self._base_url,
+            "usage": None,
         }
 
     def query(
