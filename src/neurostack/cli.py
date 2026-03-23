@@ -1062,6 +1062,11 @@ def cmd_init(args):
             print()
             cmd_cloud_push(args)
             print()
+            print("  While indexing, you can query"
+                  " the cloud directly:")
+            print("    neurostack cloud query '...'"
+                  "  # Search via cloud API")
+            print()
             print("  When indexing finishes, run:")
             print("    neurostack cloud pull"
                   "        # Download indexed DB")
@@ -3413,7 +3418,9 @@ def cmd_cloud_pull(args):
         print()
         print("  All search modes now available:")
         print("    neurostack search 'query'"
-              "    # Hybrid search")
+              "    # Hybrid search (local)")
+        print("    neurostack cloud query '...'"
+              "  # Search via cloud API")
         print("    neurostack ask 'question'"
               "     # RAG Q&A with citations")
         print("    neurostack serve"
