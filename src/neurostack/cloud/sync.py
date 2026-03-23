@@ -204,6 +204,12 @@ class VaultSyncEngine:
                     for chunk in stream.iter_bytes(chunk_size=65536):
                         tmp_file.write(chunk)
 
+            # Remove stale WAL/SHM from previous DB before replacing
+            for suffix in ("-wal", "-shm"):
+                stale = target.with_name(target.name + suffix)
+                if stale.exists():
+                    stale.unlink()
+
             # Atomic rename
             tmp_path.rename(target)
             logger.info("DB downloaded to %s", target)
