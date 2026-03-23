@@ -671,3 +671,349 @@ class TestVaultJobsEndpoint:
         assert data[0]["job_id"] == "job-1"
         assert data[0]["status"] == "complete"
         assert data[0]["note_count"] == 100
+
+
+# ---------------------------------------------------------------------------
+# Account deletion endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestAccountDeleteEndpoint:
+    """Tests for DELETE /api/v1/user/account."""
+
+    @pytest.fixture
+    def app_client(self, mock_firestore, mock_firebase_admin):
+        app = _get_app()
+        app.state.meter = MagicMock()
+        app.state.meter.check_query_limit = AsyncMock(return_value=(True, ""))
+        app.state.meter.check_note_limit = AsyncMock(return_value=(True, ""))
+        app.state.tier_store = None
+        app.state.query_engine = MagicMock()
+        app.state.job_store = MagicMock()
+        app.state.storage = MagicMock()
+        app.state.storage.delete_user_data = MagicMock(return_value=5)
+        return app
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {'x' * 250}"}
+
+    @pytest.mark.asyncio
+    async def test_account_delete_returns_204(self, app_client, mock_firestore):
+        """DELETE /api/v1/user/account deletes user data and returns 204."""
+        from neurostack.cloud.user_store import create_user
+
+        await create_user("firebase-user-123", "test@example.com", "Test", "google.com")
+
+        with patch("neurostack.cloud.api.delete_user_account", new_callable=AsyncMock, return_value=True):
+            async with AsyncClient(
+                transport=ASGITransport(app=app_client),
+                base_url="http://test",
+            ) as client:
+                resp = await client.delete(
+                    "/api/v1/user/account", headers=self._auth_headers()
+                )
+
+        assert resp.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_account_delete_calls_gcs_and_stripe(self, app_client, mock_firestore):
+        """DELETE /api/v1/user/account calls GCS delete and Stripe cleanup."""
+        from neurostack.cloud.user_store import create_user
+
+        await create_user("firebase-user-123", "test@example.com", "Test", "google.com")
+        mock_firestore.collection("users")._data["firebase-user-123"]["stripe_customer_id"] = "cus_123"
+
+        with patch("neurostack.cloud.api.delete_user_account", new_callable=AsyncMock, return_value=True):
+            async with AsyncClient(
+                transport=ASGITransport(app=app_client),
+                base_url="http://test",
+            ) as client:
+                resp = await client.delete(
+                    "/api/v1/user/account", headers=self._auth_headers()
+                )
+
+        assert resp.status_code == 204
+        app_client.state.storage.delete_user_data.assert_called_once_with("firebase-user-123")
+
+
+# ---------------------------------------------------------------------------
+# Data export endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestUserExportEndpoint:
+    """Tests for GET /api/v1/user/export."""
+
+    @pytest.fixture
+    def app_client(self, mock_firestore, mock_firebase_admin):
+        app = _get_app()
+        app.state.meter = MagicMock()
+        app.state.meter.check_query_limit = AsyncMock(return_value=(True, ""))
+        app.state.meter.check_note_limit = AsyncMock(return_value=(True, ""))
+        app.state.tier_store = None
+        app.state.query_engine = MagicMock()
+        app.state.job_store = MagicMock()
+        app.state.storage = MagicMock()
+        return app
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {'x' * 250}"}
+
+    @pytest.mark.asyncio
+    async def test_user_export_returns_zip(self, app_client):
+        """GET /api/v1/user/export returns a zip file."""
+        import io
+        import zipfile
+
+        # Create a small zip in memory
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("test.md", "# Test note")
+        zip_bytes = buf.getvalue()
+
+        app_client.state.storage.export_user_vault.return_value = zip_bytes
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get(
+                "/api/v1/user/export", headers=self._auth_headers()
+            )
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/zip"
+        assert len(resp.content) > 0
+
+    @pytest.mark.asyncio
+    async def test_user_export_returns_404_no_vault(self, app_client):
+        """GET /api/v1/user/export returns 404 when user has no vault."""
+        app_client.state.storage.export_user_vault.return_value = None
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.get(
+                "/api/v1/user/export", headers=self._auth_headers()
+            )
+
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Device code flow endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeviceCodeEndpoints:
+    """Tests for device code flow: POST /api/v1/auth/device-code, device-confirm, device-token."""
+
+    @pytest.fixture
+    def app_client(self, mock_firestore, mock_firebase_admin):
+        app = _get_app()
+        app.state.meter = MagicMock()
+        app.state.meter.check_query_limit = AsyncMock(return_value=(True, ""))
+        app.state.meter.check_note_limit = AsyncMock(return_value=(True, ""))
+        app.state.tier_store = None
+        app.state.query_engine = MagicMock()
+        app.state.job_store = MagicMock()
+        app.state.storage = MagicMock()
+        return app
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {'x' * 250}"}
+
+    @pytest.mark.asyncio
+    async def test_device_code_returns_code_and_uri(self, app_client, mock_firestore):
+        """POST /api/v1/auth/device-code returns device_code, user_code, verification_uri."""
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/api/v1/auth/device-code")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "device_code" in data
+        assert "user_code" in data
+        assert len(data["user_code"]) == 8
+        assert data["verification_uri"] == "https://app.neurostack.sh/device"
+        assert data["expires_in"] == 600
+        assert data["interval"] == 5
+
+    @pytest.mark.asyncio
+    async def test_device_token_with_valid_confirmed_code(self, app_client, mock_firestore):
+        """POST /api/v1/auth/device-token with confirmed code returns API key."""
+        from neurostack.cloud.user_store import create_user
+
+        await create_user("firebase-user-123", "test@example.com", "Test", "google.com")
+
+        # First get a device code
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/api/v1/auth/device-code")
+            device_data = resp.json()
+            device_code = device_data["device_code"]
+            user_code = device_data["user_code"]
+
+            # Confirm it (authenticated from browser)
+            resp = await client.post(
+                "/api/v1/auth/device-confirm",
+                json={"user_code": user_code},
+                headers=self._auth_headers(),
+            )
+            assert resp.status_code == 200
+
+            # Now exchange the device code for an API key
+            resp = await client.post(
+                "/api/v1/auth/device-token",
+                json={"device_code": device_code},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "api_key" in data
+        assert "key_id" in data
+        assert data["name"] == "CLI (device flow)"
+
+    @pytest.mark.asyncio
+    async def test_device_token_with_invalid_code_returns_400(self, app_client, mock_firestore):
+        """POST /api/v1/auth/device-token with invalid code returns 400."""
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post(
+                "/api/v1/auth/device-token",
+                json={"device_code": "nonexistent-code"},
+            )
+
+        assert resp.status_code == 400
+        data = resp.json()
+        assert data["detail"]["error"] == "expired_token"
+
+    @pytest.mark.asyncio
+    async def test_device_token_with_pending_code_returns_428(self, app_client, mock_firestore):
+        """POST /api/v1/auth/device-token with pending code returns 428."""
+        # Get a device code but don't confirm it
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post("/api/v1/auth/device-code")
+            device_data = resp.json()
+
+            resp = await client.post(
+                "/api/v1/auth/device-token",
+                json={"device_code": device_data["device_code"]},
+            )
+
+        assert resp.status_code == 428
+        data = resp.json()
+        assert data["detail"]["error"] == "authorization_pending"
+
+
+# ---------------------------------------------------------------------------
+# Billing portal and checkout endpoint tests
+# ---------------------------------------------------------------------------
+
+
+class TestBillingPortalEndpoint:
+    """Tests for POST /v1/billing/portal."""
+
+    @pytest.fixture
+    def app_client(self, mock_firestore, mock_firebase_admin):
+        app = _get_app()
+        app.state.meter = MagicMock()
+        app.state.meter.check_query_limit = AsyncMock(return_value=(True, ""))
+        app.state.meter.check_note_limit = AsyncMock(return_value=(True, ""))
+        app.state.tier_store = None
+        app.state.query_engine = MagicMock()
+        app.state.job_store = MagicMock()
+        app.state.storage = MagicMock()
+        return app
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {'x' * 250}"}
+
+    @pytest.mark.asyncio
+    async def test_billing_portal_returns_url(self, app_client, mock_firestore):
+        """POST /v1/billing/portal with valid stripe_customer_id returns portal_url."""
+        from neurostack.cloud.user_store import create_user
+
+        await create_user("firebase-user-123", "test@example.com", "Test", "google.com")
+        mock_firestore.collection("users")._data["firebase-user-123"]["stripe_customer_id"] = "cus_test"
+
+        with patch("neurostack.cloud.billing.create_portal_session", return_value="https://billing.stripe.com/session/test"):
+            async with AsyncClient(
+                transport=ASGITransport(app=app_client),
+                base_url="http://test",
+            ) as client:
+                resp = await client.post(
+                    "/v1/billing/portal",
+                    json={"customer_id": "cus_test", "return_url": "https://app.neurostack.sh/dashboard/usage"},
+                    headers=self._auth_headers(),
+                )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["portal_url"] == "https://billing.stripe.com/session/test"
+
+    @pytest.mark.asyncio
+    async def test_billing_portal_no_stripe_returns_400(self, app_client, mock_firestore):
+        """POST /v1/billing/portal returns 400 when user has no stripe_customer_id."""
+        from neurostack.cloud.user_store import create_user
+
+        await create_user("firebase-user-123", "test@example.com", "Test", "google.com")
+
+        # Use the dashboard billing portal endpoint (not the old one)
+        async with AsyncClient(
+            transport=ASGITransport(app=app_client),
+            base_url="http://test",
+        ) as client:
+            resp = await client.post(
+                "/api/v1/billing/portal",
+                headers=self._auth_headers(),
+            )
+
+        assert resp.status_code == 400
+
+
+class TestBillingCheckoutEndpoint:
+    """Tests for POST /v1/billing/checkout."""
+
+    @pytest.fixture
+    def app_client(self, mock_firestore, mock_firebase_admin):
+        app = _get_app()
+        app.state.meter = MagicMock()
+        app.state.meter.check_query_limit = AsyncMock(return_value=(True, ""))
+        app.state.meter.check_note_limit = AsyncMock(return_value=(True, ""))
+        app.state.tier_store = None
+        app.state.query_engine = MagicMock()
+        app.state.job_store = MagicMock()
+        app.state.storage = MagicMock()
+        return app
+
+    def _auth_headers(self):
+        return {"Authorization": f"Bearer {'x' * 250}"}
+
+    @pytest.mark.asyncio
+    async def test_billing_checkout_returns_url(self, app_client, mock_firestore):
+        """POST /v1/billing/checkout with valid price_id returns checkout_url."""
+        with patch("neurostack.cloud.billing.create_checkout_session", return_value="https://checkout.stripe.com/test"):
+            async with AsyncClient(
+                transport=ASGITransport(app=app_client),
+                base_url="http://test",
+            ) as client:
+                resp = await client.post(
+                    "/v1/billing/checkout",
+                    json={"price_id": "price_pro_123"},
+                    headers=self._auth_headers(),
+                )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["checkout_url"] == "https://checkout.stripe.com/test"
