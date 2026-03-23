@@ -1750,19 +1750,11 @@ def cmd_install(args):
         use_cloud = setup == "cloud"
 
         if use_cloud:
-            # ── Cloud path: lite deps, then login + push ──
+            # ── Cloud path: lite deps, then login ──
             mode = "lite"
             pull_models = False
             embed_model = cfg.embed_model
             llm_model = cfg.llm_model
-
-            print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
-            print("  Mode:     lite (cloud handles indexing)")
-            print("  Auth:     browser login via Google")
-            print("  Index:    neurostack cloud push")
-            if not _confirm("\n  Proceed?", default=True):
-                print("\n  Cancelled.")
-                return
         else:
             # ── Local path: existing flow ──
             # Detect current mode
@@ -1950,8 +1942,7 @@ def cmd_install(args):
     # 5. Cloud setup (if cloud path was chosen)
     if use_cloud:
         print("\n  \033[32m✓\033[0m Dependencies installed (lite)")
-        print("\n  \033[1m━━━ Cloud Setup ━━━\033[0m\n")
-        print("  Logging in to NeuroStack Cloud...")
+        print("\n  \033[1m━━━ Cloud Login ━━━\033[0m\n")
         _cmd_cloud_device_login()
 
         # Check if login succeeded
@@ -1959,7 +1950,14 @@ def cmd_install(args):
         cloud_cfg = load_cloud_config()
         if cloud_cfg.cloud_api_key:
             print("\n  \033[32m✓\033[0m Logged in")
-            print("\n  \033[32mReady!\033[0m"
+            print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
+            print("  Mode:     lite (cloud handles indexing)")
+            print("  Search:   keyword (FTS5) available"
+                  " immediately")
+            print("  Full:     after neurostack cloud push"
+                  " + pull")
+            print()
+            print("  \033[32mReady!\033[0m"
                   " Run this next:")
             print("    neurostack init"
                   "              # Set up your vault")
