@@ -132,8 +132,17 @@ class TestGCSStorageClient:
         mock_bucket.blob.assert_called_once_with("vaults/user-42/neurostack.db")
         mock_blob.upload_from_filename.assert_called_once_with(str(db_path))
 
-    def test_generate_download_url(self, storage, mock_gcs):
-        """generate_download_url calls blob.generate_signed_url with v4 and expiration."""
+    @patch("google.auth.transport.requests.Request")
+    @patch("google.auth.default")
+    def test_generate_download_url(self, mock_auth_default, mock_request, storage, mock_gcs):
+        """generate_download_url calls blob.generate_signed_url with v4, IAM signing."""
+        import datetime
+
+        mock_creds = MagicMock()
+        mock_creds.service_account_email = "sa@test.iam.gserviceaccount.com"
+        mock_creds.token = "fake-token"
+        mock_auth_default.return_value = (mock_creds, "test-project")
+
         _, mock_bucket, _ = mock_gcs
         mock_blob = MagicMock()
         mock_blob.generate_signed_url.return_value = "https://storage.googleapis.com/signed-url"
@@ -145,12 +154,23 @@ class TestGCSStorageClient:
         mock_bucket.blob.assert_called_once_with("vaults/user-42/neurostack.db")
         mock_blob.generate_signed_url.assert_called_once_with(
             version="v4",
-            expiration=3600,
+            expiration=datetime.timedelta(seconds=3600),
             method="GET",
+            service_account_email="sa@test.iam.gserviceaccount.com",
+            access_token="fake-token",
         )
 
-    def test_generate_download_url_custom_expiry(self, storage, mock_gcs):
+    @patch("google.auth.transport.requests.Request")
+    @patch("google.auth.default")
+    def test_generate_download_url_custom_expiry(self, mock_auth_default, mock_request, storage, mock_gcs):
         """generate_download_url respects custom expires_in."""
+        import datetime
+
+        mock_creds = MagicMock()
+        mock_creds.service_account_email = "sa@test.iam.gserviceaccount.com"
+        mock_creds.token = "fake-token"
+        mock_auth_default.return_value = (mock_creds, "test-project")
+
         _, mock_bucket, _ = mock_gcs
         mock_blob = MagicMock()
         mock_blob.generate_signed_url.return_value = "https://example.com"
@@ -160,8 +180,10 @@ class TestGCSStorageClient:
 
         mock_blob.generate_signed_url.assert_called_once_with(
             version="v4",
-            expiration=7200,
+            expiration=datetime.timedelta(seconds=7200),
             method="GET",
+            service_account_email="sa@test.iam.gserviceaccount.com",
+            access_token="fake-token",
         )
 
     def test_upload_vault_files(self, storage, mock_gcs):
