@@ -1950,18 +1950,26 @@ def cmd_install(args):
         cloud_cfg = load_cloud_config()
         if cloud_cfg.cloud_api_key:
             print("\n  \033[32m✓\033[0m Logged in")
-            print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
-            print("  Mode:     lite (cloud handles indexing)")
-            print("  Search:   keyword (FTS5) available"
-                  " immediately")
-            print("  Full:     after neurostack cloud push"
-                  " + pull")
-            print()
-            print("  \033[32mReady!\033[0m"
-                  " Run this next:")
-            print("    neurostack init"
-                  "              # Set up your vault")
-            print()
+
+            # Fetch tier
+            from .cloud.client import CloudClient
+            tier = "Free"
+            try:
+                client = CloudClient(cloud_cfg)
+                info = client.status()
+                tier = (info.get("tier") or "free").capitalize()
+            except Exception:
+                pass
+            print(f"  Plan:     {tier}")
+            print("  Dashboard:"
+                  " https://app.neurostack.sh")
+
+            # Auto-run init — set defaults for init args
+            print("\n  \033[1m━━━ Vault Setup ━━━\033[0m\n")
+            args.path = None
+            args.profession = None
+            args.index = True
+            cmd_init(args)
         else:
             print("\n  \033[33m!\033[0m Login skipped")
             print("\n  \033[32mInstalled!\033[0m (lite)"
