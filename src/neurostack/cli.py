@@ -14,9 +14,9 @@ from pathlib import Path
 import httpx
 
 from . import __version__
-from .config import CONFIG_PATH, get_config
 from .cloud.client import CloudClient
-from .cloud.config import load_cloud_config, save_cloud_config, clear_cloud_credentials, CloudConfig
+from .cloud.config import CloudConfig, clear_cloud_credentials, load_cloud_config, save_cloud_config
+from .config import CONFIG_PATH, get_config
 
 
 def cmd_index(args):
@@ -3122,17 +3122,17 @@ def cmd_cloud(args):
             print(json.dumps(result, indent=2))
         else:
             if result["authenticated"]:
-                print(f"  Status: Authenticated")
+                print("  Status: Authenticated")
                 print(f"  Cloud:  {result['cloud_url']}")
                 tier = result.get("tier", "unknown")
                 print(f"  Tier:   {tier}")
                 if result.get("connection") == "unreachable":
-                    print(f"  Note:   Cloud API unreachable (credentials stored locally)")
+                    print("  Note:   Cloud API unreachable (credentials stored locally)")
             else:
-                print(f"  Status: Not authenticated")
+                print("  Status: Not authenticated")
                 url = result["cloud_url"]
                 print(f"  Cloud:  {url}")
-                print(f"  Run:    neurostack cloud login")
+                print("  Run:    neurostack cloud login")
 
     elif subcmd == "setup":
         cfg = load_cloud_config()
@@ -3151,7 +3151,7 @@ def cmd_cloud(args):
             if client.validate_key():
                 save_cloud_config(cloud_api_url=url, cloud_api_key=api_key)
                 print(f"  Cloud configured: {url}")
-                print(f"  Authenticated successfully.")
+                print("  Authenticated successfully.")
             else:
                 print("  Error: Invalid API key.")
                 sys.exit(1)
@@ -3191,7 +3191,7 @@ def cmd_cloud(args):
 def cmd_cloud_push(args):
     """Upload vault files to cloud for indexing."""
     from .cloud.config import load_cloud_config
-    from .cloud.sync import VaultSyncEngine, SyncError
+    from .cloud.sync import SyncError, VaultSyncEngine
 
     cfg = get_config()
     cloud_cfg = load_cloud_config()
@@ -3225,7 +3225,7 @@ def cmd_cloud_push(args):
 def cmd_cloud_pull(args):
     """Download indexed database from cloud."""
     from .cloud.config import load_cloud_config
-    from .cloud.sync import VaultSyncEngine, SyncError
+    from .cloud.sync import SyncError, VaultSyncEngine
 
     cfg = get_config()
     cloud_cfg = load_cloud_config()
@@ -3974,7 +3974,9 @@ def main():
         sys.exit(1)
 
     # Preflight: nudge user to run init if vault doesn't exist yet
-    _skip_preflight = {"init", "install", "uninstall", "doctor", "status", "demo", "update", "cloud"}
+    _skip_preflight = {
+        "init", "install", "uninstall", "doctor", "status", "demo", "update", "cloud",
+    }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():
         print(f"\n  \033[33m!\033[0m Vault not found at {vault_path}")
