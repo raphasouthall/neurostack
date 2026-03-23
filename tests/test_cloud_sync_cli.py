@@ -152,8 +152,9 @@ class TestCloudPullSuccess:
 
         mock_engine.pull.assert_called_once()
         out = capsys.readouterr().out
-        assert "Downloaded database" in out
+        assert "Downloaded" in out
         assert "1.0 MB" in out
+        assert "Setup complete" in out
 
 
 # ---------------------------------------------------------------------------
