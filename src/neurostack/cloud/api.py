@@ -161,6 +161,27 @@ class PortalResponse(BaseModel):
     portal_url: str
 
 
+class VaultStatsResponse(BaseModel):
+    note_count: int = 0
+    chunk_count: int = 0
+    embedding_count: int = 0
+    last_sync: str | None = None
+
+
+class JobHistoryItem(BaseModel):
+    job_id: str
+    status: str  # queued|indexing|complete|failed
+    note_count: int = 0
+    started: str | None = None
+    duration: float | None = None  # seconds
+
+
+class VaultHealthResponse(BaseModel):
+    embedding_coverage_pct: float = 0.0
+    summary_coverage_pct: float = 0.0
+    triple_count: int = 0
+
+
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 10
@@ -402,6 +423,43 @@ async def download_db(
         download_url=url,
         expires_in=3600,
     )
+
+
+@app.get("/v1/vault/stats", response_model=VaultStatsResponse)
+async def vault_stats(
+    user: dict = Depends(require_auth),
+):
+    """Return vault statistics for the authenticated user."""
+    user_id = user["user_id"]
+    try:
+        stats = app.state.query_engine.get_db_stats(user_id)
+        return VaultStatsResponse(**stats)
+    except FileNotFoundError:
+        return VaultStatsResponse()
+
+
+@app.get("/v1/vault/health", response_model=VaultHealthResponse)
+async def vault_health(
+    user: dict = Depends(require_auth),
+):
+    """Return vault health metrics for the authenticated user."""
+    user_id = user["user_id"]
+    try:
+        health = app.state.query_engine.get_health_stats(user_id)
+        return VaultHealthResponse(**health)
+    except FileNotFoundError:
+        return VaultHealthResponse()
+
+
+@app.get("/v1/vault/jobs", response_model=list[JobHistoryItem])
+async def vault_jobs(
+    limit: int = 10,
+    user: dict = Depends(require_auth),
+):
+    """Return paginated job history for the authenticated user."""
+    limit = min(limit, 50)
+    jobs = app.state.job_store.list_user_jobs(user["user_id"], limit)
+    return [JobHistoryItem(**j) for j in jobs]
 
 
 @app.post("/v1/vault/query", response_model=QueryResponse)

@@ -356,6 +356,77 @@ class CloudQueryEngine:
         ).fetchone()
         return row["title"] if row else note_path
 
+    # ------------------------------------------------------------------
+    # Stats / health
+    # ------------------------------------------------------------------
+
+    def get_db_stats(self, user_id: str) -> dict:
+        """Return note/chunk/embedding counts and last sync time."""
+        db_path = self._ensure_db(user_id)
+        conn = self._connect(db_path)
+        try:
+            note_count = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+            chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            try:
+                embedding_count = conn.execute(
+                    "SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL"
+                ).fetchone()[0]
+            except Exception:
+                embedding_count = chunk_count
+            import datetime
+
+            mtime = db_path.stat().st_mtime
+            last_sync = datetime.datetime.fromtimestamp(
+                mtime, tz=datetime.timezone.utc
+            ).isoformat()
+            return {
+                "note_count": note_count,
+                "chunk_count": chunk_count,
+                "embedding_count": embedding_count,
+                "last_sync": last_sync,
+            }
+        finally:
+            conn.close()
+
+    def get_health_stats(self, user_id: str) -> dict:
+        """Return embedding/summary coverage and triple count."""
+        db_path = self._ensure_db(user_id)
+        conn = self._connect(db_path)
+        try:
+            note_count = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+            chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            try:
+                summary_count = conn.execute(
+                    "SELECT COUNT(*) FROM summaries"
+                ).fetchone()[0]
+            except Exception:
+                summary_count = 0
+            summary_pct = round(
+                (summary_count / note_count * 100) if note_count > 0 else 0.0, 1
+            )
+            try:
+                emb_count = conn.execute(
+                    "SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL"
+                ).fetchone()[0]
+            except Exception:
+                emb_count = 0
+            emb_pct = round(
+                (emb_count / chunk_count * 100) if chunk_count > 0 else 0.0, 1
+            )
+            try:
+                triple_count = conn.execute(
+                    "SELECT COUNT(*) FROM triples"
+                ).fetchone()[0]
+            except Exception:
+                triple_count = 0
+            return {
+                "embedding_coverage_pct": emb_pct,
+                "summary_coverage_pct": summary_pct,
+                "triple_count": triple_count,
+            }
+        finally:
+            conn.close()
+
     def get_summary(
         self,
         user_id: str,
