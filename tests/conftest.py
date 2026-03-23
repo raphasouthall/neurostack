@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import textwrap
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -145,3 +146,164 @@ def populated_db(in_memory_db, tmp_vault):
 
     conn.commit()
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Firebase / Firestore test fixtures
+# ---------------------------------------------------------------------------
+
+MOCK_FIREBASE_DECODED_TOKEN = {
+    "uid": "firebase-user-123",
+    "email": "test@example.com",
+    "firebase": {
+        "sign_in_provider": "google.com",
+    },
+}
+
+
+@pytest.fixture
+def mock_firebase_admin():
+    """Patch firebase_admin.auth.verify_id_token to return a mock decoded token.
+
+    Also patches firebase_admin.initialize_app to avoid real init.
+    """
+    with (
+        patch("firebase_admin.auth.verify_id_token", return_value=MOCK_FIREBASE_DECODED_TOKEN),
+        patch("firebase_admin.initialize_app", return_value=MagicMock()),
+    ):
+        # Reset the singleton so it re-initializes with mock
+        import neurostack.cloud.firebase_init as fi
+        old_app = fi._app
+        fi._app = None
+        yield MOCK_FIREBASE_DECODED_TOKEN
+        fi._app = old_app
+
+
+class MockFirestoreDoc:
+    """Mock Firestore document snapshot."""
+
+    def __init__(self, data: dict | None, doc_id: str = "doc", parent=None):
+        self._data = data
+        self.exists = data is not None
+        self.id = doc_id
+        self.reference = MagicMock()
+        self.reference.id = doc_id
+        if parent:
+            self.reference.parent = MagicMock()
+            self.reference.parent.parent = parent
+
+    def to_dict(self):
+        return self._data
+
+
+class MockFirestoreCollection:
+    """In-memory mock of a Firestore collection/subcollection."""
+
+    def __init__(self, data: dict | None = None):
+        self._data = data or {}  # {doc_id: {field: value}}
+
+    def document(self, doc_id):
+        doc_ref = MagicMock()
+        doc_ref.id = doc_id
+
+        async def _get():
+            if doc_id in self._data:
+                return MockFirestoreDoc(self._data[doc_id], doc_id=doc_id)
+            return MockFirestoreDoc(None, doc_id=doc_id)
+
+        async def _set(data, merge=False):
+            if merge and doc_id in self._data:
+                self._data[doc_id].update(data)
+            else:
+                self._data[doc_id] = dict(data)
+
+        async def _update(data):
+            if doc_id in self._data:
+                self._data[doc_id].update(data)
+            else:
+                self._data[doc_id] = dict(data)
+
+        doc_ref.get = _get
+        doc_ref.set = _set
+        doc_ref.update = _update
+        doc_ref.collection = lambda name: MockFirestoreCollection(
+            self._data.get(doc_id, {}).get(f"_sub_{name}", {})
+        )
+        return doc_ref
+
+    def collection(self, name):
+        return MockFirestoreCollection()
+
+
+class MockFirestoreClient:
+    """In-memory mock of google.cloud.firestore_v1.AsyncClient."""
+
+    def __init__(self):
+        self._collections = {}  # {name: MockFirestoreCollection}
+
+    def collection(self, name):
+        if name not in self._collections:
+            self._collections[name] = MockFirestoreCollection()
+        return self._collections[name]
+
+    def collection_group(self, name):
+        """Mock collection group query."""
+        return MockCollectionGroupQuery(self, name)
+
+
+class MockCollectionGroupQuery:
+    """Mock collection group query for api_keys."""
+
+    def __init__(self, client: MockFirestoreClient, collection_name: str):
+        self._client = client
+        self._collection_name = collection_name
+        self._filters = []
+
+    def where(self, field, op, value):
+        self._filters.append((field, op, value))
+        return self
+
+    def stream(self):
+        return self._stream()
+
+    async def _stream(self):
+        """Yield matching docs from all subcollections."""
+        users_col = self._client._collections.get("users")
+        if not users_col:
+            return
+
+        for uid, user_data in users_col._data.items():
+            sub_key = f"_sub_{self._collection_name}"
+            if sub_key not in user_data:
+                continue
+            sub_data = user_data[sub_key]
+            for key_id, key_data in sub_data.items():
+                if self._matches(key_data):
+                    parent_ref = MagicMock()
+                    parent_ref.id = uid
+                    parent_mock = MagicMock()
+                    parent_mock.parent = parent_ref
+                    yield MockFirestoreDoc(
+                        key_data,
+                        doc_id=key_id,
+                        parent=parent_ref,
+                    )
+
+    def _matches(self, data: dict) -> bool:
+        for field, op, value in self._filters:
+            if op == "==":
+                if data.get(field) != value:
+                    return False
+        return True
+
+
+@pytest.fixture
+def mock_firestore():
+    """Provide an in-memory MockFirestoreClient and patch the user_store module."""
+    client = MockFirestoreClient()
+
+    # Patch the singleton in user_store
+    with patch("neurostack.cloud.user_store._db", client):
+        # Also patch _get_db to return our mock
+        with patch("neurostack.cloud.user_store._get_db", return_value=client):
+            yield client
