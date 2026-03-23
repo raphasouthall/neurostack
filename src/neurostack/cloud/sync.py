@@ -250,15 +250,25 @@ class VaultSyncEngine:
         search_text: str,
         *,
         top_k: int = 10,
+        depth: str = "auto",
         mode: str = "hybrid",
-    ) -> list[dict]:
+        workspace: str | None = None,
+    ) -> dict:
         """Query the cloud-indexed vault.
 
         Sends POST /v1/vault/query with search params.
-        Handles 501 (not implemented) gracefully.
+        Returns dict with triples, summaries, chunks, and depth_used.
         """
         with httpx.Client(headers=self._headers(), timeout=30.0) as client:
-            body = {"query": search_text, "top_k": top_k, "mode": mode}
+            body: dict = {
+                "query": search_text,
+                "top_k": top_k,
+                "depth": depth,
+                "mode": mode,
+            }
+            if workspace:
+                body["workspace"] = workspace
+
             resp = client.post(f"{self._api_url}/v1/vault/query", json=body)
 
             try:
@@ -271,5 +281,4 @@ class VaultSyncEngine:
                     )
                 raise
 
-            data = resp.json()
-            return data.get("results", [])
+            return resp.json()
