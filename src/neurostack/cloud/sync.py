@@ -178,41 +178,70 @@ class VaultSyncEngine:
 
         Steps:
         1. GET /v1/vault/download -> presigned URL
-        2. Stream download to temp file
-        3. Atomic rename to db_dir/neurostack.db
-        4. Return path to downloaded DB
+        2. Stream download to temp file (separate client, no auth headers)
+        3. Verify downloaded size matches Content-Length
+        4. Atomic rename to db_dir/neurostack.db
+        5. Return path to downloaded DB
         """
         target = db_path or (self._db_dir / "neurostack.db")
         target.parent.mkdir(parents=True, exist_ok=True)
 
+        # Step 1: Get presigned download URL (authenticated)
         with httpx.Client(headers=self._headers(), timeout=60.0) as client:
-            # Get presigned download URL
             resp = client.get(f"{self._api_url}/v1/vault/download")
             resp.raise_for_status()
             download_info = resp.json()
             download_url = download_info["download_url"]
 
-            logger.info("Downloading DB from presigned URL...")
+        logger.info("Downloading DB from presigned URL...")
 
-            # Stream to temp file, then atomic rename
-            with tempfile.NamedTemporaryFile(
-                dir=str(target.parent), delete=False, suffix=".tmp"
-            ) as tmp_file:
-                tmp_path = Path(tmp_file.name)
-                with client.stream("GET", download_url) as stream:
-                    stream.raise_for_status()
-                    for chunk in stream.iter_bytes(chunk_size=65536):
-                        tmp_file.write(chunk)
+        # Step 2: Stream download with a SEPARATE client — no auth headers
+        # (GCS signed URLs reject extra Authorization headers) and a longer
+        # timeout suitable for large files (72MB+).
+        download_timeout = httpx.Timeout(
+            connect=30.0, read=300.0, write=30.0, pool=30.0
+        )
+        bytes_written = 0
+        with tempfile.NamedTemporaryFile(
+            dir=str(target.parent), delete=False, suffix=".tmp"
+        ) as tmp_file:
+            tmp_path = Path(tmp_file.name)
+            try:
+                with httpx.Client(timeout=download_timeout) as dl_client:
+                    with dl_client.stream("GET", download_url) as stream:
+                        stream.raise_for_status()
+                        expected_size = stream.headers.get("content-length")
+                        for chunk in stream.iter_bytes(chunk_size=131072):
+                            tmp_file.write(chunk)
+                            bytes_written += len(chunk)
+            except Exception:
+                # Clean up temp file on failure
+                tmp_path.unlink(missing_ok=True)
+                raise
 
-            # Remove stale WAL/SHM from previous DB before replacing
-            for suffix in ("-wal", "-shm"):
-                stale = target.with_name(target.name + suffix)
-                if stale.exists():
-                    stale.unlink()
+        # Step 3: Verify download integrity
+        if expected_size is not None:
+            expected = int(expected_size)
+            if bytes_written != expected:
+                tmp_path.unlink(missing_ok=True)
+                raise SyncError(
+                    f"Download incomplete: got {bytes_written} bytes, "
+                    f"expected {expected} bytes"
+                )
 
-            # Atomic rename
-            tmp_path.rename(target)
-            logger.info("DB downloaded to %s", target)
+        logger.info(
+            "Downloaded %d bytes to temp file", bytes_written
+        )
+
+        # Step 4: Remove stale WAL/SHM from previous DB before replacing
+        for suffix in ("-wal", "-shm"):
+            stale = target.with_name(target.name + suffix)
+            if stale.exists():
+                stale.unlink()
+
+        # Step 5: Atomic rename
+        tmp_path.rename(target)
+        logger.info("DB saved to %s (%d bytes)", target, bytes_written)
 
         return target
 

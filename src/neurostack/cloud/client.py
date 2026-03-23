@@ -92,3 +92,64 @@ class CloudClient:
             "tier": "free" if is_valid else None,
             "cloud_url": self._base_url,
         }
+
+    def query(
+        self,
+        query: str,
+        *,
+        top_k: int = 10,
+        depth: str = "auto",
+        mode: str = "hybrid",
+        workspace: str | None = None,
+    ) -> dict:
+        """Run a tiered search against the cloud-indexed vault.
+
+        Returns dict with triples, summaries, chunks, and depth_used.
+        """
+        url = f"{self._base_url}/v1/vault/query"
+        body: dict = {"query": query, "top_k": top_k, "depth": depth, "mode": mode}
+        if workspace:
+            body["workspace"] = workspace
+
+        resp = httpx.post(
+            url, json=body, headers=self._auth_headers(), timeout=60.0
+        )
+        if resp.status_code == 404:
+            raise FileNotFoundError(resp.json().get("detail", "No database found"))
+        resp.raise_for_status()
+        return resp.json()
+
+    def triples(
+        self,
+        query: str,
+        *,
+        top_k: int = 10,
+        workspace: str | None = None,
+    ) -> list[dict]:
+        """Search knowledge graph triples in the cloud vault."""
+        url = f"{self._base_url}/v1/vault/triples"
+        body: dict = {"query": query, "top_k": top_k}
+        if workspace:
+            body["workspace"] = workspace
+
+        resp = httpx.post(
+            url, json=body, headers=self._auth_headers(), timeout=60.0
+        )
+        if resp.status_code == 404:
+            raise FileNotFoundError(resp.json().get("detail", "No database found"))
+        resp.raise_for_status()
+        return resp.json().get("triples", [])
+
+    def summary(self, note_path: str) -> dict | None:
+        """Get the pre-computed summary for a note."""
+        url = f"{self._base_url}/v1/vault/summary"
+        resp = httpx.post(
+            url,
+            json={"note_path": note_path},
+            headers=self._auth_headers(),
+            timeout=30.0,
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
