@@ -3423,12 +3423,10 @@ def cmd_cloud_pull(args):
         print("  \033[1m━━━ Setup complete ━━━\033[0m")
         print()
         print("  All search modes now available:")
-        print("    neurostack search 'query'"
-              "    # Hybrid search (local)")
         print("    neurostack cloud query '...'"
               "  # Search via cloud API")
-        print("    neurostack ask 'question'"
-              "     # RAG Q&A with citations")
+        print("    neurostack search 'query'"
+              "    # Hybrid search (local)")
         print("    neurostack serve"
               "             # Start MCP server")
         print()
