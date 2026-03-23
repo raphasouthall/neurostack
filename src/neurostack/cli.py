@@ -934,9 +934,16 @@ def cmd_init(args):
     # ── Interactive setup wizard ──
     print("\n  \033[1m━━━ NeuroStack Setup ━━━\033[0m\n")
 
-    # Hardware check and mode recommendation
-    _print_hardware_recommendation()
-    print()
+    # Hardware check — skip if using cloud mode
+    from .cloud.config import load_cloud_config
+    _cloud_cfg = load_cloud_config()
+    if _cloud_cfg.cloud_api_key:
+        print("  \033[1mMode\033[0m")
+        print("    \033[32m✓\033[0m Cloud — Gemini handles indexing")
+        print()
+    else:
+        _print_hardware_recommendation()
+        print()
 
     # 1. Vault path
     print("  Your vault is the directory where your Markdown notes live.")
