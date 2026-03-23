@@ -6,12 +6,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Manifest tests
@@ -171,7 +168,7 @@ class TestManifestDiff:
 
     def test_diff_returns_empty_when_identical(self):
         """diff() returns empty SyncDiff when old and new are identical."""
-        from neurostack.cloud.manifest import Manifest, SyncDiff
+        from neurostack.cloud.manifest import Manifest
 
         entries = {"note.md": "abc123", "sub/note2.md": "def456"}
         old = Manifest(dict(entries))
@@ -663,7 +660,7 @@ class TestSyncEngineQuery:
         mock_client.__exit__ = MagicMock(return_value=False)
 
         with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
-            results = engine.query("hello world")
+            engine.query("hello world")
 
         mock_client.post.assert_called_once()
         post_call = mock_client.post.call_args
