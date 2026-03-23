@@ -145,13 +145,21 @@ app = FastAPI(title="NeuroStack Cloud", version="0.8.0", lifespan=lifespan)
 def _run_indexing(
     app_state, job_id: str, user_id: str, vault_files: dict[str, bytes]
 ) -> None:
-    """Run indexing in a background thread.
+    """Run GCS upload + indexing in a background thread.
 
+    Stores raw vault files in GCS first, then triggers indexing.
     Updates app_state.jobs[job_id] with progress and results.
     """
     try:
         with app_state.jobs_lock:
+            app_state.jobs[job_id]["status"] = "uploading"
+
+        # Upload raw vault files to GCS (can be slow for many files)
+        app_state.storage.upload_vault_files(user_id, vault_files)
+
+        with app_state.jobs_lock:
             app_state.jobs[job_id]["status"] = "indexing"
+
         result = app_state.indexer.index_vault(user_id, vault_files)
         with app_state.jobs_lock:
             app_state.jobs[job_id].update(result)
@@ -216,10 +224,9 @@ async def upload_vault(
 
         vault_files[safe_name] = content
 
-    # Store raw vault files in R2 under tenant prefix
-    app.state.storage.upload_vault_files(user_id, vault_files)
-
-    # Create job scoped to this user and start background indexing
+    # Create job scoped to this user and start background thread.
+    # GCS upload + indexing both happen in the background to avoid
+    # blocking the 202 response (446 files = slow sequential uploads).
     job_id = str(uuid.uuid4())
     with app.state.jobs_lock:
         app.state.jobs[job_id] = {
