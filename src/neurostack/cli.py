@@ -3025,8 +3025,9 @@ def _cmd_cloud_device_login() -> None:
     interval = data.get("interval", 5)
 
     # Step 2: Show code and open browser
-    print(f"\n  Open this URL in your browser: {verification_uri}")
-    print(f"  Enter this code: \033[1m{user_code}\033[0m\n")
+    print(f"\n  Opening browser... Sign in with Google, then enter this code:")
+    print(f"  Code: \033[1m{user_code}\033[0m")
+    print(f"  URL:  {verification_uri}\n")
 
     try:
         webbrowser.open(verification_uri)
