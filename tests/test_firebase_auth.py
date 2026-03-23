@@ -286,13 +286,32 @@ class TestRevokeApiKey:
 # ---------------------------------------------------------------------------
 
 
+def _get_app():
+    """Import the FastAPI app, mocking heavy deps that require numpy/ML."""
+    import sys
+
+    # Mock numpy and heavy modules to avoid needing the 'full' extra
+    mock_modules = {}
+    for mod_name in ["numpy"]:
+        if mod_name not in sys.modules:
+            mock_modules[mod_name] = MagicMock()
+            sys.modules[mod_name] = mock_modules[mod_name]
+
+    try:
+        from neurostack.cloud.api import app
+        return app
+    finally:
+        for mod_name in mock_modules:
+            sys.modules.pop(mod_name, None)
+
+
 class TestRegisterEndpoint:
     """Tests for POST /api/v1/user/register."""
 
     @pytest.fixture
     def app_client(self, mock_firestore, mock_firebase_admin):
         """Create a test client with mocked auth and Firestore."""
-        from neurostack.cloud.api import app
+        app = _get_app()
 
         # Set up minimal app state
         app.state.meter = MagicMock()
@@ -374,8 +393,7 @@ class TestApiKeyEndpoints:
     @pytest.fixture
     def app_client(self, mock_firestore, mock_firebase_admin):
         """Create a test client with mocked auth and Firestore."""
-        from neurostack.cloud.api import app
-
+        app = _get_app()
         app.state.meter = MagicMock()
         app.state.tier_store = None
         return app
