@@ -10,7 +10,10 @@ User documents live at ``users/{uid}`` and API keys live in
 from __future__ import annotations
 
 import hashlib
+import os
+import secrets
 
+import stripe
 from google.cloud import firestore
 from google.cloud.firestore_v1 import AsyncClient
 
@@ -101,3 +104,88 @@ async def lookup_api_key(raw_key: str, db: AsyncClient | None = None) -> dict | 
         }
 
     return None
+
+
+async def ensure_stripe_customer(
+    uid: str, email: str, name: str, db: AsyncClient | None = None
+) -> str:
+    """Create Stripe customer on first login if not exists. Returns customer_id."""
+    client = db or _get_db()
+    user_ref = client.collection("users").document(uid)
+    user_doc = await user_ref.get()
+    user_data = user_doc.to_dict()
+
+    if user_data and user_data.get("stripe_customer_id"):
+        return user_data["stripe_customer_id"]
+
+    stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+    customer = stripe.Customer.create(
+        email=email,
+        name=name,
+        metadata={"firebase_uid": uid},
+    )
+
+    await user_ref.update({"stripe_customer_id": customer.id})
+    return customer.id
+
+
+def generate_api_key() -> tuple[str, str]:
+    """Generate an API key. Returns (plaintext, SHA-256 hash)."""
+    raw = f"nsk-{secrets.token_urlsafe(32)}"
+    key_hash = hashlib.sha256(raw.encode()).hexdigest()
+    return raw, key_hash
+
+
+async def create_api_key(
+    uid: str, name: str, db: AsyncClient | None = None
+) -> dict:
+    """Create a new API key for a user. Returns {key, key_id, name, prefix}."""
+    client = db or _get_db()
+    plaintext, key_hash = generate_api_key()
+    key_ref = client.collection("users").document(uid).collection("api_keys").document()
+    key_data = {
+        "name": name,
+        "key_hash": key_hash,
+        "prefix": plaintext[:12],  # "nsk-XXXXXXXX" for display
+        "created_at": firestore.SERVER_TIMESTAMP,
+        "last_used": None,
+    }
+    await key_ref.set(key_data)
+    return {
+        "key": plaintext,  # Shown once, never stored in plaintext
+        "key_id": key_ref.id,
+        "name": name,
+        "prefix": plaintext[:12],
+    }
+
+
+async def list_api_keys(
+    uid: str, db: AsyncClient | None = None
+) -> list[dict]:
+    """List all API keys for a user (prefix + name, never hash)."""
+    client = db or _get_db()
+    keys_ref = client.collection("users").document(uid).collection("api_keys")
+    keys = []
+    async for doc in keys_ref.stream():
+        data = doc.to_dict()
+        keys.append({
+            "key_id": doc.id,
+            "name": data.get("name", ""),
+            "prefix": data.get("prefix", ""),
+            "created_at": data.get("created_at"),
+            "last_used": data.get("last_used"),
+        })
+    return keys
+
+
+async def revoke_api_key(
+    uid: str, key_id: str, db: AsyncClient | None = None
+) -> bool:
+    """Delete an API key. Returns True if deleted, False if not found."""
+    client = db or _get_db()
+    key_ref = client.collection("users").document(uid).collection("api_keys").document(key_id)
+    doc = await key_ref.get()
+    if not doc.exists:
+        return False
+    await key_ref.delete()
+    return True
