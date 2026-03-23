@@ -15,8 +15,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml README.md ./
 COPY src/ src/
 
-# Install with api + cloud extras
-RUN uv pip install --system ".[api,cloud]"
+# Install with api + cloud + full (numpy for embeddings) extras
+RUN uv pip install --system ".[api,cloud,full]"
 
 FROM python:3.11-slim
 
