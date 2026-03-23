@@ -13,11 +13,28 @@ neurostack install
 neurostack init
 ```
 
-No prior config needed. The npm package bootstraps Python, uv, and all dependencies.
+No prior config needed. The installer asks how you want to run NeuroStack:
+
+### Cloud (recommended)
+
+No GPU, no Ollama, no ML dependencies. Gemini indexes your vault server-side. You get embeddings, summaries, triples, and semantic search without running anything locally.
+
+```bash
+neurostack install            # choose "Cloud"
+neurostack init               # point at your vault
+neurostack cloud push         # upload + index via Gemini
+neurostack cloud pull         # download indexed DB
+```
+
+Your vault files are uploaded for indexing, then the indexed SQLite DB is synced back. All search runs locally against that DB. Free tier: 500 queries/month, 200 notes. [Manage your account](https://app.neurostack.sh).
+
+### Local (self-hosted)
+
+Run everything on your machine with Ollama. Choose a tier during `neurostack install`:
 
 - **Lite** (~130 MB) -- FTS5 search, wiki-link graph, stale detection, MCP server. No GPU or Ollama required.
-- **Full** (~560 MB, default) -- adds semantic search, AI summaries, and cross-encoder reranking via local [Ollama](https://ollama.ai). Summarization is CPU-intensive; a GPU or 6+ core CPU is recommended. On low-end hardware (dual-core, 8 GB RAM) a single note can take 5+ minutes to summarize.
-- **Community** (~575 MB) -- adds GraphRAG topic clustering via Leiden algorithm.
+- **Full** (~560 MB) -- adds semantic search, AI summaries, and cross-encoder reranking via local [Ollama](https://ollama.ai). GPU or 6+ core CPU recommended.
+- **Community** (~575 MB) -- adds GraphRAP topic clustering via Leiden algorithm.
 
 <details>
 <summary><strong>Alternative install methods</strong></summary>
@@ -226,6 +243,13 @@ neurostack harvest --sessions 5          # extract session insights
 neurostack sessions search "query"       # search transcripts
 neurostack hooks install                 # hourly harvest timer
 
+# Cloud
+neurostack cloud login                   # browser OAuth login
+neurostack cloud status                  # auth + vault info
+neurostack cloud push                    # upload + index vault
+neurostack cloud pull                    # download indexed DB
+neurostack cloud query "query"           # search via cloud API
+
 # Diagnostics
 neurostack stats                         # index health
 neurostack doctor                        # validate all subsystems
@@ -246,21 +270,47 @@ Each maintenance feature is modeled on a specific mechanism from memory neurosci
 
 Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
+## NeuroStack Cloud
+
+Don't have a GPU? Don't want to run Ollama? NeuroStack Cloud indexes your vault with Gemini and distributes the indexed database back to your devices.
+
+| | Local | Cloud |
+|--|-------|-------|
+| **Indexing** | Ollama on your machine | Gemini API (server-side) |
+| **Search** | Local SQLite | Local SQLite (same DB) |
+| **GPU required** | Recommended for Full mode | No |
+| **Multi-device** | Manual DB sync | Push once, pull anywhere |
+| **Setup time** | Install Ollama + models | One command |
+| **Cost** | Free (your hardware) | Free tier / $19/mo Pro |
+| **Vault privacy** | Never leaves your machine | Uploaded for indexing, DB returned |
+
+```bash
+neurostack cloud login        # sign in via browser (Google OAuth)
+neurostack cloud push         # upload changed notes, index with Gemini
+neurostack cloud pull         # download indexed SQLite DB
+neurostack cloud query "..."  # query directly via cloud API
+```
+
+Dashboard: [app.neurostack.sh](https://app.neurostack.sh) -- vault stats, API keys, usage, billing, query playground.
+
 ## FAQ
 
 **Does it modify my vault files?** No. All data lives in NeuroStack's own SQLite databases. Your Markdown files are strictly read-only.
 
-**Do I need a GPU?** Lite mode has zero ML dependencies. Full mode runs on CPU but summarization is slow without a GPU or a fast multi-core processor. Embedding (nomic-embed-text) is fine on CPU.
+**Do I need a GPU?** No. Use NeuroStack Cloud for zero-GPU setup. For local mode, Lite has zero ML dependencies. Full mode runs on CPU but summarization is slow without a GPU.
 
-**How large a vault can it handle?** Tested with ~5,000 notes. FTS5 search stays fast at any size.
+**How large a vault can it handle?** Tested with ~5,000 notes. FTS5 search stays fast at any size. Cloud indexing handles 500+ notes in minutes.
 
 **Can I use it without MCP?** Yes. The CLI works standalone. Pipe output into any LLM.
+
+**Is my vault private?** In local mode, nothing leaves your machine. In cloud mode, your Markdown files are uploaded for indexing via HTTPS, processed by Gemini, and the indexed DB is returned. Files are not stored after indexing completes.
 
 ## Requirements
 
 - Linux or macOS
 - **npm install**: just Node.js -- everything else is bootstrapped
-- **Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and a summary model. GPU or 6+ core CPU recommended for summarization.
+- **Cloud mode**: just Node.js. No GPU, no Ollama, no Python ML deps.
+- **Local Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and a summary model. GPU or 6+ core CPU recommended.
 
 ## Get involved
 
