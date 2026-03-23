@@ -197,39 +197,86 @@ class MockFirestoreDoc:
 
 
 class MockFirestoreCollection:
-    """In-memory mock of a Firestore collection/subcollection."""
+    """In-memory mock of a Firestore collection/subcollection.
 
-    def __init__(self, data: dict | None = None):
+    Supports document CRUD, auto-generated IDs, subcollections,
+    and async streaming.
+    """
+
+    _auto_id_counter = 0
+
+    def __init__(self, data: dict | None = None, *, parent_data: dict | None = None, sub_key: str | None = None):
         self._data = data or {}  # {doc_id: {field: value}}
+        # Track parent so subcollection writes propagate
+        self._parent_data = parent_data
+        self._sub_key = sub_key
 
-    def document(self, doc_id):
+    def _sync_to_parent(self):
+        """Write subcollection data back to parent's _sub_X key."""
+        if self._parent_data is not None and self._sub_key is not None:
+            self._parent_data[self._sub_key] = self._data
+
+    def document(self, doc_id=None):
+        if doc_id is None:
+            MockFirestoreCollection._auto_id_counter += 1
+            doc_id = f"auto-{MockFirestoreCollection._auto_id_counter}"
+
+        col = self  # capture for closures
         doc_ref = MagicMock()
         doc_ref.id = doc_id
 
         async def _get():
-            if doc_id in self._data:
-                return MockFirestoreDoc(self._data[doc_id], doc_id=doc_id)
+            if doc_id in col._data:
+                return MockFirestoreDoc(col._data[doc_id], doc_id=doc_id)
             return MockFirestoreDoc(None, doc_id=doc_id)
 
         async def _set(data, merge=False):
-            if merge and doc_id in self._data:
-                self._data[doc_id].update(data)
+            if merge and doc_id in col._data:
+                col._data[doc_id].update(data)
             else:
-                self._data[doc_id] = dict(data)
+                col._data[doc_id] = dict(data)
+            col._sync_to_parent()
 
         async def _update(data):
-            if doc_id in self._data:
-                self._data[doc_id].update(data)
+            if doc_id in col._data:
+                col._data[doc_id].update(data)
             else:
-                self._data[doc_id] = dict(data)
+                col._data[doc_id] = dict(data)
+            col._sync_to_parent()
+
+        async def _delete():
+            col._data.pop(doc_id, None)
+            col._sync_to_parent()
 
         doc_ref.get = _get
         doc_ref.set = _set
         doc_ref.update = _update
-        doc_ref.collection = lambda name: MockFirestoreCollection(
-            self._data.get(doc_id, {}).get(f"_sub_{name}", {})
-        )
+        doc_ref.delete = _delete
+        doc_ref.collection = lambda name: self._get_subcollection(doc_id, name)
         return doc_ref
+
+    def _get_subcollection(self, doc_id, name):
+        """Return a subcollection backed by the parent doc's _sub_X dict."""
+        if doc_id not in self._data:
+            self._data[doc_id] = {}
+        parent_doc = self._data[doc_id]
+        sub_key = f"_sub_{name}"
+        if sub_key not in parent_doc:
+            parent_doc[sub_key] = {}
+        return MockFirestoreCollection(
+            parent_doc[sub_key],
+            parent_data=parent_doc,
+            sub_key=sub_key,
+        )
+
+    def stream(self):
+        return self._stream()
+
+    async def _stream(self):
+        """Yield all documents in the collection."""
+        for doc_id, data in list(self._data.items()):
+            if not doc_id.startswith("_sub_"):
+                yield MockFirestoreDoc(data, doc_id=doc_id)
 
     def collection(self, name):
         return MockFirestoreCollection()
