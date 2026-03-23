@@ -7,7 +7,11 @@ import argparse
 import json
 import os
 import sys
+import time
+import webbrowser
 from pathlib import Path
+
+import httpx
 
 from . import __version__
 from .config import CONFIG_PATH, get_config
@@ -2990,36 +2994,109 @@ def cmd_harvest(args):
     print(f"\n  Total: {n_saved} saved, {n_skip} skipped ({total} found)")
 
 
+def _cmd_cloud_device_login() -> None:
+    """Authenticate via OAuth device code flow (browser handoff).
+
+    1. POST /api/v1/auth/device-code to get user_code + device_code
+    2. Open browser to verification_uri (the /device page)
+    3. Poll /api/v1/auth/device-token until confirmed, expired, or timed out
+    4. Store resulting API key in config.toml
+    """
+    cfg = load_cloud_config()
+    cloud_url = cfg.cloud_api_url or "https://neurostack-api-911077737485.us-central1.run.app"
+    base = cloud_url.rstrip("/")
+
+    # Step 1: Request device code
+    try:
+        resp = httpx.post(f"{base}/api/v1/auth/device-code", timeout=15.0)
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        print(f"  Error: Cannot reach cloud API at {base}.")
+        sys.exit(1)
+    except httpx.HTTPStatusError as e:
+        print(f"  Error: Device code request failed ({e.response.status_code}).")
+        sys.exit(1)
+
+    data = resp.json()
+    device_code = data["device_code"]
+    user_code = data["user_code"]
+    verification_uri = data.get("verification_uri", f"{base}/device")
+    expires_in = data.get("expires_in", 600)
+    interval = data.get("interval", 5)
+
+    # Step 2: Show code and open browser
+    print(f"\n  Open this URL in your browser: {verification_uri}")
+    print(f"  Enter this code: \033[1m{user_code}\033[0m\n")
+
+    try:
+        webbrowser.open(verification_uri)
+    except Exception:
+        pass  # Non-fatal if browser fails to open
+
+    # Step 3: Poll for token
+    deadline = time.monotonic() + expires_in
+    dots = 0
+    while time.monotonic() < deadline:
+        time.sleep(interval)
+        dots = (dots + 1) % 4
+        spinner = "." * (dots + 1)
+        print(f"\r  Waiting for browser authorization{spinner}    ", end="", flush=True)
+
+        try:
+            token_resp = httpx.post(
+                f"{base}/api/v1/auth/device-token",
+                json={"device_code": device_code},
+                timeout=15.0,
+            )
+        except (httpx.ConnectError, httpx.TimeoutException):
+            continue  # Retry on transient errors
+
+        if token_resp.status_code == 428:
+            # Authorization pending -- keep polling
+            continue
+        elif token_resp.status_code == 200:
+            token_data = token_resp.json()
+            api_key = token_data["api_key"]
+            save_cloud_config(cloud_api_url=cloud_url, cloud_api_key=api_key)
+            print("\r  Login successful! API key stored in config.          ")
+            return
+        elif token_resp.status_code == 400:
+            print("\r  Code expired. Please try again.                      ")
+            sys.exit(1)
+        else:
+            status = token_resp.status_code
+            print(f"\r  Unexpected error ({status}). Please try again.")
+            sys.exit(1)
+
+    print("\r  Authorization timed out. Please try again.           ")
+    sys.exit(1)
+
+
 def cmd_cloud(args):
     """Manage cloud authentication and configuration."""
     subcmd = getattr(args, "cloud_command", None)
 
     if subcmd == "login":
-        # Get API key from --key flag or prompt
-        api_key = args.key
-        if not api_key:
-            api_key = input("  Enter your NeuroStack Cloud API key: ").strip()
-        if not api_key:
-            print("  Error: API key is required.")
-            sys.exit(1)
-
-        # Get cloud URL from config or default
-        cfg = load_cloud_config()
-        cloud_url = cfg.cloud_api_url or "https://neurostack-api-911077737485.us-central1.run.app"
-
-        # Validate key against cloud API
-        test_cfg = CloudConfig(cloud_api_url=cloud_url, cloud_api_key=api_key)
-        client = CloudClient(test_cfg)
-        try:
-            if client.validate_key():
-                save_cloud_config(cloud_api_url=cloud_url, cloud_api_key=api_key)
-                print(f"  Logged in to {cloud_url}")
-            else:
-                print("  Error: Invalid API key.")
+        api_key = getattr(args, "key", None)
+        if api_key:
+            # Direct API key login (--key flag)
+            cfg = load_cloud_config()
+            cloud_url = cfg.cloud_api_url or "https://neurostack-api-911077737485.us-central1.run.app"
+            test_cfg = CloudConfig(cloud_api_url=cloud_url, cloud_api_key=api_key)
+            client = CloudClient(test_cfg)
+            try:
+                if client.validate_key():
+                    save_cloud_config(cloud_api_url=cloud_url, cloud_api_key=api_key)
+                    print(f"  Logged in to {cloud_url}")
+                else:
+                    print("  Error: Invalid API key.")
+                    sys.exit(1)
+            except ConnectionError as e:
+                print(f"  Error: {e}")
                 sys.exit(1)
-        except ConnectionError as e:
-            print(f"  Error: {e}")
-            sys.exit(1)
+        else:
+            # Device code flow (browser-based login)
+            _cmd_cloud_device_login()
 
     elif subcmd == "logout":
         clear_cloud_credentials()
@@ -3091,16 +3168,24 @@ def cmd_cloud(args):
     elif subcmd == "query":
         cmd_cloud_query(args)
 
+    elif subcmd == "triples":
+        cmd_cloud_triples(args)
+
+    elif subcmd == "summary":
+        cmd_cloud_summary(args)
+
     else:
-        print("Usage: neurostack cloud {login|logout|status|setup|push|pull|query}")
+        print("Usage: neurostack cloud {login|logout|status|setup|push|pull|query|triples|summary}")
         print("\nCommands:")
-        print("  login   Authenticate with an API key")
-        print("  logout  Clear stored credentials")
-        print("  status  Show authentication state and usage")
-        print("  setup   Interactive cloud configuration")
-        print("  push    Upload vault files for cloud indexing")
-        print("  pull    Download indexed database from cloud")
-        print("  query   Query vault via cloud API")
+        print("  login    Authenticate via browser (device code) or --key")
+        print("  logout   Clear stored credentials")
+        print("  status   Show authentication state and usage")
+        print("  setup    Interactive cloud configuration")
+        print("  push     Upload vault files for cloud indexing")
+        print("  pull     Download indexed database from cloud")
+        print("  query    Search vault via cloud API")
+        print("  triples  Search knowledge graph triples")
+        print("  summary  Get a note summary")
 
 
 def cmd_cloud_push(args):
@@ -3170,43 +3255,138 @@ def cmd_cloud_pull(args):
 
 
 def cmd_cloud_query(args):
-    """Query vault via cloud API."""
+    """Query vault via cloud API with tiered search."""
+    from .cloud.client import CloudClient
     from .cloud.config import load_cloud_config
-    from .cloud.sync import VaultSyncEngine, SyncError
 
-    cfg = get_config()
     cloud_cfg = load_cloud_config()
-
     if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
         print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
         sys.exit(1)
 
-    engine = VaultSyncEngine(
-        cloud_api_url=cloud_cfg.cloud_api_url,
-        cloud_api_key=cloud_cfg.cloud_api_key,
-        vault_root=cfg.vault_root,
-        db_dir=cfg.db_dir,
-    )
+    client = CloudClient(cloud_cfg)
 
     try:
-        results = engine.query(args.query, top_k=args.top_k, mode=args.mode)
-    except SyncError as e:
+        result = client.query(
+            args.query,
+            top_k=args.top_k,
+            depth=args.depth,
+            mode=args.mode,
+            workspace=getattr(args, "workspace", None),
+        )
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, "json", False):
+        print(json.dumps(result))
+        return
+
+    depth = result.get("depth_used", "unknown")
+    print(f"  Depth: {depth}\n")
+
+    triples = result.get("triples", [])
+    if triples:
+        print(f"  Triples ({len(triples)}):")
+        for t in triples:
+            print(f"    {t['subject']} -> {t['predicate']} -> {t['object']}")
+            print(f"      [{t.get('score', 0):.2f}] {t['note']}")
+        print()
+
+    summaries = result.get("summaries", [])
+    if summaries:
+        print(f"  Summaries ({len(summaries)}):")
+        for s in summaries:
+            title = s.get("title", s.get("note", "untitled"))
+            summary = s.get("summary", "")[:200]
+            print(f"    {title}")
+            print(f"      {summary}")
+        print()
+
+    chunks = result.get("chunks", [])
+    if chunks:
+        print(f"  Results ({len(chunks)}):")
+        for i, c in enumerate(chunks, 1):
+            title = c.get("title", c.get("note", "untitled"))
+            section = c.get("section", "")
+            snippet = c.get("snippet", "")[:150]
+            score = c.get("score", 0)
+            print(f"    {i}. [{score:.2f}] {title}")
+            if section:
+                print(f"       Section: {section}")
+            if snippet:
+                print(f"       {snippet}")
+
+    if not triples and not summaries and not chunks:
+        print("  No results found.")
+
+
+def cmd_cloud_triples(args):
+    """Search knowledge graph triples via cloud API."""
+    from .cloud.client import CloudClient
+    from .cloud.config import load_cloud_config
+
+    cloud_cfg = load_cloud_config()
+    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
+        print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
+        sys.exit(1)
+
+    client = CloudClient(cloud_cfg)
+
+    try:
+        results = client.triples(
+            args.query,
+            top_k=args.top_k,
+            workspace=getattr(args, "workspace", None),
+        )
+    except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
     if getattr(args, "json", False):
         print(json.dumps(results))
-    else:
-        if not results:
-            print("No results found.")
-        else:
-            for i, r in enumerate(results, 1):
-                title = r.get("title", r.get("path", "untitled"))
-                score = r.get("score", 0)
-                snippet = r.get("snippet", "")[:120]
-                print(f"  {i}. [{score:.3f}] {title}")
-                if snippet:
-                    print(f"     {snippet}")
+        return
+
+    if not results:
+        print("No triples found.")
+        return
+
+    for t in results:
+        print(f"  {t['subject']} -> {t['predicate']} -> {t['object']}")
+        print(f"    [{t.get('score', 0):.2f}] {t.get('note', '')}")
+
+
+def cmd_cloud_summary(args):
+    """Get a note summary via cloud API."""
+    from .cloud.client import CloudClient
+    from .cloud.config import load_cloud_config
+
+    cloud_cfg = load_cloud_config()
+    if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
+        print("Error: Not authenticated. Run `neurostack cloud login` first.", file=sys.stderr)
+        sys.exit(1)
+
+    client = CloudClient(cloud_cfg)
+
+    try:
+        result = client.summary(args.note_path)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if result is None:
+        print(f"No summary found for: {args.note_path}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, "json", False):
+        print(json.dumps(result))
+        return
+
+    print(f"  {result.get('title', args.note_path)}")
+    print(f"  {result.get('summary', 'No summary')}")
 
 
 def main():
@@ -3301,10 +3481,30 @@ def main():
     cp = cloud_sub.add_parser("pull", help="Download indexed database from cloud")
     cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
 
-    cp = cloud_sub.add_parser("query", help="Query vault via cloud API")
+    cp = cloud_sub.add_parser("query", help="Search vault via cloud API")
     cp.add_argument("query", help="Search text")
     cp.add_argument("--top-k", type=int, default=10, help="Number of results")
-    cp.add_argument("--mode", default="hybrid", choices=["hybrid", "semantic", "keyword"], help="Search mode")
+    cp.add_argument(
+        "--depth", default="auto",
+        choices=["triples", "summaries", "full", "auto"],
+        help="Result depth (default: auto)",
+    )
+    cp.add_argument(
+        "--mode", default="hybrid",
+        choices=["hybrid", "semantic", "keyword"],
+        help="Search mode (default: hybrid)",
+    )
+    cp.add_argument("--workspace", "-w", help="Scope to vault subdirectory")
+    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
+
+    cp = cloud_sub.add_parser("triples", help="Search knowledge graph triples via cloud")
+    cp.add_argument("query", help="Search text")
+    cp.add_argument("--top-k", type=int, default=10, help="Number of results")
+    cp.add_argument("--workspace", "-w", help="Scope to vault subdirectory")
+    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
+
+    cp = cloud_sub.add_parser("summary", help="Get note summary from cloud")
+    cp.add_argument("note_path", help="Note path (e.g. research/my-note.md)")
     cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
 
     p.set_defaults(func=cmd_cloud)
