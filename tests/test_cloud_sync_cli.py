@@ -5,15 +5,12 @@
 from __future__ import annotations
 
 import json
-import sys
 from argparse import Namespace
-from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from neurostack.cloud.config import CloudConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -261,7 +258,10 @@ class TestCloudQueryJson:
         mock_cfg.return_value = _mock_get_config(tmp_path)
         mock_cloud_cfg.return_value = _authed_config()
 
-        results = {"depth_used": "auto", "triples": [], "summaries": [{"title": "Note A"}], "chunks": []}
+        results = {
+            "depth_used": "auto", "triples": [],
+            "summaries": [{"title": "Note A"}], "chunks": [],
+        }
         mock_client = MagicMock()
         mock_client.query.return_value = results
         mock_client_cls.return_value = mock_client
@@ -289,7 +289,10 @@ class TestCloudQueryArgs:
         mock_cloud_cfg.return_value = _authed_config()
 
         mock_client = MagicMock()
-        mock_client.query.return_value = {"depth_used": "auto", "triples": [], "summaries": [], "chunks": []}
+        mock_client.query.return_value = {
+            "depth_used": "auto", "triples": [],
+            "summaries": [], "chunks": [],
+        }
         mock_client_cls.return_value = mock_client
 
         from neurostack.cli import cmd_cloud_query
