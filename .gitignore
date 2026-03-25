@@ -17,3 +17,4 @@ uv.lock
 .firebase/
 .planning/
 .claude/
+npm/.mcpregistry_*
