@@ -243,7 +243,7 @@ def vault_memories(
             entry["score"] = round(m.score, 4)
         output.append(entry)
 
-    return output
+    return {"memories": output}
 
 
 @registry.tool(tags=["memory", "write"])
