@@ -1,0 +1,36 @@
+# Development and test files
+tests/
+.github/
+.planning/
+.venv/
+.ruff_cache/
+__pycache__/
+*.pyc
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# npm wrapper (not needed in MCPB)
+npm/
+
+# Docs and site
+docs/
+docs-site/
+
+# Version control
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+*.md
+!README.md
+LICENSE
+MANIFEST.in
+Makefile
+.mcpbignore

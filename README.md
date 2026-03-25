@@ -70,9 +70,43 @@ curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/insta
 
 To uninstall: `neurostack uninstall`
 
-## MCP configuration
+## Connect to your AI
 
-Add to your MCP client config (Claude Code, Codex, Gemini CLI, Cursor, Windsurf):
+### Claude Code (one command)
+
+```bash
+claude mcp add neurostack -- neurostack serve
+```
+
+### Claude Desktop
+
+Download the `.mcpb` bundle from [Releases](https://github.com/raphasouthall/neurostack/releases) and double-click to install. Or auto-configure:
+
+```bash
+neurostack setup-desktop
+```
+
+### Remote MCP (no local install)
+
+Connect Claude to your vault via NeuroStack Cloud -- no Python, no Ollama, nothing to install locally:
+
+```bash
+claude mcp add neurostack --transport http https://mcp.neurostack.sh/mcp
+```
+
+### Other MCP clients
+
+Auto-configure Cursor, Windsurf, Gemini CLI, VS Code, or Codex:
+
+```bash
+neurostack setup-client cursor      # or: windsurf, gemini, vscode, claude-code
+neurostack setup-client --list      # show all supported clients
+```
+
+<details>
+<summary><strong>Manual JSON config</strong></summary>
+
+Add to your client's MCP config file:
 
 ```json
 {
@@ -86,9 +120,9 @@ Add to your MCP client config (Claude Code, Codex, Gemini CLI, Cursor, Windsurf)
 }
 ```
 
-After install, all commands work the same in both Cloud and Local modes.
+</details>
 
-Setup guides: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-usage) | [Codex](https://developers.openai.com/codex/mcp/) | [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/)
+After connecting, all 21 MCP tools are available. Search your vault, save memories, detect stale notes -- all from your AI chat.
 
 ## Search
 
