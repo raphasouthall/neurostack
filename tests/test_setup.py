@@ -1,8 +1,6 @@
 """Tests for neurostack.setup — platform detection, MCP config merging, client setup."""
 
 import json
-import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -179,15 +177,15 @@ class TestSetupClient:
         config_path = tmp_path / "mcp.json"
         config_path.write_text('{}', encoding="utf-8")
 
-        with patch.dict(
-            "neurostack.setup.CLIENT_CONFIGS",
-            {
-                client_name: {
-                    **__import__("neurostack.setup", fromlist=["CLIENT_CONFIGS"]).CLIENT_CONFIGS[client_name],
-                    "path": lambda p=config_path: p,
-                },
-            },
-        ), patch("neurostack.setup._neurostack_command", return_value="neurostack"):
+        from neurostack.setup import CLIENT_CONFIGS as _cfgs
+
+        override = {
+            client_name: {**_cfgs[client_name], "path": lambda p=config_path: p},
+        }
+        with (
+            patch.dict("neurostack.setup.CLIENT_CONFIGS", override),
+            patch("neurostack.setup._neurostack_command", return_value="neurostack"),
+        ):
             setup_client(client_name, dry_run=True)
 
         captured = capsys.readouterr()
@@ -197,15 +195,15 @@ class TestSetupClient:
         config_path = tmp_path / "mcp.json"
         config_path.write_text('{}', encoding="utf-8")
 
-        with patch.dict(
-            "neurostack.setup.CLIENT_CONFIGS",
-            {
-                "vscode": {
-                    **__import__("neurostack.setup", fromlist=["CLIENT_CONFIGS"]).CLIENT_CONFIGS["vscode"],
-                    "path": lambda p=config_path: p,
-                },
-            },
-        ), patch("neurostack.setup._neurostack_command", return_value="neurostack"):
+        from neurostack.setup import CLIENT_CONFIGS as _cfgs
+
+        override = {
+            "vscode": {**_cfgs["vscode"], "path": lambda p=config_path: p},
+        }
+        with (
+            patch.dict("neurostack.setup.CLIENT_CONFIGS", override),
+            patch("neurostack.setup._neurostack_command", return_value="neurostack"),
+        ):
             setup_client("vscode", dry_run=True)
 
         captured = capsys.readouterr()
@@ -229,15 +227,18 @@ class TestSetupClient:
         config_path = tmp_path / "mcp.json"
         config_path.write_text('{}', encoding="utf-8")
 
-        with patch.dict(
-            "neurostack.setup.CLIENT_CONFIGS",
-            {
-                "claude-code": {
-                    **__import__("neurostack.setup", fromlist=["CLIENT_CONFIGS"]).CLIENT_CONFIGS["claude-code"],
-                    "path": lambda p=config_path: p,
-                },
+        from neurostack.setup import CLIENT_CONFIGS as _cfgs
+
+        override = {
+            "claude-code": {
+                **_cfgs["claude-code"],
+                "path": lambda p=config_path: p,
             },
-        ), patch("neurostack.setup._neurostack_command", return_value="neurostack"):
+        }
+        with (
+            patch.dict("neurostack.setup.CLIENT_CONFIGS", override),
+            patch("neurostack.setup._neurostack_command", return_value="neurostack"),
+        ):
             setup_client("Claude Code", dry_run=True)
 
         captured = capsys.readouterr()
