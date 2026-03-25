@@ -3195,14 +3195,15 @@ def _cmd_cloud_device_login() -> None:
     expires_in = data.get("expires_in", 600)
     interval = data.get("interval", 5)
 
-    # Step 2: Show code and open browser
-    print("\n  Opening browser... Sign in with Google,"
-          " then enter this code:")
-    print(f"  Code: \033[1m{user_code}\033[0m")
-    print(f"  URL:  {verification_uri}\n")
+    # Step 2: Show code and open browser (code passed via URL for auto-fill)
+    verification_url = f"{verification_uri}?code={user_code}"
+    print("\n  Opening browser to sign in...")
+    print(f"  If the browser doesn't open, visit:")
+    print(f"  URL:  {verification_url}")
+    print(f"  Code: \033[1m{user_code}\033[0m\n")
 
     try:
-        webbrowser.open(verification_uri)
+        webbrowser.open(verification_url)
     except Exception:
         pass  # Non-fatal if browser fails to open
 
