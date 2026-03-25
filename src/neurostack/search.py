@@ -443,7 +443,6 @@ def hybrid_search(
     embed_url: str = None,
     db_path=None,
     context: str = None,
-    rerank: bool = False,
     workspace: str | None = None,
 ) -> list[SearchResult]:
     """
@@ -509,6 +508,52 @@ def hybrid_search(
         raw_cosine = float(scores[i])
         r["cosine_sim"] = raw_cosine
         r["score"] = 0.3 * fts_score + 0.7 * raw_cosine
+
+    # ── Energy landscape convergence confidence ──
+    # Measures how representative the matched chunk is of its note's overall
+    # embedding distribution.  Notes where the hit chunk sits near the centroid
+    # of all chunk embeddings score higher than notes where we matched an
+    # outlier fragment.  Mirrors attractor-network dynamics: deep, narrow
+    # energy wells (low chunk variance) converge cleanly; shallow, broad wells
+    # (high variance) indicate noisy or heterogeneous notes.
+    #
+    # convergence = cosine(query, centroid) / (1 + σ)
+    # The final score is blended: 0.7 * raw_score + 0.3 * convergence
+    # so convergence can lift or dampen but never dominate.
+    note_paths_unique = list({r["note_path"] for r in valid_results})
+    if note_paths_unique:
+        placeholders = ",".join("?" * len(note_paths_unique))
+        all_chunks = conn.execute(
+            f"SELECT note_path, embedding FROM chunks "
+            f"WHERE note_path IN ({placeholders}) AND embedding IS NOT NULL",
+            note_paths_unique,
+        ).fetchall()
+
+        # Group embeddings by note
+        note_chunk_embeddings: dict[str, list] = {}
+        for row in all_chunks:
+            np_ = row["note_path"]
+            if np_ not in note_chunk_embeddings:
+                note_chunk_embeddings[np_] = []
+            note_chunk_embeddings[np_].append(blob_to_embedding(row["embedding"]))
+
+        for r in valid_results:
+            chunks = note_chunk_embeddings.get(r["note_path"])
+            if not chunks or len(chunks) < 2:
+                # Single-chunk note: convergence = 1.0 (perfectly representative)
+                continue
+            chunk_matrix = np.stack(chunks)
+            centroid = chunk_matrix.mean(axis=0)
+            centroid_sim = float(
+                np.dot(query_embedding, centroid)
+                / (np.linalg.norm(query_embedding) * np.linalg.norm(centroid) + 1e-10)
+            )
+            # Standard deviation of chunk similarities to query — measures basin width
+            chunk_sims = cosine_similarity_batch(query_embedding, chunk_matrix)
+            sigma = float(np.std(chunk_sims))
+            convergence = centroid_sim / (1.0 + sigma)
+            # Blend: keep 70% of existing score, add 30% convergence influence
+            r["score"] = 0.7 * r["score"] + 0.3 * convergence
 
     # Apply context boost; track which notes are in-context for mismatch detection
     in_context_notes: set[str] = set()
@@ -624,11 +669,38 @@ def hybrid_search(
         if status == "active":
             r["score"] *= 1.15
 
+    # ── Prediction error demotion ──
+    # Notes with unresolved prediction errors have previously "surprised" on
+    # retrieval — the system observed poor semantic fit.  Demoting them mirrors
+    # predictive-coding error signals: notes that repeatedly violate retrieval
+    # expectations are deprioritised until resolved (re-linked, updated, or
+    # the error is marked resolved).
+    #
+    # Demotion is bounded: score *= 1 / (1 + 0.1 * error_count)
+    # 1 error → 0.91x, 3 errors → 0.77x, 10 errors → 0.50x
+    if meta_paths:
+        try:
+            placeholders = ",".join("?" * len(meta_paths))
+            error_rows = conn.execute(
+                f"SELECT note_path, COUNT(*) as cnt FROM prediction_errors "
+                f"WHERE note_path IN ({placeholders}) AND resolved_at IS NULL "
+                f"GROUP BY note_path",
+                meta_paths,
+            ).fetchall()
+            error_counts = {r["note_path"]: r["cnt"] for r in error_rows}
+            for r in valid_results:
+                ec = error_counts.get(r["note_path"], 0)
+                if ec > 0:
+                    r["score"] *= 1.0 / (1.0 + 0.1 * ec)
+        except Exception:
+            pass  # Never let error demotion disrupt search
+
     valid_results.sort(key=lambda x: x["score"], reverse=True)
 
     # Deduplicate by note_path (keep highest scoring chunk per note).
-    # When reranking, collect a larger candidate pool for the cross-encoder.
-    candidate_limit = top_k * 4 if rerank else top_k
+    # Collect a wider candidate pool (3x top_k) so lateral inhibition has
+    # room to suppress similar results and promote diverse alternatives.
+    candidate_limit = top_k * 3
     seen_notes = set()
     deduped = []
     for r in valid_results:
@@ -638,9 +710,57 @@ def hybrid_search(
         if len(deduped) >= candidate_limit:
             break
 
-    if rerank:
-        from .reranker import rerank as cross_rerank
-        deduped = cross_rerank(query, deduped, text_key="content", top_k=top_k)
+    # ── Lateral inhibition ──
+    # Winner-take-all dynamics: higher-ranked results suppress semantically
+    # similar competitors, promoting diversity in the result set.  Mirrors
+    # PV+ / SOM+ inhibitory interneuron function during engram allocation:
+    # the most excitable neurons fire first, then recruit inhibitory circuits
+    # that suppress neighbours, maintaining engram sparsity.
+    #
+    # For each result (from rank 2 onward), compute max cosine similarity
+    # to all higher-ranked results.  If similarity exceeds the threshold,
+    # apply a proportional penalty.  The penalty is bounded so that even
+    # maximally similar results retain 70% of their score.
+    #
+    # penalty = 1 - inhibition_strength * max_similarity_to_higher_ranked
+    INHIBITION_THRESHOLD = 0.65   # only suppress when note embeddings are >0.65 similar
+    INHIBITION_STRENGTH = 0.30    # max 30% score reduction at similarity=1.0
+    if len(deduped) > 1:
+        # Build embedding lookup for deduped results
+        deduped_embeddings = []
+        for r in deduped:
+            emb = r.get("embedding")
+            if emb:
+                deduped_embeddings.append(blob_to_embedding(emb) if isinstance(emb, bytes) else emb)
+            else:
+                deduped_embeddings.append(None)
+
+        for i in range(1, len(deduped)):
+            if deduped_embeddings[i] is None:
+                continue
+            max_sim = 0.0
+            for j in range(i):
+                if deduped_embeddings[j] is None:
+                    continue
+                dot = np.dot(deduped_embeddings[i], deduped_embeddings[j])
+                norm = (
+                    np.linalg.norm(deduped_embeddings[i])
+                    * np.linalg.norm(deduped_embeddings[j])
+                    + 1e-10
+                )
+                sim = float(dot / norm)
+                if sim > max_sim:
+                    max_sim = sim
+            if max_sim > INHIBITION_THRESHOLD:
+                penalty = 1.0 - INHIBITION_STRENGTH * max_sim
+                deduped[i]["score"] *= penalty
+
+        # Re-sort after inhibition — suppressed results may drop below
+        # previously lower-ranked diverse results
+        deduped.sort(key=lambda x: x["score"], reverse=True)
+
+    # Trim to final top_k after lateral inhibition
+    deduped = deduped[:top_k]
 
     # Auto-record usage for returned results (drives hotness scoring)
     returned_paths = [r["note_path"] for r in deduped[:top_k]]
@@ -936,7 +1056,6 @@ def tiered_search(
     embed_url: str = None,
     db_path=None,
     context: str = None,
-    rerank: bool = False,
     workspace: str | None = None,
 ) -> dict:
     """Tiered search returning results at the appropriate compression level.
@@ -977,7 +1096,7 @@ def tiered_search(
         chunk_results = hybrid_search(
             query, top_k=top_k, mode=mode,
             embed_url=embed_url, db_path=db_path,
-            context=context, rerank=rerank,
+            context=context,
             workspace=workspace,
         )
         seen = set()
@@ -994,7 +1113,7 @@ def tiered_search(
         chunk_results = hybrid_search(
             query, top_k=top_k, mode=mode,
             embed_url=embed_url, db_path=db_path,
-            context=context, rerank=rerank,
+            context=context,
             workspace=workspace,
         )
         result["chunks"] = [
@@ -1043,7 +1162,7 @@ def tiered_search(
     chunk_results = hybrid_search(
         query, top_k=top_k, mode=mode,
         embed_url=embed_url, db_path=db_path,
-        context=context, rerank=rerank,
+        context=context,
         workspace=workspace,
     )
     result["chunks"] = [

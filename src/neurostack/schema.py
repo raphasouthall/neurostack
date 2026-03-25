@@ -124,7 +124,7 @@ CREATE TRIGGER IF NOT EXISTS triples_au AFTER UPDATE ON triples BEGIN
         VALUES (new.triple_id, new.triple_text);
 END;
 
--- GraphRAG community tables (Phase 3: Leiden community detection)
+-- GraphRAG community tables (attractor basin community detection)
 CREATE TABLE IF NOT EXISTS communities (
     community_id INTEGER PRIMARY KEY AUTOINCREMENT,
     level INTEGER NOT NULL,

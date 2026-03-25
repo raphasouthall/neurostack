@@ -78,7 +78,7 @@ def vault_search(
 
         result = tiered_search(
             query, top_k=top_k, depth=depth, mode=mode,
-            embed_url=embed_url, context=context, rerank=True,
+            embed_url=embed_url, context=context,
             workspace=workspace,
         )
 
@@ -94,7 +94,7 @@ def vault_search(
 
     results = hybrid_search(
         query, top_k=top_k, mode=mode,
-        embed_url=embed_url, context=context, rerank=True,
+        embed_url=embed_url, context=context,
         workspace=workspace,
     )
 
@@ -304,7 +304,7 @@ def vault_communities(
     Unlike vault_search (which retrieves specific chunks), this answers
     thematic questions like "what topics dominate my vault?" or
     "what are the main research areas I've been exploring?" by running
-    Leiden community detection summaries through a map-reduce synthesis.
+    community detection summaries through a map-reduce synthesis.
 
     Args:
         query: Natural language question about vault themes/topics
