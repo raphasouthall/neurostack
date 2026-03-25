@@ -11,9 +11,10 @@ Works with Claude Code, Cursor, Windsurf, Codex, and Gemini CLI via MCP.
 
 ```bash
 npm install -g neurostack
-neurostack install
 neurostack init
 ```
+
+The wizard walks you through everything: cloud or local, lite or full, Ollama models, vault path, profession pack, and full indexing -- one command.
 
 | | Cloud | Local |
 |--|-------|-------|
@@ -22,31 +23,35 @@ neurostack init
 | **Search** | Local SQLite | Local SQLite (same DB) |
 | **GPU required** | No | Recommended for Full mode |
 | **Multi-device** | Push once, pull anywhere | Manual DB sync |
-| **Setup time** | One command | Install Ollama + models |
 | **Cost** | Free tier / [Pro plans](https://neurostack.sh) | Free (your hardware) |
 
-### Cloud (recommended)
+### Cloud
 
 No GPU, no Ollama, no ML dependencies. Gemini indexes your vault server-side and returns a ready-to-use SQLite database. All search runs locally against that DB.
 
 ```bash
-neurostack install            # choose "Cloud"
-neurostack init               # point at your vault
-neurostack cloud push         # upload + index via Gemini
-neurostack cloud pull         # download indexed DB
+neurostack init     # choose "Cloud" → vault setup → login → push
 ```
 
-Free tier: 500 queries/month, 200 notes. Dashboard: [app.neurostack.sh](https://app.neurostack.sh) -- vault stats, API keys, usage, billing, query playground.
+Free tier: 500 queries/month, 200 notes. Dashboard: [app.neurostack.sh](https://app.neurostack.sh)
 
 > Files are uploaded for indexing via HTTPS, processed by Gemini, and not retained after indexing completes.
 
-### Local (self-hosted)
+### Local
 
-Run everything on your machine with Ollama. Choose a tier during `neurostack install`:
+Run everything on your machine with Ollama. Choose a tier during `neurostack init`:
 
 - **Lite** (~130 MB) -- FTS5 search, wiki-link graph, stale detection, MCP server. No GPU or Ollama required.
-- **Full** (~560 MB) -- adds semantic search, AI summaries, and cross-encoder reranking via local [Ollama](https://ollama.ai). GPU or 6+ core CPU recommended.
-- **Community** (~575 MB) -- adds GraphRAG topic clustering via Leiden algorithm.
+- **Full** (~560 MB) -- adds semantic search, AI summaries, knowledge graph triples, and attractor basin community detection via local [Ollama](https://ollama.ai). GPU or 6+ core CPU recommended.
+
+Full mode automatically runs the complete indexing pipeline: embeddings, summaries, triples, and community detection.
+
+Non-interactive mode:
+
+```bash
+neurostack init --mode full --pull-models ~/brain
+neurostack init --cloud ~/brain
+```
 
 <details>
 <summary><strong>Alternative install methods</strong></summary>
@@ -135,7 +140,7 @@ Retrieval is tiered. Most queries resolve at the cheapest tier:
 | **Full content** | ~300 | Actual Markdown content | Deep dives, editing context |
 | **Auto** | Varies | Starts at triples, escalates only if coverage is low | Default for most queries |
 
-Full mode adds hybrid semantic + keyword search with cross-encoder reranking. Workspace scoping restricts queries to a vault subdirectory.
+Full mode adds hybrid semantic + keyword search with neuroscience-grounded ranking: energy landscape convergence, lateral inhibition, and prediction error feedback. Workspace scoping restricts queries to a vault subdirectory.
 
 ```bash
 neurostack search "deployment checklist"
@@ -146,18 +151,20 @@ neurostack --json search "query" | jq      # machine-readable output
 
 ## Maintain
 
-**Stale note detection.** When a note keeps appearing in search contexts where it doesn't belong, NeuroStack flags it as a prediction error. Old decisions, superseded specs, reversed conclusions -- without detection, your AI cites these confidently.
+**Stale note detection.** When a note keeps appearing in search contexts where it doesn't belong, NeuroStack flags it as a prediction error. Old decisions, superseded specs, reversed conclusions -- without detection, your AI cites these confidently. Notes with unresolved prediction errors are automatically demoted in future search results.
 
 **Excitability decay.** Recently accessed notes score higher in search results. Unused notes fade over time. Modeled on CREB-regulated neuronal excitability (Han et al. 2007).
 
 **Co-occurrence learning.** Notes retrieved together frequently get their connection weights strengthened automatically. The search graph learns your actual workflow, not just your file structure.
 
-**Topic clusters.** Leiden community detection groups notes into thematic clusters for broad "what do I know about X?" queries. Optional -- requires the `community` install extra (GPL).
+**Topic clusters.** Attractor basin community detection groups notes into thematic clusters for broad "what do I know about X?" queries. Uses Hopfield-style dynamics with a blended similarity matrix (embeddings + co-occurrence + wiki-links). Included in Full mode -- no extra dependencies.
+
+**Lateral inhibition.** Higher-ranked search results suppress semantically similar competitors, promoting diversity. Prevents five near-identical notes from dominating your results.
 
 ```bash
 neurostack prediction-errors             # stale note detection
 neurostack decay                         # excitability report
-neurostack communities build             # run Leiden clustering
+neurostack communities build             # rebuild topic clusters
 neurostack watch                         # auto-index on vault changes
 ```
 
@@ -252,8 +259,9 @@ neurostack scaffold --list             # researcher, developer, writer, student,
 
 ```
 # Setup
-neurostack install                       # install/upgrade mode and Ollama models
-neurostack init [path] -p researcher     # interactive setup wizard
+neurostack init                          # one-command setup: deps, vault, index
+neurostack init --mode full ~/brain      # non-interactive full mode
+neurostack init --cloud ~/brain          # non-interactive cloud mode
 neurostack onboard ~/my-notes            # import existing Markdown notes
 neurostack scaffold researcher           # apply a profession pack
 neurostack update                        # pull latest source + re-sync deps
@@ -277,6 +285,7 @@ neurostack watch                         # auto-index on vault changes
 neurostack decay                         # excitability report
 neurostack prediction-errors             # stale note detection
 neurostack backfill [summaries|triples|all]  # fill gaps in AI data
+neurostack communities build             # rebuild topic clusters
 neurostack reembed-chunks                # re-embed all chunks
 
 # Memories
@@ -329,14 +338,16 @@ neurostack demo                          # interactive demo with sample vault
 <details>
 <summary><strong>Neuroscience basis</strong></summary>
 
-Each maintenance feature is modeled on a specific mechanism from memory neuroscience:
+Each feature is modeled on a specific mechanism from memory neuroscience:
 
 | Feature | Mechanism | Citation |
 |---------|-----------|----------|
-| Stale detection | Prediction error signals trigger reconsolidation | Sinclair & Bhatt 2022 |
+| Stale detection + demotion | Prediction error signals trigger reconsolidation | Sinclair & Bhatt 2022 |
 | Excitability decay | CREB-elevated neurons preferentially join new memories | Han et al. 2007 |
 | Co-occurrence learning | Hebbian "fire together, wire together" plasticity | Hebb 1949 |
-| Topic clusters | Neural ensemble formation | Cai et al. 2016 |
+| Topic clusters | Hopfield attractor basin dynamics, inverse temperature | Ramsauer et al. 2020 |
+| Convergence confidence | Energy landscape retrieval, basin width = robustness | Krotov & Hopfield 2016 |
+| Lateral inhibition | PV+/SOM+ interneuron winner-take-all competition | Rashid et al. 2016 |
 | Tiered retrieval | Complementary learning systems | McClelland et al. 1995 |
 
 Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
@@ -352,6 +363,4 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 ## License
 
-Apache-2.0 -- see [LICENSE](LICENSE).
-
-The optional `neurostack[community]` extra installs [leidenalg](https://github.com/vtraag/leidenalg) (GPL-3.0) and [python-igraph](https://github.com/igraph/python-igraph) (GPL-2.0+). These are isolated behind a runtime import guard and not installed by default.
+Apache-2.0 -- see [LICENSE](LICENSE). No GPL dependencies.
