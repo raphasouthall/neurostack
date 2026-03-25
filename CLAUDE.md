@@ -44,7 +44,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 ### Search & Retrieval
 | Command | Description |
 |---------|-------------|
-| `neurostack search "query"` | Hybrid FTS5 + semantic search. Flags: `--mode hybrid\|semantic\|keyword`, `--top-k N`, `--rerank`, `--context "domain"`, `--workspace "path/"` |
+| `neurostack search "query"` | Hybrid FTS5 + semantic search. Flags: `--mode hybrid\|semantic\|keyword`, `--top-k N`, `--context "domain"`, `--workspace "path/"` |
 | `neurostack ask "question"` | RAG Q&A with inline `[[citations]]`. Uses Ollama LLM. Flags: `--top-k N`, `--workspace` |
 | `neurostack tiered "query"` | Token-efficient tiered retrieval. `--depth triples\|summaries\|full\|auto` |
 | `neurostack triples "query"` | Search knowledge graph triples (subject-predicate-object facts) |
