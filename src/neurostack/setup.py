@@ -9,7 +9,6 @@ import shutil
 import sys
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Client config definitions
 # ---------------------------------------------------------------------------
@@ -50,7 +49,10 @@ def _claude_desktop_config_path() -> Path:
     """Platform-aware Claude Desktop config path."""
     plat = _detect_platform()
     if plat == "macos":
-        return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        return (
+            Path.home() / "Library" / "Application Support"
+            / "Claude" / "claude_desktop_config.json"
+        )
     if plat == "windows":
         appdata = os.environ.get("APPDATA", "")
         if appdata:
