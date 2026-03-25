@@ -56,7 +56,6 @@ def cmd_search(args):
         mode=args.mode,
         embed_url=args.embed_url,
         context=args.context,
-        rerank=args.rerank,
         workspace=_get_workspace(args),
     )
     if args.json:
@@ -295,7 +294,6 @@ def cmd_tiered(args):
         mode=args.mode,
         embed_url=args.embed_url,
         context=getattr(args, "context", None),
-        rerank=args.rerank,
         workspace=_get_workspace(args),
     )
     if args.json:
@@ -350,8 +348,8 @@ def cmd_backfill(args):
 
 def cmd_communities(args):
     if args.communities_cmd == "build":
+        from .attractor import detect_communities
         from .community import summarize_all_communities
-        from .leiden import detect_communities
         n_coarse, n_fine = detect_communities()
         if args.json:
             summarize_all_communities(
@@ -972,7 +970,7 @@ def cmd_init(args):
         prof_choices.append((p.name, f"{p.name.title()} — {p.description}"))
     profession = _prompt("Profession pack", default="none", choices=prof_choices)
 
-    # Detect install mode (full/community have numpy installed)
+    # Detect install mode (full mode has numpy installed)
     is_full_mode = False
     try:
         import numpy  # noqa: F401
@@ -980,7 +978,7 @@ def cmd_init(args):
     except ImportError:
         pass
 
-    # 3. LLM configuration (only for full/community mode)
+    # 3. LLM configuration (only for full mode)
     embed_url = cfg.embed_url
     llm_url = cfg.llm_url
     llm_model = cfg.llm_model
@@ -1648,11 +1646,6 @@ def cmd_update(args):
     try:
         import numpy  # noqa: F401
         mode = "full"
-        try:
-            import leidenalg  # noqa: F401
-            mode = "community"
-        except ImportError:
-            pass
     except ImportError:
         pass
 
@@ -1669,8 +1662,6 @@ def cmd_update(args):
     sync_cmd = [uv, "sync", "--project", str(project_root)]
     if mode == "full":
         sync_cmd += ["--extra", "full"]
-    elif mode == "community":
-        sync_cmd += ["--extra", "full", "--extra", "community"]
 
     print(f"  Syncing dependencies ({mode} mode)...")
     result = subprocess.run(
@@ -1778,11 +1769,6 @@ def cmd_install(args):
             try:
                 import numpy  # noqa: F401
                 current_mode = "full"
-                try:
-                    import leidenalg  # noqa: F401
-                    current_mode = "community"
-                except ImportError:
-                    pass
             except ImportError:
                 pass
             print(f"  Current:  {current_mode} mode\n")
@@ -1791,9 +1777,7 @@ def cmd_install(args):
                 ("lite",
                  "Lite — FTS5 search + graph, no ML (~130 MB)"),
                 ("full",
-                 "Full — + embeddings, summaries (~560 MB)"),
-                ("community",
-                 "Community — + GraphRAG Leiden (~575 MB)"),
+                 "Full — + embeddings, summaries, communities (~560 MB)"),
             ]
             mode = _prompt(
                 "Installation mode",
@@ -1803,7 +1787,7 @@ def cmd_install(args):
             pull_models = False
             embed_model = cfg.embed_model
             llm_model = cfg.llm_model
-            if mode in ("full", "community"):
+            if mode == "full":
                 print("\n  \033[1mOllama Models\033[0m")
                 print(
                     "  Full mode uses Ollama for embeddings"
@@ -1871,8 +1855,6 @@ def cmd_install(args):
     sync_cmd = [uv_bin, "sync", "--project", str(project_root)]
     if mode == "full":
         sync_cmd += ["--extra", "full"]
-    elif mode == "community":
-        sync_cmd += ["--extra", "full", "--extra", "community"]
 
     print(f"  Syncing dependencies ({mode} mode)...")
     try:
@@ -1902,13 +1884,13 @@ def cmd_install(args):
     alias.chmod(0o755)
     print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper} (alias: ns)")
 
-    # 3. Ollama setup (full/community modes)
-    if pull_models or (mode in ("full", "community") and not pull_models
+    # 3. Ollama setup (full mode)
+    if pull_models or (mode == "full" and not pull_models
                        and not args.mode):
         # Check if Ollama is installed
         ollama = shutil.which("ollama")
         if not ollama:
-            if mode in ("full", "community"):
+            if mode == "full":
                 print("  \033[33m!\033[0m Ollama not found")
                 if sys.stdin.isatty() and _confirm(
                     "Install Ollama now?", default=True
@@ -2196,29 +2178,6 @@ def cmd_doctor(args):
             "numpy", "SKIP",
             "Not installed (install with:"
             " pip install neurostack[full])",
-        ))
-
-    try:
-        import sentence_transformers
-        checks.append((
-            "sentence-transformers", "OK",
-            sentence_transformers.__version__,
-        ))
-    except ImportError:
-        checks.append((
-            "sentence-transformers", "SKIP",
-            "Not installed (install with:"
-            " pip install neurostack[full])",
-        ))
-
-    try:
-        import leidenalg
-        checks.append(("leidenalg", "OK", leidenalg.__version__))
-    except ImportError:
-        checks.append((
-            "leidenalg", "SKIP",
-            "Not installed (install with:"
-            " pip install neurostack[community])",
         ))
 
     # Print results
@@ -3776,8 +3735,8 @@ def main():
     # install
     p = sub.add_parser("install", help="Install or upgrade dependencies and Ollama models")
     p.add_argument(
-        "--mode", "-m", choices=["lite", "full", "community"],
-        help="Installation mode (lite=FTS5 only, full=+ML, community=+GraphRAG)",
+        "--mode", "-m", choices=["lite", "full"],
+        help="Installation mode (lite=FTS5 only, full=+ML+communities)",
     )
     p.add_argument(
         "--pull-models", action="store_true", default=False,
@@ -3971,10 +3930,6 @@ def main():
         help="Project/domain context for result boosting",
     )
     p.add_argument(
-        "--rerank", action="store_true", default=False,
-        help="Apply cross-encoder reranking",
-    )
-    p.add_argument(
         "--workspace", "-w", default=None,
         help="Restrict results to vault subdirectory "
         "(e.g. 'work/acme-cloud'). "
@@ -4047,10 +4002,6 @@ def main():
         help="Project/domain context for result boosting",
     )
     p.add_argument(
-        "--rerank", action="store_true", default=False,
-        help="Apply cross-encoder reranking",
-    )
-    p.add_argument(
         "--workspace", "-w", default=None,
         help="Restrict results to vault subdirectory "
         "(e.g. 'work/acme-cloud'). "
@@ -4079,7 +4030,9 @@ def main():
     comm_sub = p.add_subparsers(dest="communities_cmd")
 
     # communities build
-    comm_sub.add_parser("build", help="Run Leiden detection + generate LLM community summaries")
+    comm_sub.add_parser(
+        "build", help="Run attractor basin detection + LLM summaries",
+    )
 
     # communities query
     p_q = comm_sub.add_parser("query", help="Global query over community summaries (GraphRAG)")

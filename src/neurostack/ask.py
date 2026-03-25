@@ -48,7 +48,6 @@ def ask_vault(
         top_k=top_k,
         mode="hybrid",
         embed_url=embed_url,
-        rerank=True,
         workspace=workspace,
     )
 
