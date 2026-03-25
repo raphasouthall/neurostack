@@ -922,70 +922,304 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
         print("  \033[32m✓\033[0m Indexing complete")
 
 
+def _find_project_root() -> Path:
+    """Find the project root (where pyproject.toml lives)."""
+    project_root = Path(__file__).resolve().parent.parent.parent
+    if (project_root / "pyproject.toml").exists():
+        return project_root
+    fallback = Path.home() / ".local" / "share" / "neurostack" / "repo"
+    if (fallback / "pyproject.toml").exists():
+        return fallback
+    return project_root
+
+
+def _find_uv() -> str | None:
+    """Find uv binary on PATH or at ~/.local/bin/uv."""
+    import shutil
+
+    uv = shutil.which("uv")
+    if uv:
+        return uv
+    fallback = Path.home() / ".local" / "bin" / "uv"
+    if fallback.exists():
+        return str(fallback)
+    return None
+
+
+def _sync_dependencies(project_root: Path, uv_bin: str, mode: str) -> bool:
+    """Run uv sync for the given mode. Returns True on success."""
+    import subprocess
+
+    sync_cmd = [uv_bin, "sync", "--project", str(project_root)]
+    if mode == "full":
+        sync_cmd += ["--extra", "full"]
+
+    print(f"  Syncing dependencies ({mode} mode)...")
+    try:
+        result = subprocess.run(
+            sync_cmd, capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            print(f"  \033[31m✗\033[0m uv sync failed:\n{result.stderr}")
+            return False
+        print(f"  \033[32m✓\033[0m Dependencies synced ({mode})")
+        return True
+    except FileNotFoundError:
+        print(f"  \033[31m✗\033[0m Failed to run: {uv_bin}")
+        return False
+
+
+def _create_cli_wrapper(project_root: Path) -> None:
+    """Create CLI wrapper scripts at ~/.local/bin/."""
+    wrapper = Path.home() / ".local" / "bin" / "neurostack"
+    wrapper.parent.mkdir(parents=True, exist_ok=True)
+    wrapper_content = (
+        "#!/usr/bin/env bash\n"
+        f'exec uv run --project "{project_root}" python -m neurostack.cli "$@"\n'
+    )
+    wrapper.write_text(wrapper_content)
+    wrapper.chmod(0o755)
+    alias = wrapper.parent / "ns"
+    alias.write_text(wrapper_content)
+    alias.chmod(0o755)
+    print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper} (alias: ns)")
+
+
+def _setup_ollama(pull_models, embed_model, llm_model, cfg):
+    """Check Ollama, optionally install and pull models."""
+    import shutil
+    import subprocess
+
+    ollama = shutil.which("ollama")
+    if not ollama:
+        print("  \033[33m!\033[0m Ollama not found")
+        if sys.stdin.isatty() and _confirm(
+            "Install Ollama now?", default=True,
+        ):
+            _install_ollama(subprocess)
+            ollama = shutil.which("ollama")
+            if not ollama:
+                print("  \033[33m!\033[0m Ollama install"
+                      " may need a shell restart")
+        else:
+            print("    Install later:"
+                  " https://ollama.com/download")
+
+    if ollama and pull_models:
+        _pull_ollama_models(ollama, embed_model, llm_model, subprocess)
+
+        cfg.embed_model = embed_model
+        cfg.llm_model = llm_model
+        from .config import CONFIG_PATH
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(
+            f'vault_root = "{cfg.vault_root}"\n'
+            f'embed_url = "{cfg.embed_url}"\n'
+            f'embed_model = "{embed_model}"\n'
+            f'llm_url = "{cfg.llm_url}"\n'
+            f'llm_model = "{llm_model}"\n'
+        )
+        print(f"  \033[32m✓\033[0m Config updated: {CONFIG_PATH}")
+
+
+def _full_index_pipeline(vault_root, cfg):
+    """Run complete indexing: full index + backfill + communities."""
+    from .watcher import (
+        backfill_stale_summaries,
+        backfill_summaries,
+        backfill_triples,
+        full_index,
+    )
+
+    print("\n  Indexing vault (full mode — this may take several minutes)...")
+    full_index(
+        vault_root=vault_root,
+        embed_url=cfg.embed_url,
+        summarize_url=cfg.llm_url,
+        skip_summary=False,
+        skip_triples=False,
+    )
+    print("  \033[32m✓\033[0m Index complete")
+
+    print("  Backfilling summaries...")
+    backfill_summaries(vault_root=vault_root, summarize_url=cfg.llm_url)
+    backfill_stale_summaries(vault_root=vault_root, summarize_url=cfg.llm_url)
+    print("  \033[32m✓\033[0m Summaries complete")
+
+    print("  Backfilling triples...")
+    backfill_triples(
+        vault_root=vault_root,
+        embed_url=cfg.embed_url,
+        summarize_url=cfg.llm_url,
+    )
+    print("  \033[32m✓\033[0m Triples complete")
+
+    print("  Building communities...")
+    try:
+        from .attractor import detect_communities
+        from .community import summarize_all_communities
+
+        n_coarse, n_fine = detect_communities()
+        print(f"  Detected {n_coarse} coarse, {n_fine} fine communities.")
+        print("  Generating community summaries...")
+        summarize_all_communities(
+            summarize_url=cfg.llm_url,
+            embed_url=cfg.embed_url,
+        )
+        print("  \033[32m✓\033[0m Communities complete")
+    except ImportError:
+        print("  \033[33m!\033[0m Skipped communities (numpy required)")
+    except Exception as e:
+        print(f"  \033[33m!\033[0m Communities failed: {e}")
+
+
 def cmd_init(args):
-    """Initialize a new NeuroStack vault and config."""
+    """Initialize a new NeuroStack vault — one command to set up everything."""
+    import platform
+    import sqlite3
+    import subprocess
+
     from .professions import list_professions
 
     cfg = get_config()
 
-    # Non-interactive mode: use flags directly (backwards compatible)
+    # Non-interactive mode: use flags directly
     if args.path or args.profession or not sys.stdin.isatty():
         vault_root = Path(args.path) if args.path else cfg.vault_root
+        mode = getattr(args, "mode", None) or "lite"
+        use_cloud = getattr(args, "cloud", False)
+
+        if use_cloud:
+            mode = "lite"
+        if mode == "full":
+            uv_bin = _find_uv()
+            if uv_bin:
+                _sync_dependencies(_find_project_root(), uv_bin, "full")
+
         _do_init(vault_root, cfg, profession_name=args.profession,
                  run_index=args.index)
-        print("\nNext steps:")
-        if not args.index:
-            print("  neurostack index          # Index your vault")
-        print("  neurostack search 'query' # Search")
-        print("  neurostack doctor         # Check health")
+
+        if mode == "full" and args.index:
+            _full_index_pipeline(vault_root, cfg)
+
+        print("\n  \033[32m✓\033[0m Setup complete.")
+        print("    neurostack search 'query' # Search")
+        print("    neurostack serve          # Start MCP server")
         return
 
     # ── Interactive setup wizard ──
     print("\n  \033[1m━━━ NeuroStack Setup ━━━\033[0m\n")
 
-    # Hardware check — skip if using cloud mode
-    from .cloud.config import load_cloud_config
-    _cloud_cfg = load_cloud_config()
-    if _cloud_cfg.cloud_api_key:
-        print("  \033[1mMode\033[0m")
-        print("    \033[32m✓\033[0m Cloud — Gemini handles indexing")
-        print()
+    # System info
+    py_ver = platform.python_version()
+    print(f"  Python:   {py_ver}")
+    try:
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE VIRTUAL TABLE _t USING fts5(c)")
+        conn.close()
+        print("  FTS5:     available")
+    except Exception:
+        print("  \033[31mFTS5:     MISSING"
+              " — SQLite compiled without FTS5\033[0m")
+        sys.exit(1)
+
+    uv_bin = _find_uv()
+    if uv_bin:
+        try:
+            uv_ver = subprocess.run(
+                ["uv", "--version"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            print(f"  uv:       {uv_ver}")
+        except Exception:
+            print(f"  uv:       {uv_bin}")
     else:
+        print("  \033[31muv:       NOT FOUND\033[0m")
+        print("  Install:  curl -LsSf"
+              " https://astral.sh/uv/install.sh | sh")
+        sys.exit(1)
+
+    # ── Step 1: Cloud or Local? ──
+    print()
+    setup_choices = [
+        ("local", "Local — self-hosted with Ollama"),
+        ("cloud", "Cloud — Gemini indexes your vault, no GPU needed"),
+    ]
+    setup = _prompt(
+        "How do you want to run NeuroStack?",
+        default="local", choices=setup_choices,
+    )
+    use_cloud = setup == "cloud"
+
+    mode = "lite"
+    pull_models = False
+    embed_model = cfg.embed_model
+    llm_model = cfg.llm_model
+
+    if use_cloud:
+        mode = "lite"
+    else:
+        # ── Step 2: Lite or Full? ──
         _print_hardware_recommendation()
         print()
+        mode_choices = [
+            ("lite",
+             "Lite — FTS5 search + graph, no ML (~130 MB)"),
+            ("full",
+             "Full — + embeddings, summaries, communities (~560 MB)"),
+        ]
+        mode = _prompt(
+            "Installation mode",
+            default="full", choices=mode_choices,
+        )
 
-    # 1. Vault path
+        if mode == "full":
+            print("\n  \033[1mOllama Models\033[0m")
+            print("  Full mode uses Ollama for embeddings"
+                  " and summaries.")
+            pull_models = _confirm(
+                "Pull Ollama models now?", default=True,
+            )
+            if pull_models:
+                embed_model = _prompt(
+                    "Embedding model", default=cfg.embed_model,
+                )
+                model_choices = [
+                    ("phi3.5", "phi3.5 — MIT, fast, 3.8B"),
+                    ("qwen3:8b", "qwen3:8b — Apache 2.0, strong"),
+                    ("llama3.1:8b", "llama3.1:8b — Meta license"),
+                    ("mistral:7b", "mistral:7b — Apache 2.0"),
+                ]
+                llm_model = _prompt(
+                    "LLM model",
+                    default=cfg.llm_model,
+                    choices=model_choices,
+                )
+
+    # ── Step 3: Vault path ──
+    print()
     print("  Your vault is the directory where your Markdown notes live.")
-    print("  NeuroStack will create subdirectories for organization.")
-    print("  Point this to an existing notes folder, or a new path to start fresh.\n")
+    print("  Point this to an existing notes folder,"
+          " or a new path to start fresh.\n")
     vault_root = Path(_prompt(
         "\033[1mVault path\033[0m",
         default=str(cfg.vault_root),
     )).expanduser()
 
-    # 2. Profession pack
+    # ── Step 4: Profession pack ──
     professions = list_professions()
     prof_choices = [("none", "None — start with base structure")]
     for p in professions:
         prof_choices.append((p.name, f"{p.name.title()} — {p.description}"))
     profession = _prompt("Profession pack", default="none", choices=prof_choices)
 
-    # Detect install mode (full mode has numpy installed)
-    is_full_mode = False
-    try:
-        import numpy  # noqa: F401
-        is_full_mode = True
-    except ImportError:
-        pass
-
-    # 3. LLM configuration (only for full mode)
+    # ── Step 5: LLM configuration (full mode only) ──
     embed_url = cfg.embed_url
     llm_url = cfg.llm_url
-    llm_model = cfg.llm_model
     llm_api_key = ""
     embed_api_key = ""
 
-    if is_full_mode:
+    if mode == "full":
         print("\n  \033[1mLLM Configuration\033[0m")
         print("  NeuroStack works with any OpenAI-compatible endpoint")
         print("  (Ollama, vLLM, Together AI, Groq, OpenRouter, etc.)\n")
@@ -993,16 +1227,9 @@ def cmd_init(args):
         embed_url = _prompt("Embedding endpoint", default=cfg.embed_url)
         llm_url = _prompt("LLM endpoint", default=cfg.llm_url)
 
-        model_choices = [
-            ("phi3.5", "phi3.5 — MIT licensed, fast, 3.8B params"),
-            ("qwen3:8b", "qwen3:8b — Apache 2.0, strong reasoning"),
-            ("llama3.1:8b", "llama3.1:8b — Meta community license, popular"),
-            ("mistral:7b", "mistral:7b — Apache 2.0, efficient"),
-        ]
-        llm_model = _prompt("LLM model for summaries", default=cfg.llm_model, choices=model_choices)
-
-        # API keys (optional — only needed for cloud providers)
-        is_local = any(h in llm_url for h in ("localhost", "127.0.0.1", "0.0.0.0"))
+        is_local = any(
+            h in llm_url for h in ("localhost", "127.0.0.1", "0.0.0.0")
+        )
         if not is_local:
             print("\n  \033[1mAPI Authentication\033[0m")
             print("  Cloud providers require an API key.\n")
@@ -1011,34 +1238,45 @@ def cmd_init(args):
                 embed_api_key = _prompt("Embedding API key", default="")
             else:
                 embed_api_key = llm_api_key
-        elif _confirm("\n  Configure API keys? (only needed for cloud providers)", default=False):
-            llm_api_key = _prompt("LLM API key", default="")
-            embed_api_key = _prompt("Embedding API key", default=llm_api_key)
 
-    # 4. Index after init?
-    if is_full_mode:
-        run_index = _confirm("Index vault after setup?", default=True)
-    else:
-        run_index = True  # Lite mode: always index (FTS5 only, fast)
-
-    # Show summary
-    print("\n  \033[1m━━━ Summary ━━━\033[0m\n")
+    # ── Summary ──
+    print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
+    print(f"  Mode:       {'cloud' if use_cloud else mode}")
     print(f"  Vault:      {vault_root}")
     print(f"  Profession: {profession}")
-    print(f"  Mode:       {'full' if is_full_mode else 'lite'}")
-    if is_full_mode:
-        auth_label = "yes" if (llm_api_key or embed_api_key) else "no"
+    if mode == "full":
         print(f"  Embed URL:  {embed_url}")
         print(f"  LLM URL:    {llm_url}")
         print(f"  LLM model:  {llm_model}")
+        if pull_models:
+            print(f"  Embed model: {embed_model}")
+        auth_label = "yes" if (llm_api_key or embed_api_key) else "no"
         print(f"  API auth:   {auth_label}")
-    print(f"  Index now:  {'yes' if run_index else 'no'}")
+        print("  Index:      full (summaries + triples + communities)")
+    elif use_cloud:
+        print("  Index:      cloud (Gemini)")
+    else:
+        print("  Index:      lite (FTS5 only)")
 
     if not _confirm("\n  Proceed?", default=True):
         print("\n  Cancelled.")
         return
 
-    # Apply settings to config
+    # ── Execute ──
+    print()
+    project_root = _find_project_root()
+
+    # 1. Sync dependencies
+    if mode == "full":
+        if not _sync_dependencies(project_root, uv_bin, "full"):
+            sys.exit(1)
+    _create_cli_wrapper(project_root)
+
+    # 2. Ollama setup (full mode)
+    if mode == "full":
+        _setup_ollama(pull_models, embed_model, llm_model, cfg)
+
+    # 3. Apply config + create vault structure
     cfg.vault_root = vault_root
     cfg.embed_url = embed_url
     cfg.llm_url = llm_url
@@ -1046,62 +1284,59 @@ def cmd_init(args):
     cfg.llm_api_key = llm_api_key
     cfg.embed_api_key = embed_api_key
 
-    _do_init(
-        vault_root, cfg,
-        profession_name=profession, run_index=run_index,
-    )
-
-    # Cloud-aware next steps
-    from .cloud.config import load_cloud_config as _load_cc
-    _cc = _load_cc()
-    if _cc.cloud_api_key:
-        # Cloud user — offer to push now
-        print()
-        print("  \033[1m━━━ What works now ━━━\033[0m")
-        print("    neurostack search 'query'"
-              "    # Keyword search (FTS5)")
-        print()
-        print("  \033[1m━━━ Unlock full search ━━━\033[0m")
-        print("  Cloud indexing adds semantic search,"
-              " summaries, and knowledge graph.")
-        print()
-        if sys.stdin.isatty() and _confirm(
-            "Push vault to cloud now?", default=True,
-        ):
-            print()
-            cmd_cloud_push(args)
-            print()
-            print("  While indexing, you can query"
-                  " the cloud directly:")
-            print("    neurostack cloud query '...'"
-                  "  # Search via cloud API")
-            print()
-            print("  When indexing finishes, run:")
-            print("    neurostack cloud pull"
-                  "        # Download indexed DB")
-            print()
-            print("  Check progress:"
-                  "  https://app.neurostack.sh")
-            print()
-        else:
-            print()
-            print("  Run this next:")
-            print("    neurostack cloud push"
-                  "        # Upload vault for indexing")
-            print()
+    if mode == "full":
+        # Full mode: create vault, then run full index pipeline
+        _do_init(vault_root, cfg, profession_name=profession, run_index=False)
+        _full_index_pipeline(vault_root, cfg)
     else:
-        # Local user
-        print("\n  \033[1mNext steps:\033[0m")
-        if not run_index:
-            print("    neurostack index"
-                  "          # Index your vault")
-        print("    neurostack search 'query'"
-              " # Search")
-        print("    neurostack doctor"
-              "         # Check health")
-        print("    neurostack serve"
-              "          # Start MCP server")
-        print()
+        # Lite/cloud: create vault with FTS5-only index
+        _do_init(vault_root, cfg, profession_name=profession, run_index=True)
+
+    # 4. Cloud path: login + push
+    if use_cloud:
+        print("\n  \033[1m━━━ Cloud Login ━━━\033[0m\n")
+        _cmd_cloud_device_login()
+
+        from .cloud.config import load_cloud_config
+        cloud_cfg = load_cloud_config()
+        if cloud_cfg.cloud_api_key:
+            print("\n  \033[32m✓\033[0m Logged in")
+            from .cloud.client import CloudClient
+            tier = "Free"
+            try:
+                client = CloudClient(cloud_cfg)
+                info = client.status()
+                tier = (info.get("tier") or "free").capitalize()
+            except Exception:
+                pass
+            print(f"  Plan:     {tier}")
+
+            if sys.stdin.isatty() and _confirm(
+                "\n  Push vault to cloud now?", default=True,
+            ):
+                print()
+                cmd_cloud_push(args)
+                print()
+                print("  Check progress:"
+                      " https://app.neurostack.sh")
+            else:
+                print("\n  Run later: neurostack cloud push")
+        else:
+            print("\n  \033[33m!\033[0m Login skipped.")
+            print("  Run later: neurostack cloud login")
+
+    # 5. PATH check
+    local_bin = str(Path.home() / ".local" / "bin")
+    if local_bin not in os.environ.get("PATH", ""):
+        print("\n  \033[33m!\033[0m Add to PATH:"
+              ' export PATH="$HOME/.local/bin:$PATH"')
+
+    # Done
+    print("\n  \033[32m✓\033[0m Setup complete.\033[0m")
+    print("    neurostack search 'query' # Search")
+    print("    neurostack serve          # Start MCP server")
+    print("    neurostack doctor         # Check health")
+    print()
 
 
 def cmd_scaffold(args):
@@ -1691,7 +1926,13 @@ def cmd_update(args):
 
 
 def cmd_install(args):
-    """Streamlined installation: local or cloud, deps, and setup."""
+    """Streamlined installation: local or cloud, deps, and setup.
+
+    DEPRECATED: Use 'neurostack init' instead, which combines installation
+    and vault setup into a single command.
+    """
+    print("  \033[33mNote:\033[0m 'neurostack install' is deprecated."
+          " Use 'neurostack init' instead.\n")
     import platform
     import shutil
     import sqlite3
@@ -3572,13 +3813,21 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     # init
-    p = sub.add_parser("init", help="Initialize a new vault and config")
+    p = sub.add_parser("init", help="Set up vault, deps, and index (one command)")
     p.add_argument("path", nargs="?", help="Vault path (default: from config)")
     p.add_argument(
         "--profession", "-p",
         help="Apply a profession pack (e.g., developer, writer, "
         "student, devops, data-scientist, researcher). "
         "Use 'scaffold --list' to see all",
+    )
+    p.add_argument(
+        "--mode", "-m", choices=["lite", "full"],
+        help="Installation mode (lite=FTS5 only, full=+ML+communities)",
+    )
+    p.add_argument(
+        "--cloud", action="store_true", default=False,
+        help="Use cloud mode (Gemini indexing)",
     )
     p.add_argument(
         "--index", action="store_true", default=True,
@@ -3588,6 +3837,12 @@ def main():
         "--no-index", action="store_false", dest="index",
         help="Skip indexing after init",
     )
+    p.add_argument("--pull-models", action="store_true", default=False,
+                   help="Pull Ollama models (full mode)")
+    p.add_argument("--embed-model", help="Embedding model override")
+    p.add_argument("--llm-model", help="LLM model override")
+    p.add_argument("--embed-url", help="Embedding endpoint override")
+    p.add_argument("--summarize-url", help="LLM endpoint override")
     p.set_defaults(func=cmd_init)
 
     # scaffold
