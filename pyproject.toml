@@ -1,6 +1,6 @@
 [project]
 name = "neurostack"
-version = "0.9.5"
+version = "0.10.0"
 description = "Build, maintain, and search your knowledge vault. CLI + MCP server with stale note detection, semantic search, and neuroscience-grounded memory."
 readme = "README.md"
 license = "Apache-2.0"
@@ -34,15 +34,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Full mode — CPU ML (embeddings, summaries, reranking)
+# Full mode — CPU ML (embeddings, summaries)
 full = [
     "numpy>=1.26",
-    "sentence-transformers>=3.0",
-]
-# Community detection — GPL-3.0 isolated
-community = [
-    "leidenalg>=0.10",
-    "python-igraph>=0.11",
 ]
 # Development
 dev = [
