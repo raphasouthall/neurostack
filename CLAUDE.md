@@ -104,10 +104,16 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack stats` | Index health (note count, embedding coverage, excitability breakdown) |
 | `neurostack demo` | Run interactive demo with sample vault |
 
+### Client Setup
+| Command | Description |
+|---------|-------------|
+| `neurostack setup-desktop` | Auto-configure Claude Desktop MCP config. `--dry-run` |
+| `neurostack setup-client <name>` | Auto-configure AI client: cursor, windsurf, gemini, vscode, claude-code. `--list`, `--dry-run` |
+
 ### Servers
 | Command | Description |
 |---------|-------------|
-| `neurostack serve` | Start MCP server (stdio). `--transport stdio\|sse` |
+| `neurostack serve` | Start MCP server. `--transport stdio\|sse\|http`, `--host`, `--port` |
 | `neurostack api` | Start OpenAI-compatible HTTP API. `--host`, `--port` |
 
 ## MCP Tools (21 tools)
