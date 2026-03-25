@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import functools
 import inspect
-import json
 import logging
 
 from mcp.server.fastmcp import FastMCP
@@ -35,8 +34,7 @@ def create_mcp_server(name: str = "neurostack", **fastmcp_kwargs) -> FastMCP:
     for tool_def in registry.list_tools():
         @functools.wraps(tool_def.fn)
         def wrapper(_td=tool_def, **kwargs):
-            result = _td.call(**kwargs)
-            return json.dumps(result, default=str)
+            return _td.call(**kwargs)
 
         wrapper.__signature__ = inspect.signature(tool_def.fn)
         wrapper.__doc__ = tool_def.fn.__doc__
