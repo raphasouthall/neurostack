@@ -8,8 +8,7 @@ NeuroStack is a neuroscience-grounded knowledge management system. CLI + MCP ser
 
 ```bash
 npm install -g neurostack    # bootstraps CLI, Python, uv, deps
-neurostack install            # interactive mode/model wizard
-neurostack init               # vault setup + profession packs
+neurostack init              # cloud/local → lite/full → vault setup → index
 ```
 
 ### MCP Server (recommended for Claude Code)
@@ -85,7 +84,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack reembed-chunks` | Re-embed all chunks with contextual text |
 | `neurostack backfill` | Backfill missing summaries and/or triples |
 | `neurostack folder-summaries` | Build folder-level summaries for context boosting |
-| `neurostack communities build` | Run Leiden community detection |
+| `neurostack communities build` | Run attractor basin community detection |
 | `neurostack harvest` | Extract insights from recent Claude Code sessions |
 | `neurostack record-usage "path1" "path2"` | Record note usage for hotness scoring |
 | `neurostack decay` | Report note excitability and dormancy |
@@ -94,10 +93,10 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 ### Setup & Diagnostics
 | Command | Description |
 |---------|-------------|
-| `neurostack init [path]` | Initialize vault and config. `--profession developer\|writer\|devops\|...` |
+| `neurostack init [path]` | One-command setup: cloud/local, lite/full, deps, vault, index. `--mode lite\|full`, `--cloud`, `--profession`, `--pull-models` |
 | `neurostack scaffold [profession]` | Apply profession pack to existing vault. `--list` to see options |
 | `neurostack onboard /path/to/notes` | Onboard existing Markdown notes. `--dry-run`, `--no-index` |
-| `neurostack install` | Install/upgrade deps and models. `--mode lite\|full\|community`, `--pull-models` |
+| `neurostack install` | **(Deprecated)** Use `neurostack init` instead |
 | `neurostack update` | Pull latest source and re-sync deps |
 | `neurostack doctor` | Validate all subsystems. `--strict` exits 1 on missing vault/db |
 | `neurostack status` | Show current status |
