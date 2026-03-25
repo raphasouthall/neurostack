@@ -3,9 +3,11 @@
 [![PyPI](https://img.shields.io/pypi/v/neurostack)](https://pypi.org/project/neurostack/)
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
 
-NeuroStack is a Python CLI and MCP server that indexes a local Markdown vault into a SQLite knowledge graph. It provides tiered retrieval (structured facts at ~15 tokens, summaries at ~75, full content at ~300), stale note detection, typed agent memories, and session transcript harvesting. It works with any MCP client and never modifies your vault files.
+**Long-term memory for AI agents.** NeuroStack indexes your Markdown vault into a knowledge graph your AI can search -- structured facts, summaries, or full content, automatically tiered by query complexity. It persists agent memories, detects stale notes, and recovers context across sessions. Your vault files are never modified.
 
-## Install
+Works with Claude Code, Cursor, Windsurf, Codex, and Gemini CLI via MCP.
+
+## Get started
 
 ```bash
 npm install -g neurostack
@@ -13,11 +15,19 @@ neurostack install
 neurostack init
 ```
 
-No prior config needed. The installer asks how you want to run NeuroStack:
+| | Cloud | Local |
+|--|-------|-------|
+| **Best for** | Zero friction, any machine | Privacy-first, offline, power users |
+| **Indexing** | Gemini API (server-side) | Ollama on your machine |
+| **Search** | Local SQLite | Local SQLite (same DB) |
+| **GPU required** | No | Recommended for Full mode |
+| **Multi-device** | Push once, pull anywhere | Manual DB sync |
+| **Setup time** | One command | Install Ollama + models |
+| **Cost** | Free tier / [Pro plans](https://neurostack.sh) | Free (your hardware) |
 
 ### Cloud (recommended)
 
-No GPU, no Ollama, no ML dependencies. Gemini indexes your vault server-side. You get embeddings, summaries, triples, and semantic search without running anything locally.
+No GPU, no Ollama, no ML dependencies. Gemini indexes your vault server-side and returns a ready-to-use SQLite database. All search runs locally against that DB.
 
 ```bash
 neurostack install            # choose "Cloud"
@@ -26,7 +36,9 @@ neurostack cloud push         # upload + index via Gemini
 neurostack cloud pull         # download indexed DB
 ```
 
-Your vault files are uploaded for indexing, then the indexed SQLite DB is synced back. All search runs locally against that DB. Free tier: 500 queries/month, 200 notes. [Manage your account](https://app.neurostack.sh).
+Free tier: 500 queries/month, 200 notes. Dashboard: [app.neurostack.sh](https://app.neurostack.sh) -- vault stats, API keys, usage, billing, query playground.
+
+> Files are uploaded for indexing via HTTPS, processed by Gemini, and not retained after indexing completes.
 
 ### Local (self-hosted)
 
@@ -34,7 +46,7 @@ Run everything on your machine with Ollama. Choose a tier during `neurostack ins
 
 - **Lite** (~130 MB) -- FTS5 search, wiki-link graph, stale detection, MCP server. No GPU or Ollama required.
 - **Full** (~560 MB) -- adds semantic search, AI summaries, and cross-encoder reranking via local [Ollama](https://ollama.ai). GPU or 6+ core CPU recommended.
-- **Community** (~575 MB) -- adds GraphRAP topic clustering via Leiden algorithm.
+- **Community** (~575 MB) -- adds GraphRAG topic clustering via Leiden algorithm.
 
 <details>
 <summary><strong>Alternative install methods</strong></summary>
@@ -58,26 +70,25 @@ curl -fsSL https://raw.githubusercontent.com/raphasouthall/neurostack/main/insta
 
 To uninstall: `neurostack uninstall`
 
-## Build
+## MCP configuration
 
-NeuroStack scaffolds new vaults or onboards existing Markdown directories. Six profession packs provide domain-specific templates, seed notes, and workflow guidance.
+Add to your MCP client config (Claude Code, Codex, Gemini CLI, Cursor, Windsurf):
 
-```bash
-neurostack init                        # interactive setup, offers profession packs
-neurostack onboard ~/my-notes          # import existing notes with frontmatter generation
-neurostack scaffold devops             # apply a pack to an existing vault
-neurostack scaffold --list             # researcher, developer, writer, student, devops, data-scientist
+```json
+{
+  "mcpServers": {
+    "neurostack": {
+      "command": "neurostack",
+      "args": ["serve"],
+      "env": {}
+    }
+  }
+}
 ```
 
-```
-~/your-vault/                           # your Markdown files (never modified)
-~/.config/neurostack/config.toml        # configuration
-~/.local/share/neurostack/
-    neurostack.db                       # SQLite + FTS5 knowledge graph
-    sessions.db                         # session transcript index
-```
+After install, all commands work the same in both Cloud and Local modes.
 
-All data -- indexes, embeddings, memories, sessions -- lives in NeuroStack's own SQLite databases. Your vault files are strictly read-only.
+Setup guides: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-usage) | [Codex](https://developers.openai.com/codex/mcp/) | [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/)
 
 ## Search
 
@@ -154,25 +165,27 @@ neurostack context "migrate auth to OAuth2" --budget 2000
 neurostack brief
 ```
 
-## MCP configuration
+## Build
 
-Add to your MCP client config (Claude Code, Codex, Gemini CLI, Cursor, Windsurf):
+NeuroStack scaffolds new vaults or onboards existing Markdown directories. Six profession packs provide domain-specific templates, seed notes, and workflow guidance.
 
-```json
-{
-  "mcpServers": {
-    "neurostack": {
-      "command": "neurostack",
-      "args": ["serve"],
-      "env": {}
-    }
-  }
-}
+```bash
+neurostack init                        # interactive setup, offers profession packs
+neurostack onboard ~/my-notes          # import existing notes with frontmatter generation
+neurostack scaffold devops             # apply a pack to an existing vault
+neurostack scaffold --list             # researcher, developer, writer, student, devops, data-scientist
 ```
 
-Setup guides: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-usage) | [Codex](https://developers.openai.com/codex/mcp/) | [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/)
+```
+~/your-vault/                           # your Markdown files (never modified)
+~/.config/neurostack/config.toml        # configuration
+~/.local/share/neurostack/
+    neurostack.db                       # SQLite + FTS5 knowledge graph
+    sessions.db                         # session transcript index
+```
 
-## MCP tools
+<details>
+<summary><strong>MCP tools (21 tools)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -198,7 +211,10 @@ Setup guides: [Claude Code](https://docs.anthropic.com/en/docs/claude-code/cli-u
 | `vault_session_start` | Begin a memory session |
 | `vault_session_end` | End session with optional summary and auto-harvest |
 
-## CLI reference
+</details>
+
+<details>
+<summary><strong>CLI reference</strong></summary>
 
 ```
 # Setup
@@ -256,42 +272,7 @@ neurostack doctor                        # validate all subsystems
 neurostack demo                          # interactive demo with sample vault
 ```
 
-## Neuroscience basis
-
-Each maintenance feature is modeled on a specific mechanism from memory neuroscience:
-
-| Feature | Mechanism | Citation |
-|---------|-----------|----------|
-| Stale detection | Prediction error signals trigger reconsolidation | Sinclair & Bhatt 2022 |
-| Excitability decay | CREB-elevated neurons preferentially join new memories | Han et al. 2007 |
-| Co-occurrence learning | Hebbian "fire together, wire together" plasticity | Hebb 1949 |
-| Topic clusters | Neural ensemble formation | Cai et al. 2016 |
-| Tiered retrieval | Complementary learning systems | McClelland et al. 1995 |
-
-Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
-
-## NeuroStack Cloud
-
-Don't have a GPU? Don't want to run Ollama? NeuroStack Cloud indexes your vault with Gemini and distributes the indexed database back to your devices.
-
-| | Local | Cloud |
-|--|-------|-------|
-| **Indexing** | Ollama on your machine | Gemini API (server-side) |
-| **Search** | Local SQLite | Local SQLite (same DB) |
-| **GPU required** | Recommended for Full mode | No |
-| **Multi-device** | Manual DB sync | Push once, pull anywhere |
-| **Setup time** | Install Ollama + models | One command |
-| **Cost** | Free (your hardware) | Free tier / $19/mo Pro |
-| **Vault privacy** | Never leaves your machine | Uploaded for indexing, DB returned |
-
-```bash
-neurostack cloud login        # sign in via browser (Google OAuth)
-neurostack cloud push         # upload changed notes, index with Gemini
-neurostack cloud pull         # download indexed SQLite DB
-neurostack cloud query "..."  # query directly via cloud API
-```
-
-Dashboard: [app.neurostack.sh](https://app.neurostack.sh) -- vault stats, API keys, usage, billing, query playground.
+</details>
 
 ## FAQ
 
@@ -308,9 +289,25 @@ Dashboard: [app.neurostack.sh](https://app.neurostack.sh) -- vault stats, API ke
 ## Requirements
 
 - Linux or macOS
-- **npm install**: just Node.js -- everything else is bootstrapped
 - **Cloud mode**: just Node.js. No GPU, no Ollama, no Python ML deps.
 - **Local Full mode**: [Ollama](https://ollama.ai) with `nomic-embed-text` and a summary model. GPU or 6+ core CPU recommended.
+
+<details>
+<summary><strong>Neuroscience basis</strong></summary>
+
+Each maintenance feature is modeled on a specific mechanism from memory neuroscience:
+
+| Feature | Mechanism | Citation |
+|---------|-----------|----------|
+| Stale detection | Prediction error signals trigger reconsolidation | Sinclair & Bhatt 2022 |
+| Excitability decay | CREB-elevated neurons preferentially join new memories | Han et al. 2007 |
+| Co-occurrence learning | Hebbian "fire together, wire together" plasticity | Hebb 1949 |
+| Topic clusters | Neural ensemble formation | Cai et al. 2016 |
+| Tiered retrieval | Complementary learning systems | McClelland et al. 1995 |
+
+Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
+
+</details>
 
 ## Get involved
 
