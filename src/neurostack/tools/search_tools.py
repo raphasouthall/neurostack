@@ -253,7 +253,7 @@ def vault_related(note: str, top_k: int = 10, workspace: str = None) -> dict:
     """
     from ..related import find_related
 
-    return find_related(note_path=note, top_k=top_k, workspace=workspace)
+    return {"related": find_related(note_path=note, top_k=top_k, workspace=workspace)}
 
 
 @registry.tool(tags=["search", "retrieval"])
@@ -278,17 +278,19 @@ def vault_triples(query: str, top_k: int = 10, mode: str = "hybrid", workspace: 
         embed_url=embed_url, workspace=workspace,
     )
 
-    return [
-        {
-            "note": t.note_path,
-            "title": t.title,
-            "s": t.subject,
-            "p": t.predicate,
-            "o": t.object,
-            "score": round(t.score, 4),
-        }
-        for t in results
-    ]
+    return {
+        "triples": [
+            {
+                "note": t.note_path,
+                "title": t.title,
+                "s": t.subject,
+                "p": t.predicate,
+                "o": t.object,
+                "score": round(t.score, 4),
+            }
+            for t in results
+        ],
+    }
 
 
 @registry.tool(tags=["search", "community"])
