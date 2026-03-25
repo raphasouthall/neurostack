@@ -2434,6 +2434,16 @@ def cmd_serve(args):
         mcp.run(transport=transport)
 
 
+def cmd_bundle(args):
+    """Build a .mcpb bundle for Claude Desktop."""
+    from .bundle import build_mcpb
+    output = build_mcpb(output_dir=args.output)
+    print(f"\n  Built: {output}")
+    print(f"  Size:  {output.stat().st_size / 1024:.0f} KB")
+    print("\n  Install: double-click the .mcpb file in Claude Desktop")
+    print("  Or distribute via GitHub Releases.\n")
+
+
 def cmd_api(args):
     """Start the OpenAI-compatible HTTP API server."""
     try:
@@ -3871,6 +3881,11 @@ def main():
     )
     p.set_defaults(func=cmd_setup_client)
 
+    # bundle
+    p = sub.add_parser("bundle", help="Build .mcpb bundle for Claude Desktop")
+    p.add_argument("--output", "-o", default="dist", help="Output directory (default: dist/)")
+    p.set_defaults(func=cmd_bundle)
+
     # api
     p = sub.add_parser("api", help="Start OpenAI-compatible HTTP API server")
     p.add_argument("--host", default=cfg.api_host, help="Bind host (default: 127.0.0.1)")
@@ -4219,7 +4234,7 @@ def main():
     # Preflight: nudge user to run init if vault doesn't exist yet
     _skip_preflight = {
         "init", "install", "uninstall", "doctor", "status", "demo", "update", "cloud",
-        "setup-desktop", "setup-client",
+        "setup-desktop", "setup-client", "bundle",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():

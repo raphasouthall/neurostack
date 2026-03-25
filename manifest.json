@@ -1,0 +1,160 @@
+{
+  "manifest_version": "0.4",
+  "name": "neurostack",
+  "display_name": "NeuroStack",
+  "version": "0.9.4",
+  "description": "Neuroscience-grounded knowledge management for your Markdown vault. Semantic search, knowledge graphs, AI memory, stale note detection, and 21 MCP tools.",
+  "author": {
+    "name": "Raphael Southall"
+  },
+  "icon": "icon.png",
+  "server": {
+    "type": "uv",
+    "entry_point": "src/neurostack/server.py",
+    "env": {
+      "NEUROSTACK_VAULT_ROOT": "${user_config.vault_root}",
+      "NEUROSTACK_API_KEY": "${user_config.api_key}"
+    }
+  },
+  "user_config": {
+    "vault_root": {
+      "type": "directory",
+      "title": "Vault Location",
+      "description": "Path to your Markdown knowledge vault (e.g. ~/brain, ~/notes, ~/obsidian-vault)",
+      "required": true,
+      "default": "~/brain"
+    },
+    "mode": {
+      "type": "string",
+      "title": "Mode",
+      "description": "lite = FTS5 search only (~130MB). full = adds embeddings + summaries via Ollama (~560MB). cloud = use NeuroStack Cloud for indexing.",
+      "default": "lite",
+      "enum": ["lite", "full", "cloud"]
+    },
+    "api_key": {
+      "type": "string",
+      "title": "Cloud API Key",
+      "description": "NeuroStack Cloud API key (only needed for cloud mode). Get one at https://app.neurostack.sh",
+      "required": false,
+      "sensitive": true
+    }
+  },
+  "tools": [
+    {
+      "name": "vault_search",
+      "description": "Hybrid FTS5 + semantic search across the vault with tiered depth control"
+    },
+    {
+      "name": "vault_ask",
+      "description": "RAG Q&A with inline [[citations]] from vault notes"
+    },
+    {
+      "name": "vault_summary",
+      "description": "Get pre-computed AI summary for a note"
+    },
+    {
+      "name": "vault_graph",
+      "description": "Wiki-link neighborhood with PageRank scores"
+    },
+    {
+      "name": "vault_related",
+      "description": "Find semantically similar notes by embedding distance"
+    },
+    {
+      "name": "vault_triples",
+      "description": "Search knowledge graph triples (subject-predicate-object facts)"
+    },
+    {
+      "name": "vault_communities",
+      "description": "GraphRAG global queries across topic clusters"
+    },
+    {
+      "name": "vault_stats",
+      "description": "Index health: note count, embedding coverage, graph stats"
+    },
+    {
+      "name": "vault_record_usage",
+      "description": "Track note hotness for excitability-weighted search"
+    },
+    {
+      "name": "vault_prediction_errors",
+      "description": "Detect stale or poorly-indexed notes"
+    },
+    {
+      "name": "vault_remember",
+      "description": "Save a memory with tags and entity type"
+    },
+    {
+      "name": "vault_forget",
+      "description": "Delete a memory by ID"
+    },
+    {
+      "name": "vault_update_memory",
+      "description": "Update an existing memory's content, tags, or type"
+    },
+    {
+      "name": "vault_merge",
+      "description": "Merge two memories (unions tags, audit trail)"
+    },
+    {
+      "name": "vault_memories",
+      "description": "List or search saved memories"
+    },
+    {
+      "name": "vault_capture",
+      "description": "Quick-capture a thought to the vault inbox"
+    },
+    {
+      "name": "vault_session_start",
+      "description": "Begin a memory session for grouping memories"
+    },
+    {
+      "name": "vault_session_end",
+      "description": "End a session with optional summary and auto-harvest"
+    },
+    {
+      "name": "vault_harvest",
+      "description": "Extract insights from recent AI coding sessions"
+    },
+    {
+      "name": "session_brief",
+      "description": "Compact ~500 token session briefing"
+    },
+    {
+      "name": "vault_context",
+      "description": "Assemble task-scoped context for session recovery"
+    }
+  ],
+  "tools_generated": false,
+  "compatibility": {
+    "platforms": ["darwin", "linux", "win32"],
+    "runtimes": {
+      "python": ">=3.11"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/raphasouthall/neurostack"
+  },
+  "homepage": "https://neurostack.sh",
+  "documentation": "https://neurostack.sh",
+  "license": "Apache-2.0",
+  "keywords": [
+    "knowledge-management",
+    "memory",
+    "semantic-search",
+    "vault",
+    "obsidian",
+    "second-brain",
+    "pkm",
+    "knowledge-graph",
+    "rag",
+    "neuroscience"
+  ],
+  "privacy_policies": [
+    {
+      "name": "Privacy Policy",
+      "url": "https://neurostack.sh/privacy"
+    }
+  ]
+}
