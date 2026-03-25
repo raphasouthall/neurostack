@@ -2403,10 +2403,35 @@ def cmd_demo(args):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def cmd_setup_desktop(args):
+    """Auto-configure Claude Desktop to use NeuroStack MCP server."""
+    from .setup import setup_desktop
+    setup_desktop(dry_run=args.dry_run)
+
+
+def cmd_setup_client(args):
+    """Auto-configure a supported AI client to use NeuroStack MCP server."""
+    from .setup import setup_client, list_clients
+    if args.list:
+        list_clients()
+        return
+    if not args.client:
+        list_clients()
+        return
+    setup_client(args.client, dry_run=args.dry_run)
+
+
 def cmd_serve(args):
     """Start the NeuroStack MCP server."""
     from .server import mcp
-    mcp.run(transport=args.transport)
+    transport = args.transport
+    if transport == "http":
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        print(f"Starting NeuroStack MCP (Streamable HTTP) on {args.host}:{args.port}")
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run(transport=transport)
 
 
 def cmd_api(args):
@@ -3801,8 +3826,43 @@ def main():
 
     # serve
     p = sub.add_parser("serve", help="Start MCP server")
-    p.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+    p.add_argument(
+        "--transport", choices=["stdio", "sse", "http"], default="stdio",
+        help="Transport protocol (stdio, sse, or http for Streamable HTTP)",
+    )
+    p.add_argument("--host", default="127.0.0.1", help="Bind host for HTTP transport (default: 127.0.0.1)")
+    p.add_argument("--port", type=int, default=8001, help="Bind port for HTTP transport (default: 8001)")
     p.set_defaults(func=cmd_serve)
+
+    # setup-desktop
+    p = sub.add_parser(
+        "setup-desktop",
+        help="Auto-configure Claude Desktop to use NeuroStack MCP server",
+    )
+    p.add_argument(
+        "--dry-run", "-n", action="store_true",
+        help="Show what would be written without making changes",
+    )
+    p.set_defaults(func=cmd_setup_desktop)
+
+    # setup-client
+    p = sub.add_parser(
+        "setup-client",
+        help="Auto-configure an AI client to use NeuroStack MCP server",
+    )
+    p.add_argument(
+        "client", nargs="?",
+        help="Client name: cursor, windsurf, gemini, vscode, claude-code",
+    )
+    p.add_argument(
+        "--list", "-l", action="store_true",
+        help="List supported clients and their config paths",
+    )
+    p.add_argument(
+        "--dry-run", "-n", action="store_true",
+        help="Show what would be written without making changes",
+    )
+    p.set_defaults(func=cmd_setup_client)
 
     # api
     p = sub.add_parser("api", help="Start OpenAI-compatible HTTP API server")
@@ -4152,6 +4212,7 @@ def main():
     # Preflight: nudge user to run init if vault doesn't exist yet
     _skip_preflight = {
         "init", "install", "uninstall", "doctor", "status", "demo", "update", "cloud",
+        "setup-desktop", "setup-client",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():
