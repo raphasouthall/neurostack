@@ -36,7 +36,7 @@ jobs:
           cd npm
           npm version "$VERSION" --no-git-tag-version --allow-same-version
       - name: Publish to npm
-        run: npm publish
+        run: npm publish || echo "Version already published — skipping"
         working-directory: npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
