@@ -2411,7 +2411,7 @@ def cmd_setup_desktop(args):
 
 def cmd_setup_client(args):
     """Auto-configure a supported AI client to use NeuroStack MCP server."""
-    from .setup import setup_client, list_clients
+    from .setup import list_clients, setup_client
     if args.list:
         list_clients()
         return
@@ -3198,7 +3198,7 @@ def _cmd_cloud_device_login() -> None:
     # Step 2: Show code and open browser (code passed via URL for auto-fill)
     verification_url = f"{verification_uri}?code={user_code}"
     print("\n  Opening browser to sign in...")
-    print(f"  If the browser doesn't open, visit:")
+    print("  If the browser doesn't open, visit:")
     print(f"  URL:  {verification_url}")
     print(f"  Code: \033[1m{user_code}\033[0m\n")
 
@@ -3831,8 +3831,14 @@ def main():
         "--transport", choices=["stdio", "sse", "http"], default="stdio",
         help="Transport protocol (stdio, sse, or http for Streamable HTTP)",
     )
-    p.add_argument("--host", default="127.0.0.1", help="Bind host for HTTP transport (default: 127.0.0.1)")
-    p.add_argument("--port", type=int, default=8001, help="Bind port for HTTP transport (default: 8001)")
+    p.add_argument(
+        "--host", default="127.0.0.1",
+        help="Bind host for HTTP transport (default: 127.0.0.1)",
+    )
+    p.add_argument(
+        "--port", type=int, default=8001,
+        help="Bind port for HTTP transport (default: 8001)",
+    )
     p.set_defaults(func=cmd_serve)
 
     # setup-desktop
