@@ -35,7 +35,7 @@ neurostack init     # choose "Cloud" → vault setup → login → push
 
 Free tier: 500 queries/month, 200 notes. Dashboard: [app.neurostack.sh](https://app.neurostack.sh)
 
-> Files are uploaded for indexing via HTTPS, processed by Gemini, and not retained after indexing completes.
+> **Privacy notice:** Cloud mode requires explicit consent before uploading. Your vault files are sent to Google's Gemini API for indexing (embeddings, summaries, knowledge graph triples). Files are processed via HTTPS and not retained after indexing completes. Run `neurostack cloud consent` to review and grant consent. You can exclude sensitive files with a `.neurostackignore` file (gitignore syntax).
 
 ### Local
 
@@ -307,7 +307,13 @@ neurostack cloud login                   # browser OAuth login
 neurostack cloud status                  # auth + vault info
 neurostack cloud push                    # upload + index vault
 neurostack cloud pull                    # download indexed DB
+neurostack cloud sync                    # push changes + fetch memories
 neurostack cloud query "query"           # search via cloud API
+neurostack cloud consent                 # review and grant privacy consent
+neurostack cloud install-hooks           # auto-sync on git commit/merge
+neurostack cloud auto-sync enable        # periodic sync via systemd timer
+neurostack cloud auto-sync disable       # stop periodic sync
+neurostack cloud auto-sync status        # check timer status
 
 # Diagnostics
 neurostack stats                         # index health
@@ -316,6 +322,33 @@ neurostack demo                          # interactive demo with sample vault
 ```
 
 </details>
+
+## Cloud Sync
+
+Keep your vault indexed across machines without manual push/pull.
+
+**Automatic sync triggers:**
+
+- **Git hooks** -- sync on every commit or merge: `neurostack cloud install-hooks`
+- **systemd timer** -- periodic background sync: `neurostack cloud auto-sync enable --interval 15min`
+- **Manual** -- push changes and fetch memories in one command: `neurostack cloud sync`
+
+**Upload format:** Vault files are packed into a compressed tar.gz archive with a manifest, replacing the legacy multipart format. Typical compression is 60-80%, breaking the old 32 MB upload limit.
+
+**Concurrent push safety:** A server-side push lock prevents two devices from pushing simultaneously. If another device is mid-push, you'll get a clear conflict message with the lock expiry time.
+
+**`.neurostackignore`:** Place a `.neurostackignore` file in your vault root to exclude sensitive paths from cloud upload. Uses gitignore syntax:
+
+```
+# Exclude private notes
+private/
+journal/*.md
+*-draft.md
+```
+
+**Progress reporting:** Push and sync operations report file count, compressed size, and compression ratio as they run.
+
+> **Upgrading from v0.10.x:** Cloud mode now requires explicit consent before uploading. On your first push after upgrading, run `neurostack cloud consent` to grant consent. Existing cloud users will be prompted automatically. The upload format has changed from multipart to tar.gz -- servers running v0.10.0+ accept both formats during the transition period. If push fails, add `upload_format = "multipart"` to `[cloud]` in `~/.config/neurostack/config.toml` as a temporary workaround.
 
 ## FAQ
 

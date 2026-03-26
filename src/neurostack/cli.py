@@ -15,7 +15,7 @@ import httpx
 
 from . import __version__
 from .cloud.client import CloudClient
-from .cloud.config import CloudConfig, clear_cloud_credentials, load_cloud_config, save_cloud_config
+from .cloud.config import CloudConfig, clear_cloud_credentials, load_cloud_config, save_cloud_config, save_consent
 from .config import CONFIG_PATH, get_config
 
 
@@ -3527,6 +3527,31 @@ def cmd_cloud(args):
                 print(f"  Tier:   {tier}")
                 if result.get("connection") == "unreachable":
                     print("  Note:   Cloud API unreachable (credentials stored locally)")
+                # Staleness indicator
+                try:
+                    from .cloud.sync import VaultSyncEngine
+                    ns_cfg = get_config()
+                    sync_engine = VaultSyncEngine(
+                        cloud_api_url=cfg.cloud_api_url,
+                        cloud_api_key=cfg.cloud_api_key,
+                        vault_root=ns_cfg.vault_root,
+                        db_dir=ns_cfg.db_dir,
+                    )
+                    staleness = sync_engine.get_staleness()
+                    if staleness["is_stale"]:
+                        parts = []
+                        if staleness["stale_files_count"]:
+                            parts.append(f"{staleness['stale_files_count']} files changed")
+                        if staleness["behind_hours"] is not None:
+                            parts.append(f"{staleness['behind_hours']} hours behind")
+                        elif staleness["last_sync"] is None:
+                            parts.append("never synced")
+                        detail = ", ".join(parts) if parts else "changes detected"
+                        print(f"  Sync:   Stale — {detail}")
+                    else:
+                        print(f"  Sync:   Up to date (last sync: {staleness['last_sync']})")
+                except Exception:
+                    pass  # Non-critical — don't break status on staleness errors
             else:
                 print("  Status: Not authenticated")
                 url = result["cloud_url"]
@@ -3564,6 +3589,9 @@ def cmd_cloud(args):
     elif subcmd == "pull":
         cmd_cloud_pull(args)
 
+    elif subcmd == "sync":
+        cmd_cloud_sync(args)
+
     elif subcmd == "query":
         cmd_cloud_query(args)
 
@@ -3573,18 +3601,114 @@ def cmd_cloud(args):
     elif subcmd == "summary":
         cmd_cloud_summary(args)
 
+    elif subcmd == "consent":
+        prompt = (
+            "Your vault content will be sent to Google's Gemini API for indexing. "
+            "This includes note text, which is processed to generate embeddings, "
+            "summaries, and knowledge graph triples. Continue? [y/N] "
+        )
+        answer = input(prompt).strip().lower()
+        if answer in ("y", "yes"):
+            save_consent()
+            print("Consent granted.")
+        else:
+            print("Consent not granted. Cloud features require consent.")
+            sys.exit(1)
+
+    elif subcmd == "install-hooks":
+        from .cloud.hooks import install_hooks
+        cfg = get_config()
+        try:
+            result = install_hooks(cfg.vault_root)
+            if result["installed"]:
+                print(f"  Installed: {', '.join(result['installed'])}")
+            if result["skipped"]:
+                print(f"  Already installed: {', '.join(result['skipped'])}")
+            print(f"  Git dir: {result['git_dir']}")
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    elif subcmd == "uninstall-hooks":
+        from .cloud.hooks import uninstall_hooks
+        cfg = get_config()
+        try:
+            result = uninstall_hooks(cfg.vault_root)
+            if result["removed"]:
+                print(f"  Removed: {', '.join(result['removed'])}")
+            if result["not_found"]:
+                print(f"  Not found: {', '.join(result['not_found'])}")
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    elif subcmd == "hooks-status":
+        from .cloud.hooks import hooks_status
+        cfg = get_config()
+        status = hooks_status(cfg.vault_root)
+        if not status["git_repo"]:
+            print("  Vault is not a git repository")
+        else:
+            for hook in ("post_commit", "post_merge"):
+                name = hook.replace("_", "-")
+                state = "installed" if status[hook] else "not installed"
+                print(f"  {name}: {state}")
+
+    elif subcmd == "auto-sync":
+        auto_cmd = getattr(args, "auto_sync_command", None)
+        if auto_cmd == "enable":
+            from .cloud.timer import install_timer
+            result = install_timer(interval=args.interval)
+            print(f"  Timer installed ({result['interval']} interval)")
+            print(f"  Service: {result['service_path']}")
+            print(f"  Timer:   {result['timer_path']}")
+            if result['enabled']:
+                print("  Status:  Active")
+            else:
+                print("  Status:  Installed but not started (systemctl not available)")
+        elif auto_cmd == "disable":
+            from .cloud.timer import uninstall_timer
+            result = uninstall_timer()
+            if result['removed']:
+                print("  Auto-sync disabled")
+                for p in result['paths']:
+                    print(f"  Removed: {p}")
+            else:
+                print("  No timer found")
+        elif auto_cmd == "status":
+            from .cloud.timer import timer_status
+            status = timer_status()
+            if not status['installed']:
+                print("  Auto-sync: Not installed")
+                print("  Run: neurostack cloud auto-sync enable")
+            else:
+                state = "active" if status['active'] else "inactive"
+                print(f"  Auto-sync: {state}")
+                if status['interval']:
+                    print(f"  Interval:  {status['interval']}")
+                if status['next_run']:
+                    print(f"  Next run:  {status['next_run']}")
+        else:
+            print("Usage: neurostack cloud auto-sync {enable|disable|status}")
+
     else:
-        print("Usage: neurostack cloud {login|logout|status|setup|push|pull|query|triples|summary}")
+        print("Usage: neurostack cloud {login|logout|status|setup|push|pull|sync|query|triples|summary|consent|install-hooks|uninstall-hooks|hooks-status|auto-sync}")
         print("\nCommands:")
-        print("  login    Authenticate via browser (device code) or --key")
-        print("  logout   Clear stored credentials")
-        print("  status   Show authentication state and usage")
-        print("  setup    Interactive cloud configuration")
-        print("  push     Upload vault files for cloud indexing")
-        print("  pull     Download indexed database from cloud")
-        print("  query    Search vault via cloud API")
-        print("  triples  Search knowledge graph triples")
-        print("  summary  Get a note summary")
+        print("  login           Authenticate via browser (device code) or --key")
+        print("  logout          Clear stored credentials")
+        print("  status          Show authentication state and usage")
+        print("  setup           Interactive cloud configuration")
+        print("  consent         Grant privacy consent for cloud features")
+        print("  push            Upload vault files for cloud indexing")
+        print("  pull            Download indexed database from cloud")
+        print("  sync            Push vault changes and fetch new memories")
+        print("  query           Search vault via cloud API")
+        print("  triples         Search knowledge graph triples")
+        print("  summary         Get a note summary")
+        print("  install-hooks   Install git hooks for automatic cloud sync")
+        print("  uninstall-hooks Remove git hooks for cloud sync")
+        print("  hooks-status    Check git hook installation status")
+        print("  auto-sync       Manage automatic periodic sync (systemd timer)")
 
 
 def _ensure_cloud_auth():
@@ -3614,7 +3738,7 @@ def _ensure_cloud_auth():
 
 def cmd_cloud_push(args):
     """Upload vault files to cloud for indexing."""
-    from .cloud.sync import SyncError, VaultSyncEngine
+    from .cloud.sync import ConsentError, SyncError, VaultSyncEngine
 
     cfg = get_config()
     cloud_cfg = _ensure_cloud_auth()
@@ -3624,6 +3748,7 @@ def cmd_cloud_push(args):
         cloud_api_key=cloud_cfg.cloud_api_key,
         vault_root=cfg.vault_root,
         db_dir=cfg.db_dir,
+        consent_given=cloud_cfg.consent_given,
     )
 
     def on_progress(msg: str):
@@ -3631,6 +3756,9 @@ def cmd_cloud_push(args):
 
     try:
         result = engine.push(progress_callback=on_progress)
+    except ConsentError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     except SyncError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -3639,6 +3767,50 @@ def cmd_cloud_push(args):
         print(json.dumps(result))
     else:
         print(f"Push complete: {result.get('message', 'done')}")
+
+
+def cmd_cloud_sync(args):
+    """Push vault changes and fetch new memories from cloud."""
+    from .cloud.sync import ConsentError, SyncError, VaultSyncEngine
+
+    quiet = getattr(args, "quiet", False)
+
+    cfg = get_config()
+    cloud_cfg = _ensure_cloud_auth()
+
+    engine = VaultSyncEngine(
+        cloud_api_url=cloud_cfg.cloud_api_url,
+        cloud_api_key=cloud_cfg.cloud_api_key,
+        vault_root=cfg.vault_root,
+        db_dir=cfg.db_dir,
+        consent_given=cloud_cfg.consent_given,
+    )
+
+    def on_progress(msg: str):
+        if not quiet:
+            print(f"  {msg}")
+
+    try:
+        result = engine.sync(progress_callback=on_progress)
+    except ConsentError as e:
+        if not quiet:
+            print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except SyncError as e:
+        if not quiet:
+            print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if quiet:
+        return
+
+    if getattr(args, "json", False):
+        print(json.dumps(result))
+    else:
+        push_msg = result.get("message", "done")
+        mem_count = result.get("memories_fetched", 0)
+        print(f"Sync complete: {push_msg}")
+        print(f"  Memories fetched: {mem_count}")
 
 
 def cmd_cloud_pull(args):
@@ -3916,6 +4088,8 @@ def main():
 
     cloud_sub.add_parser("setup", help="Interactive cloud endpoint and key configuration")
 
+    cloud_sub.add_parser("consent", help="Grant privacy consent for cloud features")
+
     cp = cloud_sub.add_parser("push", help="Upload vault files for cloud indexing")
     cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
 
@@ -3947,6 +4121,21 @@ def main():
     cp = cloud_sub.add_parser("summary", help="Get note summary from cloud")
     cp.add_argument("note_path", help="Note path (e.g. research/my-note.md)")
     cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
+
+    cp = cloud_sub.add_parser("sync", help="Push vault changes and fetch new memories")
+    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
+    cp.add_argument("--quiet", "-q", action="store_true", default=False, help="Suppress output")
+
+    cloud_sub.add_parser("install-hooks", help="Install git hooks for automatic cloud sync")
+    cloud_sub.add_parser("uninstall-hooks", help="Remove git hooks for cloud sync")
+    cloud_sub.add_parser("hooks-status", help="Check git hook installation status")
+
+    cp = cloud_sub.add_parser("auto-sync", help="Manage automatic periodic sync")
+    auto_sub = cp.add_subparsers(dest="auto_sync_command")
+    ap = auto_sub.add_parser("enable", help="Enable periodic sync via systemd timer")
+    ap.add_argument("--interval", default="15min", help="Sync interval (default: 15min)")
+    auto_sub.add_parser("disable", help="Disable periodic sync")
+    auto_sub.add_parser("status", help="Show auto-sync status")
 
     p.set_defaults(func=cmd_cloud)
 
