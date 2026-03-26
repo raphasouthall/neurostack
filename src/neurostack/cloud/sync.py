@@ -9,6 +9,7 @@ remote queries.
 
 from __future__ import annotations
 
+import json
 import logging
 import tempfile
 import time
@@ -103,6 +104,12 @@ class VaultSyncEngine:
                 full_path = self._vault_root / rel_path
                 content = full_path.read_bytes()
                 files.append(("files", (rel_path, content, "text/markdown")))
+
+            # Add removed files list as a form field (not a file)
+            if diff.removed:
+                files.append(
+                    ("removed", (None, json.dumps(diff.removed), "application/json"))
+                )
 
             # POST upload
             resp = client.post(f"{self._api_url}/v1/vault/upload", files=files)

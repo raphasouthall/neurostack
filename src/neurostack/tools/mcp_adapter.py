@@ -24,12 +24,37 @@ log = logging.getLogger("neurostack.tools.mcp_adapter")
 def create_mcp_server(name: str = "neurostack", **fastmcp_kwargs) -> FastMCP:
     """Create a FastMCP server with all registry tools auto-registered.
 
+    If config mode is "cloud", tool functions are replaced with CloudClient
+    proxies before registration — all adapters pick up the change.
+
     Args:
         name: MCP server name
         **fastmcp_kwargs: Passed through to FastMCP constructor
     """
     mcp = FastMCP(name, **fastmcp_kwargs)
     registry = ensure_registered()
+
+    # Cloud dispatch: swap local tool functions with cloud API proxies
+    from neurostack.config import get_config
+    cfg = get_config()
+    if cfg.is_cloud:
+        try:
+            from neurostack.cloud.config import load_cloud_config
+            from neurostack.cloud.client import CloudClient
+            from neurostack.cloud.dispatch import enable_cloud_dispatch
+
+            cloud_cfg = load_cloud_config()
+            client = CloudClient(cloud_cfg)
+            if client.is_configured:
+                enable_cloud_dispatch(registry, client)
+            else:
+                log.warning(
+                    "Cloud mode enabled but no cloud credentials configured. "
+                    "Run 'neurostack cloud login' to authenticate. "
+                    "Falling back to local tools."
+                )
+        except Exception:
+            log.exception("Failed to enable cloud dispatch — falling back to local")
 
     for tool_def in registry.list_tools():
         @functools.wraps(tool_def.fn)
