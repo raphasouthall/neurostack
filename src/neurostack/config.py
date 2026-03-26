@@ -3,6 +3,7 @@
 """Unified configuration for NeuroStack."""
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,7 +13,21 @@ except ImportError:
     import tomli as tomllib  # Python 3.10 fallback
 
 
-CONFIG_PATH = Path.home() / ".config" / "neurostack" / "config.toml"
+def _data_dir() -> Path:
+    """Platform-aware application data directory."""
+    if sys.platform == "win32":
+        return Path.home() / "AppData" / "Local" / "neurostack"
+    return Path.home() / ".local" / "share" / "neurostack"
+
+
+def _config_dir() -> Path:
+    """Platform-aware config directory."""
+    if sys.platform == "win32":
+        return Path.home() / "AppData" / "Local" / "neurostack"
+    return Path.home() / ".config" / "neurostack"
+
+
+CONFIG_PATH = _config_dir() / "config.toml"
 
 
 @dataclass
@@ -20,7 +35,7 @@ class Config:
     """NeuroStack configuration with env var overrides."""
 
     vault_root: Path = field(default_factory=lambda: Path.home() / "brain")
-    db_dir: Path = field(default_factory=lambda: Path.home() / ".local" / "share" / "neurostack")
+    db_dir: Path = field(default_factory=_data_dir)
     embed_url: str = "http://localhost:11435"
     embed_model: str = "nomic-embed-text"
     embed_dim: int = 768
