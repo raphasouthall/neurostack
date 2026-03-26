@@ -34,6 +34,7 @@ CONFIG_PATH = _config_dir() / "config.toml"
 class Config:
     """NeuroStack configuration with env var overrides."""
 
+    mode: str = "local"  # "local" | "cloud"
     vault_root: Path = field(default_factory=lambda: Path.home() / "brain")
     db_dir: Path = field(default_factory=_data_dir)
     embed_url: str = "http://localhost:11435"
@@ -50,6 +51,10 @@ class Config:
     api_port: int = 8000
     api_key: str = ""
     cooccurrence_boost_weight: float = 0.1
+
+    @property
+    def is_cloud(self) -> bool:
+        return self.mode == "cloud"
 
     @property
     def db_path(self) -> Path:
@@ -69,6 +74,8 @@ def load_config() -> Config:
         with open(CONFIG_PATH, "rb") as f:
             data = tomllib.load(f)
 
+        if "mode" in data:
+            cfg.mode = data["mode"]
         for key in ("vault_root", "db_dir", "session_dir"):
             if key in data:
                 setattr(cfg, key, Path(os.path.expanduser(data[key])))
@@ -85,6 +92,7 @@ def load_config() -> Config:
 
     # Env var overrides (NEUROSTACK_ prefix)
     env_map = {
+        "NEUROSTACK_MODE": ("mode", str),
         "NEUROSTACK_VAULT_ROOT": ("vault_root", Path),
         "NEUROSTACK_DB_DIR": ("db_dir", Path),
         "NEUROSTACK_EMBED_URL": ("embed_url", str),

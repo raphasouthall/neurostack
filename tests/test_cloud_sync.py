@@ -464,6 +464,247 @@ class TestSyncEnginePush:
                 engine.push()
 
 
+class TestSyncEnginePushRemoved:
+    """Tests for push() transmitting diff.removed to the server."""
+
+    def _mock_success_client(self):
+        """Return a mock httpx.Client that accepts upload and returns complete."""
+        mock_upload_resp = MagicMock()
+        mock_upload_resp.status_code = 202
+        mock_upload_resp.json.return_value = {
+            "job_id": "job-abc",
+            "status": "queued",
+            "message": "OK",
+        }
+        mock_upload_resp.raise_for_status = MagicMock()
+
+        mock_status_resp = MagicMock()
+        mock_status_resp.status_code = 200
+        mock_status_resp.json.return_value = {
+            "job_id": "job-abc",
+            "status": "complete",
+            "progress": 1.0,
+            "note_count": 2,
+        }
+        mock_status_resp.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.post.return_value = mock_upload_resp
+        mock_client.get.return_value = mock_status_resp
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        return mock_client
+
+    def _get_files_arg(self, mock_client):
+        """Extract the 'files' kwarg from the POST call."""
+        return mock_client.post.call_args.kwargs.get("files", [])
+
+    def _get_removed_field(self, mock_client):
+        """Extract the 'removed' multipart field from the POST call, or None."""
+        files = self._get_files_arg(mock_client)
+        for name, value in files:
+            if name == "removed":
+                return value
+        return None
+
+    def test_push_includes_removed_files_in_payload(self, vault_env):
+        """When diff has removed files, the multipart POST includes a 'removed' field."""
+        from neurostack.cloud.manifest import Manifest
+
+        engine = _make_engine(vault_env)
+
+        # Save manifest with an extra file that no longer exists
+        old = Manifest.scan_vault(vault_env["vault_root"])
+        old.entries["deleted.md"] = "fakehash"
+        old.save(vault_env["manifest_path"])
+
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            engine.push()
+
+        removed_field = self._get_removed_field(mock_client)
+        assert removed_field is not None, "Expected 'removed' field in multipart POST"
+
+    def test_push_removed_field_contains_correct_paths(self, vault_env):
+        """The JSON-decoded removed field matches diff.removed."""
+        from neurostack.cloud.manifest import Manifest
+
+        engine = _make_engine(vault_env)
+
+        old = Manifest.scan_vault(vault_env["vault_root"])
+        old.entries["deleted.md"] = "fakehash"
+        old.save(vault_env["manifest_path"])
+
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            engine.push()
+
+        removed_field = self._get_removed_field(mock_client)
+        # removed_field is (None, json_str, content_type)
+        paths = json.loads(removed_field[1])
+        assert paths == ["deleted.md"]
+
+    def test_push_no_removed_files_skips_removed_field(self, vault_env):
+        """When diff.removed is empty, no 'removed' field in the payload."""
+        engine = _make_engine(vault_env)
+        # No pre-saved manifest -> everything is 'added', nothing 'removed'
+
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            engine.push()
+
+        removed_field = self._get_removed_field(mock_client)
+        assert removed_field is None, "Should not include 'removed' field when nothing removed"
+
+    def test_push_only_removals_still_sends_request(self, vault_env):
+        """If only files were deleted (no added/changed), push() still sends the POST."""
+        from neurostack.cloud.manifest import Manifest
+
+        engine = _make_engine(vault_env)
+
+        # Save manifest with current files + extras
+        old = Manifest.scan_vault(vault_env["vault_root"])
+        old.entries["ghost1.md"] = "hash1"
+        old.entries["ghost2.md"] = "hash2"
+        old.save(vault_env["manifest_path"])
+
+        # Now delete vault files so diff has ONLY removals (current files match old)
+        # Actually, old manifest already has the current files, so those won't be
+        # added/changed. Only ghost1.md and ghost2.md are removed.
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            result = engine.push()
+
+        # POST was sent (not skipped)
+        mock_client.post.assert_called_once()
+        assert result["status"] == "complete"
+
+        # Removed field is present
+        removed_field = self._get_removed_field(mock_client)
+        assert removed_field is not None
+        paths = json.loads(removed_field[1])
+        assert sorted(paths) == ["ghost1.md", "ghost2.md"]
+
+    def test_push_mixed_changes_includes_both_files_and_removed(self, vault_env):
+        """Added + changed files + removed files all in same request."""
+        from neurostack.cloud.manifest import Manifest
+
+        engine = _make_engine(vault_env)
+
+        # Old manifest: note1.md with different hash (-> changed), plus deleted.md
+        old = Manifest({"note1.md": "oldhash", "deleted.md": "fakehash"})
+        old.save(vault_env["manifest_path"])
+
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            engine.push()
+
+        files_arg = self._get_files_arg(mock_client)
+        file_names = [name for name, _ in files_arg if name == "files"]
+        removed_fields = [v for name, v in files_arg if name == "removed"]
+
+        # Should have file uploads (note1.md changed + sub/note2.md added)
+        assert len(file_names) >= 1
+        # Should have removed field
+        assert len(removed_fields) == 1
+        paths = json.loads(removed_fields[0][1])
+        assert paths == ["deleted.md"]
+
+    def test_push_removed_field_is_json_content_type(self, vault_env):
+        """The removed field has content_type 'application/json'."""
+        from neurostack.cloud.manifest import Manifest
+
+        engine = _make_engine(vault_env)
+
+        old = Manifest.scan_vault(vault_env["vault_root"])
+        old.entries["gone.md"] = "hash"
+        old.save(vault_env["manifest_path"])
+
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            engine.push()
+
+        removed_field = self._get_removed_field(mock_client)
+        # Tuple is (None, json_str, content_type)
+        assert removed_field[2] == "application/json"
+
+    def test_push_saves_manifest_after_removal_sync(self, vault_env):
+        """Manifest is updated after push — removed files no longer in saved manifest."""
+        from neurostack.cloud.manifest import Manifest
+
+        engine = _make_engine(vault_env)
+
+        old = Manifest.scan_vault(vault_env["vault_root"])
+        old.entries["ghost.md"] = "hash"
+        old.save(vault_env["manifest_path"])
+
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            engine.push()
+
+        # Manifest should be re-saved without ghost.md
+        saved = json.loads(vault_env["manifest_path"].read_text())
+        assert "ghost.md" not in saved
+        assert "note1.md" in saved
+        assert "sub/note2.md" in saved
+
+    def test_push_removed_multiple_files(self, vault_env):
+        """Multiple files in removed list are all included."""
+        from neurostack.cloud.manifest import Manifest
+
+        engine = _make_engine(vault_env)
+
+        old = Manifest.scan_vault(vault_env["vault_root"])
+        old.entries["a.md"] = "h1"
+        old.entries["b.md"] = "h2"
+        old.entries["deep/c.md"] = "h3"
+        old.save(vault_env["manifest_path"])
+
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            engine.push()
+
+        removed_field = self._get_removed_field(mock_client)
+        paths = json.loads(removed_field[1])
+        assert sorted(paths) == ["a.md", "b.md", "deep/c.md"]
+
+    def test_push_removed_logs_count(self, vault_env):
+        """Logger output includes removed file count."""
+        from neurostack.cloud.manifest import Manifest
+
+        engine = _make_engine(vault_env)
+
+        old = Manifest.scan_vault(vault_env["vault_root"])
+        old.entries["gone1.md"] = "h1"
+        old.entries["gone2.md"] = "h2"
+        old.save(vault_env["manifest_path"])
+
+        mock_client = self._mock_success_client()
+
+        with patch("neurostack.cloud.sync.httpx.Client", return_value=mock_client):
+            with patch("neurostack.cloud.sync.logger") as mock_logger:
+                engine.push()
+
+        # Find the log call that mentions removed count
+        found = False
+        for call in mock_logger.info.call_args_list:
+            args = call.args
+            if len(args) >= 5 and "removed" in str(args[0]).lower():
+                # The format string has %d removed as 4th positional
+                assert args[4] == 2, f"Expected 2 removed, got {args[4]}"
+                found = True
+                break
+        assert found, "Expected a log message mentioning removed file count"
+
+
 class TestSyncEnginePull:
     """Tests for VaultSyncEngine.pull() — download indexed DB."""
 

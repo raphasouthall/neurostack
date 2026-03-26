@@ -872,6 +872,7 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
         with open(CONFIG_PATH, "rb") as f:
             existing = _tomllib.load(f)
 
+    existing["mode"] = cfg.mode
     existing["vault_root"] = str(vault_root)
     existing["embed_url"] = cfg.embed_url
     existing["llm_url"] = cfg.llm_url
@@ -1103,6 +1104,7 @@ def cmd_init(args):
 
         if use_cloud:
             mode = "lite"
+        cfg.mode = "cloud" if use_cloud else "local"
         if mode == "full":
             uv_bin = _find_uv()
             if uv_bin:
@@ -1154,12 +1156,12 @@ def cmd_init(args):
     # ── Step 1: Cloud or Local? ──
     print()
     setup_choices = [
-        ("local", "Local — self-hosted with Ollama"),
         ("cloud", "Cloud — Gemini indexes your vault, no GPU needed"),
+        ("local", "Local — self-hosted with Ollama"),
     ]
     setup = _prompt(
         "How do you want to run NeuroStack?",
-        default="local", choices=setup_choices,
+        default="cloud", choices=setup_choices,
     )
     use_cloud = setup == "cloud"
 
@@ -1289,6 +1291,7 @@ def cmd_init(args):
         _setup_ollama(pull_models, embed_model, llm_model, cfg)
 
     # 3. Apply config + create vault structure
+    cfg.mode = "cloud" if use_cloud else "local"
     cfg.vault_root = vault_root
     cfg.embed_url = embed_url
     cfg.llm_url = llm_url
