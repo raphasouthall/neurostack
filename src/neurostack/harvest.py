@@ -125,7 +125,11 @@ class VSCodeChatProvider:
     name = "vscode-chat"
 
     def find_sessions(self, n: int) -> list[SessionFile]:
-        base = Path.home() / ".config" / "Code" / "User"
+        import sys
+        if sys.platform == "win32":
+            base = Path.home() / "AppData" / "Roaming" / "Code" / "User"
+        else:
+            base = Path.home() / ".config" / "Code" / "User"
         if not base.exists():
             return []
         sessions = []
