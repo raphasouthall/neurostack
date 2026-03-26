@@ -970,19 +970,31 @@ def _sync_dependencies(project_root: Path, uv_bin: str, mode: str) -> bool:
 
 
 def _create_cli_wrapper(project_root: Path) -> None:
-    """Create CLI wrapper scripts at ~/.local/bin/."""
-    wrapper = Path.home() / ".local" / "bin" / "neurostack"
-    wrapper.parent.mkdir(parents=True, exist_ok=True)
-    wrapper_content = (
-        "#!/usr/bin/env bash\n"
-        f'exec uv run --project "{project_root}" python -m neurostack.cli "$@"\n'
-    )
-    wrapper.write_text(wrapper_content)
-    wrapper.chmod(0o755)
-    alias = wrapper.parent / "ns"
-    alias.write_text(wrapper_content)
-    alias.chmod(0o755)
-    print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper} (alias: ns)")
+    """Create CLI wrapper scripts (bash on Unix, .cmd on Windows)."""
+    import sys
+
+    if sys.platform == "win32":
+        wrapper_dir = Path.home() / "AppData" / "Local" / "neurostack" / "bin"
+        wrapper_dir.mkdir(parents=True, exist_ok=True)
+        content = f'@echo off\r\nuv run --project "{project_root}" python -m neurostack.cli %*\r\n'
+        wrapper = wrapper_dir / "neurostack.cmd"
+        wrapper.write_text(content)
+        alias = wrapper_dir / "ns.cmd"
+        alias.write_text(content)
+        print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper} (alias: ns.cmd)")
+    else:
+        wrapper = Path.home() / ".local" / "bin" / "neurostack"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        content = (
+            "#!/usr/bin/env bash\n"
+            f'exec uv run --project "{project_root}" python -m neurostack.cli "$@"\n'
+        )
+        wrapper.write_text(content)
+        wrapper.chmod(0o755)
+        alias = wrapper.parent / "ns"
+        alias.write_text(content)
+        alias.chmod(0o755)
+        print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper} (alias: ns)")
 
 
 def _setup_ollama(pull_models, embed_model, llm_model, cfg):
