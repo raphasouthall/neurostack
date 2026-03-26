@@ -12,8 +12,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 @dataclass
 class _FakeDiff:
