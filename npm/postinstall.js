@@ -9,10 +9,16 @@ const https = require("https");
 const { createWriteStream } = require("fs");
 const { createGunzip } = require("zlib");
 
-const INSTALL_DIR = path.join(os.homedir(), ".local", "share", "neurostack", "repo");
+const IS_WIN = os.platform() === "win32";
+const PATH_SEP = IS_WIN ? ";" : ":";
+const INSTALL_DIR = IS_WIN
+  ? path.join(os.homedir(), "AppData", "Local", "neurostack", "repo")
+  : path.join(os.homedir(), ".local", "share", "neurostack", "repo");
 const TARBALL_URL = "https://github.com/raphasouthall/neurostack/archive/refs/heads/main.tar.gz";
 const UV_INSTALL_URL = "https://astral.sh/uv/install.sh";
-const UV_BIN_DIR = path.join(os.homedir(), ".local", "bin");
+const UV_BIN_DIR = IS_WIN
+  ? path.join(os.homedir(), "AppData", "Local", "neurostack", "bin")
+  : path.join(os.homedir(), ".local", "bin");
 const PYTHON_VERSION = "3.12";
 
 /** Build the direct uv binary download URL for this platform */
@@ -20,13 +26,14 @@ function uvDirectUrl() {
   const arch = os.arch();
   const platform = os.platform();
   const archMap = { x64: "x86_64", arm64: "aarch64" };
-  const platMap = { linux: "unknown-linux-gnu", darwin: "apple-darwin" };
+  const platMap = { linux: "unknown-linux-gnu", darwin: "apple-darwin", win32: "pc-windows-msvc" };
   const a = archMap[arch];
   const p = platMap[platform];
   if (!a || !p) return null;
   // Use musl on Linux for maximum compatibility (static binary)
   const target = platform === "linux" ? `${a}-unknown-linux-musl` : `${a}-${p}`;
-  return `https://github.com/astral-sh/uv/releases/latest/download/uv-${target}.tar.gz`;
+  const ext = platform === "win32" ? ".zip" : ".tar.gz";
+  return `https://github.com/astral-sh/uv/releases/latest/download/uv-${target}${ext}`;
 }
 
 function info(msg) { console.log(`  \x1b[36m▸\x1b[0m ${msg}`); }
@@ -38,7 +45,10 @@ function die(msg) {
 
 function which(cmd) {
   try {
-    return execSync(`command -v ${cmd}`, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    const lookup = IS_WIN ? `where ${cmd}` : `command -v ${cmd}`;
+    const result = execSync(lookup, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    // `where` on Windows may return multiple lines; use the first
+    return result.split(/\r?\n/)[0];
   } catch { return null; }
 }
 
@@ -47,7 +57,8 @@ function run(cmd, opts = {}) {
 }
 
 function uvCmd() {
-  return which("uv") || (fs.existsSync(path.join(UV_BIN_DIR, "uv")) ? path.join(UV_BIN_DIR, "uv") : null);
+  const bin = IS_WIN ? "uv.exe" : "uv";
+  return which("uv") || (fs.existsSync(path.join(UV_BIN_DIR, bin)) ? path.join(UV_BIN_DIR, bin) : null);
 }
 
 /** Download a URL to a file or string using Node built-in https (follows redirects) */
@@ -90,32 +101,55 @@ async function main() {
     const directUrl = uvDirectUrl();
     if (directUrl) {
       try {
-        const tarFile = path.join(os.tmpdir(), `uv-${Date.now()}.tar.gz`);
-        await download(directUrl, tarFile);
+        const ext = IS_WIN ? ".zip" : ".tar.gz";
+        const archiveFile = path.join(os.tmpdir(), `uv-${Date.now()}${ext}`);
+        await download(directUrl, archiveFile);
         fs.mkdirSync(UV_BIN_DIR, { recursive: true });
-        run(`tar xzf "${tarFile}" --strip-components=1 -C "${UV_BIN_DIR}"`);
-        fs.unlinkSync(tarFile);
-        // Ensure executable
-        for (const bin of ["uv", "uvx"]) {
-          const p = path.join(UV_BIN_DIR, bin);
-          if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+        if (IS_WIN) {
+          // Windows: use PowerShell to extract zip
+          run(`powershell -NoProfile -Command "Expand-Archive -Path '${archiveFile}' -DestinationPath '${UV_BIN_DIR}' -Force"`);
+          // uv zips contain a nested directory — move binaries up
+          for (const entry of fs.readdirSync(UV_BIN_DIR)) {
+            const nested = path.join(UV_BIN_DIR, entry);
+            if (fs.statSync(nested).isDirectory() && entry.startsWith("uv-")) {
+              for (const f of fs.readdirSync(nested)) {
+                fs.renameSync(path.join(nested, f), path.join(UV_BIN_DIR, f));
+              }
+              fs.rmSync(nested, { recursive: true });
+              break;
+            }
+          }
+        } else {
+          run(`tar xzf "${archiveFile}" --strip-components=1 -C "${UV_BIN_DIR}"`);
+          // Ensure executable
+          for (const bin of ["uv", "uvx"]) {
+            const p = path.join(UV_BIN_DIR, bin);
+            if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+          }
         }
-        process.env.PATH = `${UV_BIN_DIR}:${process.env.PATH}`;
+        fs.unlinkSync(archiveFile);
+        process.env.PATH = `${UV_BIN_DIR}${PATH_SEP}${process.env.PATH}`;
         installed = true;
       } catch (e) {
         warn(`Direct download failed (${e.message}), trying install script...`);
       }
     }
 
-    // Fallback: official install script (needs curl or wget)
+    // Fallback: official install script (needs curl or wget on Unix, PowerShell on Windows)
     if (!installed) {
       try {
-        const script = await download(UV_INSTALL_URL);
-        const tmpFile = path.join(os.tmpdir(), `uv-install-${Date.now()}.sh`);
-        fs.writeFileSync(tmpFile, script, { mode: 0o755 });
-        run(`sh "${tmpFile}"`, { env: { ...process.env, UV_UNMANAGED_INSTALL: UV_BIN_DIR } });
-        fs.unlinkSync(tmpFile);
-        process.env.PATH = `${UV_BIN_DIR}:${process.env.PATH}`;
+        if (IS_WIN) {
+          run(`powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"`, {
+            env: { ...process.env, UV_UNMANAGED_INSTALL: UV_BIN_DIR },
+          });
+        } else {
+          const script = await download(UV_INSTALL_URL);
+          const tmpFile = path.join(os.tmpdir(), `uv-install-${Date.now()}.sh`);
+          fs.writeFileSync(tmpFile, script, { mode: 0o755 });
+          run(`sh "${tmpFile}"`, { env: { ...process.env, UV_UNMANAGED_INSTALL: UV_BIN_DIR } });
+          fs.unlinkSync(tmpFile);
+        }
+        process.env.PATH = `${UV_BIN_DIR}${PATH_SEP}${process.env.PATH}`;
       } catch (e) {
         die(
           `Failed to install uv: ${e.message}\n` +
@@ -172,7 +206,12 @@ async function main() {
       await download(TARBALL_URL, tarFile);
       fs.mkdirSync(INSTALL_DIR, { recursive: true });
       // GitHub tarballs extract to neurostack-main/ — strip that prefix
-      run(`tar xzf "${tarFile}" --strip-components=1 -C "${INSTALL_DIR}"`);
+      if (IS_WIN) {
+        // Windows 10+ has tar; use it with forward-slash paths
+        run(`tar xzf "${tarFile}" --strip-components=1 -C "${INSTALL_DIR.replace(/\\/g, "/")}"`);
+      } else {
+        run(`tar xzf "${tarFile}" --strip-components=1 -C "${INSTALL_DIR}"`);
+      }
       fs.unlinkSync(tarFile);
     } catch (e) {
       die(
@@ -191,21 +230,31 @@ async function main() {
   info(`Installing Python dependencies (${mode} mode)...`);
   run(`"${uv}" sync --python ${PYTHON_VERSION} ${extraArgs}`.trim(), { cwd: INSTALL_DIR });
 
-  // ── Step 5: Create CLI wrapper at ~/.local/bin/neurostack ──
-  const wrapperDir = path.join(os.homedir(), ".local", "bin");
-  const wrapperPath = path.join(wrapperDir, "neurostack");
+  // ── Step 5: Create CLI wrapper ──
+  const wrapperDir = UV_BIN_DIR;
   fs.mkdirSync(wrapperDir, { recursive: true });
-  const wrapperContent = `#!/usr/bin/env bash\nexec uv run --project "${INSTALL_DIR}" python -m neurostack.cli "$@"\n`;
-  fs.writeFileSync(wrapperPath, wrapperContent);
-  fs.chmodSync(wrapperPath, 0o755);
-  // Create ns alias
-  const aliasPath = path.join(wrapperDir, "ns");
-  fs.writeFileSync(aliasPath, wrapperContent);
-  fs.chmodSync(aliasPath, 0o755);
-  info(`CLI wrapper: ${wrapperPath} (alias: ns)`);
+  if (IS_WIN) {
+    const wrapperContent = `@echo off\r\n"${uv}" run --project "${INSTALL_DIR}" python -m neurostack.cli %*\r\n`;
+    const wrapperPath = path.join(wrapperDir, "neurostack.cmd");
+    const aliasPath = path.join(wrapperDir, "ns.cmd");
+    fs.writeFileSync(wrapperPath, wrapperContent);
+    fs.writeFileSync(aliasPath, wrapperContent);
+    info(`CLI wrapper: ${wrapperPath} (alias: ns.cmd)`);
+  } else {
+    const wrapperContent = `#!/usr/bin/env bash\nexec uv run --project "${INSTALL_DIR}" python -m neurostack.cli "$@"\n`;
+    const wrapperPath = path.join(wrapperDir, "neurostack");
+    const aliasPath = path.join(wrapperDir, "ns");
+    fs.writeFileSync(wrapperPath, wrapperContent);
+    fs.chmodSync(wrapperPath, 0o755);
+    fs.writeFileSync(aliasPath, wrapperContent);
+    fs.chmodSync(aliasPath, 0o755);
+    info(`CLI wrapper: ${wrapperPath} (alias: ns)`);
+  }
 
   // ── Step 6: Default config ──
-  const configDir = path.join(os.homedir(), ".config", "neurostack");
+  const configDir = IS_WIN
+    ? path.join(os.homedir(), "AppData", "Local", "neurostack")
+    : path.join(os.homedir(), ".config", "neurostack");
   const configFile = path.join(configDir, "config.toml");
   if (!fs.existsSync(configFile)) {
     fs.mkdirSync(configDir, { recursive: true });
@@ -223,7 +272,7 @@ llm_model = "phi3.5"
   }
 
   // ── Step 7: Check PATH ──
-  const pathDirs = (process.env.PATH || "").split(":");
+  const pathDirs = (process.env.PATH || "").split(PATH_SEP);
   const onPath = pathDirs.some(d => path.resolve(d) === path.resolve(wrapperDir));
 
   // ── Done ──
@@ -231,9 +280,15 @@ llm_model = "phi3.5"
   \x1b[32m✓ NeuroStack installed!\x1b[0m (${mode} mode)
 `);
   if (!onPath) {
-    console.log(`  \x1b[33m!\x1b[0m Add to PATH (add to ~/.bashrc or ~/.zshrc):
+    if (IS_WIN) {
+      console.log(`  \x1b[33m!\x1b[0m Add to PATH (run in PowerShell as admin, or use System Properties > Environment Variables):
+    [Environment]::SetEnvironmentVariable("Path", $env:Path + ";${wrapperDir}", "User")
+`);
+    } else {
+      console.log(`  \x1b[33m!\x1b[0m Add to PATH (add to ~/.bashrc or ~/.zshrc):
     export PATH="$HOME/.local/bin:$PATH"
 `);
+    }
   }
   console.log(`  Get started:
     neurostack init          Set up vault structure
