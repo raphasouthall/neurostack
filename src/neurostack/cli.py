@@ -15,7 +15,13 @@ import httpx
 
 from . import __version__
 from .cloud.client import CloudClient
-from .cloud.config import CloudConfig, clear_cloud_credentials, load_cloud_config, save_cloud_config, save_consent
+from .cloud.config import (
+    CloudConfig,
+    clear_cloud_credentials,
+    load_cloud_config,
+    save_cloud_config,
+    save_consent,
+)
 from .config import CONFIG_PATH, get_config
 
 
@@ -3692,7 +3698,11 @@ def cmd_cloud(args):
             print("Usage: neurostack cloud auto-sync {enable|disable|status}")
 
     else:
-        print("Usage: neurostack cloud {login|logout|status|setup|push|pull|sync|query|triples|summary|consent|install-hooks|uninstall-hooks|hooks-status|auto-sync}")
+        print(
+            "Usage: neurostack cloud "
+            "{login|logout|status|setup|push|pull|sync|query|triples|"
+            "summary|consent|install-hooks|uninstall-hooks|hooks-status|auto-sync}"
+        )
         print("\nCommands:")
         print("  login           Authenticate via browser (device code) or --key")
         print("  logout          Clear stored credentials")

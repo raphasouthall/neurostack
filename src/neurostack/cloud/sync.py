@@ -180,7 +180,9 @@ class VaultSyncEngine:
             (self._vault_root / rel_path).stat().st_size for rel_path in upload_files
         )
         archive_bytes = len(archive_data)
-        compression_ratio = (1 - archive_bytes / total_raw_bytes) * 100 if total_raw_bytes > 0 else 0
+        compression_ratio = (
+            (1 - archive_bytes / total_raw_bytes) * 100 if total_raw_bytes > 0 else 0
+        )
 
         if progress_callback:
             progress_callback(
@@ -453,7 +455,9 @@ class VaultSyncEngine:
                 (self._vault_root / rel_path).stat().st_size for rel_path in upload_files
             )
             archive_bytes = len(archive_data)
-            compression_ratio = (1 - archive_bytes / total_raw_bytes) * 100 if total_raw_bytes > 0 else 0
+            compression_ratio = (
+            (1 - archive_bytes / total_raw_bytes) * 100 if total_raw_bytes > 0 else 0
+        )
 
             if progress_callback:
                 progress_callback(
