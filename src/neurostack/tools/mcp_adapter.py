@@ -39,8 +39,8 @@ def create_mcp_server(name: str = "neurostack", **fastmcp_kwargs) -> FastMCP:
     cfg = get_config()
     if cfg.is_cloud:
         try:
-            from neurostack.cloud.config import load_cloud_config
             from neurostack.cloud.client import CloudClient
+            from neurostack.cloud.config import load_cloud_config
             from neurostack.cloud.dispatch import enable_cloud_dispatch
 
             cloud_cfg = load_cloud_config()
