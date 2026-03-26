@@ -1,15 +1,15 @@
 """Tests for neurostack.cloud.timer — systemd user timer for periodic cloud sync."""
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from neurostack.cloud.timer import (
     SERVICE_NAME,
     install_timer,
-    uninstall_timer,
     timer_status,
+    uninstall_timer,
 )
 
 
