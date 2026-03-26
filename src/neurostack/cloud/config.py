@@ -27,6 +27,8 @@ class CloudConfig:
 
     cloud_api_url: str = ""
     cloud_api_key: str = ""
+    consent_given: bool = False
+    consent_date: str = ""
 
 
 def _read_toml() -> dict:
@@ -54,6 +56,18 @@ def save_cloud_config(cloud_api_url: str, cloud_api_key: str) -> None:
     _write_toml(data)
 
 
+def save_consent() -> None:
+    """Record that the user has granted cloud consent in config.toml."""
+    from datetime import datetime, timezone
+
+    data = _read_toml()
+    cloud = data.get("cloud", {})
+    cloud["consent_given"] = True
+    cloud["consent_date"] = datetime.now(timezone.utc).isoformat()
+    data["cloud"] = cloud
+    _write_toml(data)
+
+
 def clear_cloud_credentials() -> None:
     """Remove cloud_api_key from config.toml but preserve cloud_api_url."""
     data = _read_toml()
@@ -71,9 +85,12 @@ def load_cloud_config() -> CloudConfig:
     data = _read_toml()
     cloud_data = data.get("cloud", {})
 
-    for key in ("cloud_api_url", "cloud_api_key"):
+    for key in ("cloud_api_url", "cloud_api_key", "consent_date"):
         if key in cloud_data:
             setattr(cfg, key, cloud_data[key])
+
+    if "consent_given" in cloud_data:
+        cfg.consent_given = bool(cloud_data["consent_given"])
 
     # Layer 3: env var overrides (highest priority)
     env_map = {
