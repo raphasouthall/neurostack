@@ -111,11 +111,13 @@ def vault_search(
             entry["summary"] = r.summary
         output.append(entry)
 
+    result = {"results": output}
+
     memories = _search_memories_for_results(query, workspace, limit=3)
     if memories:
-        output.append({"_memories": memories})
+        result["memories"] = memories
 
-    return output
+    return result
 
 
 @registry.tool(tags=["search", "retrieval"])
