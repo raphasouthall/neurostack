@@ -85,8 +85,6 @@ class TestConsentCheck:
         """push() proceeds normally when consent_given=True (no ConsentError)."""
         from unittest.mock import MagicMock
 
-        import httpx
-
         from neurostack.cloud.sync import VaultSyncEngine
 
         vault = tmp_path / "vault"
