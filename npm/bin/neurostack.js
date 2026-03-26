@@ -6,12 +6,19 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-const INSTALL_DIR = path.join(os.homedir(), ".local", "share", "neurostack", "repo");
-const UV_BIN = path.join(os.homedir(), ".local", "bin", "uv");
+const IS_WIN = os.platform() === "win32";
+const INSTALL_DIR = IS_WIN
+  ? path.join(os.homedir(), "AppData", "Local", "neurostack", "repo")
+  : path.join(os.homedir(), ".local", "share", "neurostack", "repo");
+const UV_BIN = IS_WIN
+  ? path.join(os.homedir(), "AppData", "Local", "neurostack", "bin", "uv.exe")
+  : path.join(os.homedir(), ".local", "bin", "uv");
 
 function which(cmd) {
   try {
-    return execSync(`command -v ${cmd}`, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    const lookup = IS_WIN ? `where ${cmd}` : `command -v ${cmd}`;
+    const result = execSync(lookup, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    return result.split(/\r?\n/)[0];
   } catch { return null; }
 }
 
