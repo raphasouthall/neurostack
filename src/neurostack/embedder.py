@@ -51,7 +51,7 @@ def get_embeddings_batch(
     texts: list[str],
     base_url: str = DEFAULT_EMBED_URL,
     model: str = EMBED_MODEL,
-    batch_size: int = 10,
+    batch_size: int = 50,
 ) -> "list[np.ndarray]":
     """Get embeddings for multiple texts in batches."""
     if not HAS_NUMPY:
