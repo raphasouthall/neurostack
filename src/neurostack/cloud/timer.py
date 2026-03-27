@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """systemd user timer for periodic cloud sync.
 
 Installs a systemd user service and timer that runs

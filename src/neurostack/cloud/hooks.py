@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Git hooks installer for automatic cloud sync.
 
 Installs post-commit and post-merge hooks in the vault's git repository
