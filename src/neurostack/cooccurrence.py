@@ -46,23 +46,39 @@ def reinforce_cooccurrence(
             return 0
 
         now = datetime.now(timezone.utc).isoformat()
-        updates: list[tuple[str, str, float, str]] = []
 
-        for a, b in canonical:
-            row = conn.execute(
-                "SELECT weight FROM entity_cooccurrence "
-                "WHERE entity_a = ? AND entity_b = ?",
-                (a, b),
-            ).fetchone()
-            if row:
-                new_weight = min(row["weight"] * 1.1, MAX_COOCCURRENCE_WEIGHT)
+        # Batch-fetch existing weights in a single query
+        canonical_list = sorted(canonical)
+        existing_weights: dict[tuple[str, str], float] = {}
+        # SQLite has a variable limit; process in chunks of 500 pairs
+        for chunk_start in range(0, len(canonical_list), 500):
+            chunk = canonical_list[chunk_start:chunk_start + 500]
+            where_clauses = " OR ".join(
+                "(entity_a = ? AND entity_b = ?)" for _ in chunk
+            )
+            params = [v for pair in chunk for v in pair]
+            rows = conn.execute(
+                f"SELECT entity_a, entity_b, weight FROM entity_cooccurrence "
+                f"WHERE {where_clauses}",
+                params,
+            ).fetchall()
+            for row in rows:
+                existing_weights[(row["entity_a"], row["entity_b"])] = row["weight"]
+
+        updates: list[tuple[str, str, float, str]] = []
+        for a, b in canonical_list:
+            old_weight = existing_weights.get((a, b))
+            if old_weight is not None:
+                new_weight = min(old_weight * 1.1, MAX_COOCCURRENCE_WEIGHT)
             else:
                 new_weight = 1.0
             updates.append((a, b, new_weight, now))
 
         conn.executemany(
-            "INSERT OR REPLACE INTO entity_cooccurrence "
-            "(entity_a, entity_b, weight, last_seen) VALUES (?, ?, ?, ?)",
+            "INSERT INTO entity_cooccurrence "
+            "(entity_a, entity_b, weight, last_seen) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(entity_a, entity_b) DO UPDATE SET "
+            "weight = excluded.weight, last_seen = excluded.last_seen",
             updates,
         )
         conn.commit()
@@ -170,41 +186,55 @@ def upsert_cooccurrence_for_note(conn: sqlite3.Connection, note_path: str) -> in
 
     entity_list = sorted(entities)
     now = datetime.now(timezone.utc).isoformat()
-    updated = 0
+
+    # Build a map of entity -> set of note_paths (single query)
+    placeholders = ",".join("?" for _ in entity_list)
+    rows = conn.execute(
+        f"SELECT DISTINCT subject, object, note_path FROM triples "
+        f"WHERE subject IN ({placeholders}) OR object IN ({placeholders})",
+        entity_list + entity_list,
+    ).fetchall()
+
+    entity_notes: dict[str, set[str]] = defaultdict(set)
+    for r in rows:
+        if r["subject"] in entities:
+            entity_notes[r["subject"]].add(r["note_path"])
+        if r["object"] in entities:
+            entity_notes[r["object"]].add(r["note_path"])
+
+    # Compute co-occurrence weights as intersection sizes
+    upserts: list[tuple[str, str, float, str]] = []
+    deletes: list[tuple[str, str]] = []
 
     for i in range(len(entity_list)):
         for j in range(i + 1, len(entity_list)):
             a, b = entity_list[i], entity_list[j]
-            # Count distinct notes where BOTH a and b appear as entity
-            weight_row = conn.execute(
-                """SELECT COUNT(*) AS w FROM (
-                       SELECT DISTINCT note_path FROM triples
-                       WHERE subject = ? OR object = ?
-                   ) n1
-                   WHERE n1.note_path IN (
-                       SELECT DISTINCT note_path FROM triples
-                       WHERE subject = ? OR object = ?
-                   )""",
-                (a, a, b, b),
-            ).fetchone()
-            weight = float(weight_row["w"])
+            weight = float(len(entity_notes.get(a, set()) & entity_notes.get(b, set())))
             if weight > 0:
-                conn.execute(
-                    "INSERT OR REPLACE INTO entity_cooccurrence "
-                    "(entity_a, entity_b, weight, last_seen) VALUES (?, ?, ?, ?)",
-                    (a, b, weight, now),
-                )
-                updated += 1
+                upserts.append((a, b, weight, now))
             else:
-                # Pair no longer co-occurs in any note — remove it
-                conn.execute(
-                    "DELETE FROM entity_cooccurrence "
-                    "WHERE entity_a = ? AND entity_b = ?",
-                    (a, b),
-                )
+                deletes.append((a, b))
+
+    # Batch upsert
+    if upserts:
+        conn.executemany(
+            "INSERT INTO entity_cooccurrence "
+            "(entity_a, entity_b, weight, last_seen) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(entity_a, entity_b) DO UPDATE SET "
+            "weight = excluded.weight, last_seen = excluded.last_seen",
+            upserts,
+        )
+
+    # Batch delete pairs that no longer co-occur
+    if deletes:
+        conn.executemany(
+            "DELETE FROM entity_cooccurrence "
+            "WHERE entity_a = ? AND entity_b = ?",
+            deletes,
+        )
 
     conn.commit()
-    return updated
+    return len(upserts)
 
 
 def get_cooccurrence_stats(conn: sqlite3.Connection) -> dict:
