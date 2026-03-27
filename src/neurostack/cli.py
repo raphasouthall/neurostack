@@ -2381,6 +2381,19 @@ def cmd_doctor(args):
     except Exception:
         checks.append(("FTS5", "ERROR", "SQLite compiled without FTS5 support"))
 
+    # Check for stale embed_url port in config file
+    config_path = Path.home() / ".config" / "neurostack" / "config.toml"
+    if config_path.exists():
+        config_text = config_path.read_text()
+        if "11435" in config_text:
+            checks.append((
+                "Config", "WARN",
+                f"embed_url contains port 11435 (old default)."
+                f" Ollama uses 11434."
+                f"\n         Fix: edit {config_path}"
+                f" and change 11435 → 11434"
+            ))
+
     # Check Ollama embedding endpoint
     try:
         import httpx
