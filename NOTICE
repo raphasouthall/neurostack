@@ -22,21 +22,20 @@ NumPy bundles the following third-party code:
 
 ===============================================================================
 
-PyTorch - BSD-3-Clause
-Copyright 2016-2025, PyTorch contributors.
-https://github.com/pytorch/pytorch
+pathspec - MPL-2.0
+SPDX-License-Identifier: MPL-2.0
+Copyright 2013, Caleb P. Burns.
+https://github.com/cpburnz/python-pathspec
+
+This Source Code Form is subject to the terms of the Mozilla Public License,
+v. 2.0. If a copy of the MPL was not distributed with this file, You can
+obtain one at https://mozilla.org/MPL/2.0/.
 
 ===============================================================================
 
-scikit-learn - BSD-3-Clause
-Copyright 2007-2025, scikit-learn developers.
-https://github.com/scikit-learn/scikit-learn
-
-===============================================================================
-
-SciPy - BSD-3-Clause
-Copyright 2001-2025, SciPy Developers.
-https://github.com/scipy/scipy
+tomli_w - MIT
+Copyright 2021, Taneli Hukkinen.
+https://github.com/hukkin/tomli-w
 
 ===============================================================================
 
@@ -58,7 +57,3 @@ Copyright 2006-2016, Kirill Simonov.
 https://github.com/yaml/pyyaml
 
 ===============================================================================
-
-sentence-transformers - Apache-2.0
-Copyright 2019-2025, UKP Lab, Technische Universität Darmstadt.
-https://github.com/UKPLab/sentence-transformers
