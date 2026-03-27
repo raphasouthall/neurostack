@@ -4032,6 +4032,7 @@ def main():
     cfg = get_config()
 
     parser = argparse.ArgumentParser(description="neurostack: Local AI context engine")
+    parser.add_argument("--version", action="version", version=f"neurostack {__version__}")
     parser.add_argument("--vault", default=str(cfg.vault_root), help="Vault root path")
     parser.add_argument("--embed-url", default=cfg.embed_url, help="Ollama embed URL")
     parser.add_argument("--summarize-url", default=cfg.llm_url, help="Ollama summarize URL")
