@@ -37,9 +37,9 @@ def _mock_cloud_config(url: str = "", key: str = "") -> CloudConfig:
 # ---------------------------------------------------------------------------
 
 class TestCloudLogin:
-    @patch("neurostack.cli.CloudClient")
-    @patch("neurostack.cli.save_cloud_config")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.CloudClient")
+    @patch("neurostack.cli.cloud.save_cloud_config")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     def test_login_valid_key_saves(self, mock_load, mock_save, mock_client_cls, capsys):
         """Login with --key and valid key prints success and saves."""
         mock_load.return_value = _mock_cloud_config(
@@ -49,7 +49,7 @@ class TestCloudLogin:
         mock_client.validate_key.return_value = True
         mock_client_cls.return_value = mock_client
 
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command="login", key="sk-test123")
         cmd_cloud(args)
 
@@ -60,9 +60,9 @@ class TestCloudLogin:
         assert call_kwargs[1]["cloud_api_key"] == "sk-test123"
 
     # Test 2: login --key with invalid key does NOT save
-    @patch("neurostack.cli.CloudClient")
-    @patch("neurostack.cli.save_cloud_config")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.CloudClient")
+    @patch("neurostack.cli.cloud.save_cloud_config")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     def test_login_invalid_key_errors(self, mock_load, mock_save, mock_client_cls, capsys):
         """Login with invalid key prints error, does not save, exits 1."""
         mock_load.return_value = _mock_cloud_config(
@@ -72,7 +72,7 @@ class TestCloudLogin:
         mock_client.validate_key.return_value = False
         mock_client_cls.return_value = mock_client
 
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command="login", key="sk-bad")
         with pytest.raises(SystemExit, match="1"):
             cmd_cloud(args)
@@ -82,10 +82,10 @@ class TestCloudLogin:
         mock_save.assert_not_called()
 
     # Test 3: login without --key triggers device code flow
-    @patch("neurostack.cli._cmd_cloud_device_login")
+    @patch("neurostack.cli.cloud._cmd_cloud_device_login")
     def test_login_no_key_triggers_device_flow(self, mock_device_login, capsys):
         """Login without --key delegates to device code flow."""
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command="login", key=None)
         cmd_cloud(args)
 
@@ -97,10 +97,10 @@ class TestCloudLogin:
 # ---------------------------------------------------------------------------
 
 class TestCloudLogout:
-    @patch("neurostack.cli.clear_cloud_credentials")
+    @patch("neurostack.cli.cloud.clear_cloud_credentials")
     def test_logout_clears_and_confirms(self, mock_clear, capsys):
         """Logout calls clear_cloud_credentials and prints confirmation."""
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command="logout")
         cmd_cloud(args)
 
@@ -116,8 +116,8 @@ class TestCloudLogout:
 
 class TestCloudStatus:
     # Test 5: status when authenticated
-    @patch("neurostack.cli.CloudClient")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.CloudClient")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     def test_status_authenticated(self, mock_load, mock_client_cls, capsys):
         """Status shows Authenticated, cloud URL, and tier when configured."""
         mock_load.return_value = _mock_cloud_config(
@@ -133,7 +133,7 @@ class TestCloudStatus:
         }
         mock_client_cls.return_value = mock_client
 
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command="status")
         cmd_cloud(args)
 
@@ -143,8 +143,8 @@ class TestCloudStatus:
         assert "free" in out
 
     # Test 6: status when NOT authenticated
-    @patch("neurostack.cli.CloudClient")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.CloudClient")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     def test_status_not_authenticated(self, mock_load, mock_client_cls, capsys):
         """Status shows 'Not authenticated' when no key is stored."""
         mock_load.return_value = _mock_cloud_config(url="", key="")
@@ -152,7 +152,7 @@ class TestCloudStatus:
         mock_client.is_configured = False
         mock_client_cls.return_value = mock_client
 
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command="status")
         cmd_cloud(args)
 
@@ -160,8 +160,8 @@ class TestCloudStatus:
         assert "Not authenticated" in out
 
     # Test 7: status --json returns machine-readable JSON
-    @patch("neurostack.cli.CloudClient")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.CloudClient")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     def test_status_json_output(self, mock_load, mock_client_cls, capsys):
         """status --json returns JSON with authenticated, cloud_url, tier."""
         mock_load.return_value = _mock_cloud_config(
@@ -177,7 +177,7 @@ class TestCloudStatus:
         }
         mock_client_cls.return_value = mock_client
 
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command="status", json=True)
         cmd_cloud(args)
 
@@ -193,9 +193,9 @@ class TestCloudStatus:
 # ---------------------------------------------------------------------------
 
 class TestCloudSetup:
-    @patch("neurostack.cli.CloudClient")
-    @patch("neurostack.cli.save_cloud_config")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.CloudClient")
+    @patch("neurostack.cli.cloud.save_cloud_config")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     @patch("builtins.input", side_effect=["https://custom.api.dev", "sk-setup-key"])
     def test_setup_interactive(self, mock_input, mock_load, mock_save, mock_client_cls, capsys):
         """Setup prompts for URL and key, validates, saves both."""
@@ -204,7 +204,7 @@ class TestCloudSetup:
         mock_client.validate_key.return_value = True
         mock_client_cls.return_value = mock_client
 
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command="setup")
         cmd_cloud(args)
 
@@ -223,7 +223,7 @@ class TestCloudSetup:
 class TestCloudNoSubcommand:
     def test_no_subcommand_prints_usage(self, capsys):
         """cloud with no subcommand prints usage help."""
-        from neurostack.cli import cmd_cloud
+        from neurostack.cli.cloud import cmd_cloud
         args = _make_args(cloud_command=None)
         cmd_cloud(args)
 
@@ -241,11 +241,11 @@ class TestCloudNoSubcommand:
 class TestCloudDeviceLogin:
     """Tests for the device code (browser-based) login flow."""
 
-    @patch("neurostack.cli.webbrowser", create=True)
-    @patch("neurostack.cli.time", create=True)
-    @patch("neurostack.cli.httpx", create=True)
-    @patch("neurostack.cli.save_cloud_config")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.webbrowser", create=True)
+    @patch("neurostack.cli.cloud.time", create=True)
+    @patch("neurostack.cli.cloud.httpx", create=True)
+    @patch("neurostack.cli.cloud.save_cloud_config")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     def test_cloud_login_device_code_success(
         self, mock_load, mock_save, mock_httpx, mock_time, mock_wb, capsys
     ):
@@ -287,7 +287,7 @@ class TestCloudDeviceLogin:
         mock_time.monotonic.side_effect = [0, 0, 1, 2]  # start, loop check, after sleep, loop check
         mock_time.sleep = MagicMock()
 
-        from neurostack.cli import _cmd_cloud_device_login
+        from neurostack.cli.cloud import _cmd_cloud_device_login
         _cmd_cloud_device_login()
 
         out = capsys.readouterr().out
@@ -296,11 +296,11 @@ class TestCloudDeviceLogin:
         saved_kwargs = mock_save.call_args
         assert saved_kwargs[1]["cloud_api_key"] == "nsk-device-key-123"
 
-    @patch("neurostack.cli.webbrowser", create=True)
-    @patch("neurostack.cli.time", create=True)
-    @patch("neurostack.cli.httpx", create=True)
-    @patch("neurostack.cli.save_cloud_config")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.webbrowser", create=True)
+    @patch("neurostack.cli.cloud.time", create=True)
+    @patch("neurostack.cli.cloud.httpx", create=True)
+    @patch("neurostack.cli.cloud.save_cloud_config")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     def test_cloud_login_device_code_expired(
         self, mock_load, mock_save, mock_httpx, mock_time, mock_wb, capsys
     ):
@@ -331,7 +331,7 @@ class TestCloudDeviceLogin:
         mock_time.monotonic.side_effect = [0, 0, 1]
         mock_time.sleep = MagicMock()
 
-        from neurostack.cli import _cmd_cloud_device_login
+        from neurostack.cli.cloud import _cmd_cloud_device_login
         with pytest.raises(SystemExit, match="1"):
             _cmd_cloud_device_login()
 
@@ -339,11 +339,11 @@ class TestCloudDeviceLogin:
         assert "expired" in out.lower()
         mock_save.assert_not_called()
 
-    @patch("neurostack.cli.webbrowser", create=True)
-    @patch("neurostack.cli.time", create=True)
-    @patch("neurostack.cli.httpx", create=True)
-    @patch("neurostack.cli.save_cloud_config")
-    @patch("neurostack.cli.load_cloud_config")
+    @patch("neurostack.cli.cloud.webbrowser", create=True)
+    @patch("neurostack.cli.cloud.time", create=True)
+    @patch("neurostack.cli.cloud.httpx", create=True)
+    @patch("neurostack.cli.cloud.save_cloud_config")
+    @patch("neurostack.cli.cloud.load_cloud_config")
     def test_cloud_login_device_code_timeout(
         self, mock_load, mock_save, mock_httpx, mock_time, mock_wb, capsys
     ):
@@ -376,7 +376,7 @@ class TestCloudDeviceLogin:
         mock_time.monotonic.side_effect = [0, 0, 3, 999]
         mock_time.sleep = MagicMock()
 
-        from neurostack.cli import _cmd_cloud_device_login
+        from neurostack.cli.cloud import _cmd_cloud_device_login
         with pytest.raises(SystemExit, match="1"):
             _cmd_cloud_device_login()
 
