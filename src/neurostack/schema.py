@@ -16,7 +16,7 @@ _cfg = get_config()
 DB_DIR = _cfg.db_dir
 DB_PATH = _cfg.db_path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -500,6 +500,12 @@ CREATE INDEX IF NOT EXISTS idx_cooccurrence_b ON entity_cooccurrence(entity_b);
 """
 
 
+# Migration from v12 to v13: add sqlite-vec vector indexes (optional)
+# The vec0 virtual tables are created by vecindex.py only when sqlite-vec
+# is available (full mode). This migration just bumps the version number.
+MIGRATION_V13 = "-- vec index tables created by vecindex.ensure_vec_tables()"
+
+
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
@@ -715,6 +721,19 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.commit()
         log.info("Migration to v12 complete.")
 
+    if current < 13:
+        log.info(
+            "Migrating schema v12 -> v13: "
+            "sqlite-vec vector index support..."
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (13)"
+        )
+        conn.commit()
+        # Vec tables are created by _init_vec_index() after migrations
+        log.info("Migration to v13 complete.")
+
 
 def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
     """Get a database connection, creating schema if needed."""
@@ -739,4 +758,18 @@ def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
     else:
         _run_migrations(conn)
 
+    # Load sqlite-vec and create vector index tables if available
+    _init_vec_index(conn)
+
     return conn
+
+
+def _init_vec_index(conn: sqlite3.Connection) -> None:
+    """Load sqlite-vec extension and create vec0 tables if available."""
+    try:
+        from .vecindex import ensure_vec_tables, load_vec_extension
+
+        if load_vec_extension(conn):
+            ensure_vec_tables(conn, embed_dim=_cfg.embed_dim)
+    except Exception:
+        pass  # sqlite-vec is optional; degrade gracefully
