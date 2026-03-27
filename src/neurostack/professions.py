@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+
 def _resolve_pack_root() -> Path:
     """Locate the professions directory inside the vault template."""
     # Package location first (pip/wheel installs)
