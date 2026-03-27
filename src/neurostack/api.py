@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import time
@@ -102,7 +103,7 @@ def _verify_auth(request: Request) -> None:
             },
         )
     token = auth[len("Bearer "):]
-    if token != api_key:
+    if not hmac.compare_digest(token, api_key):
         raise HTTPException(
             status_code=401,
             detail={
