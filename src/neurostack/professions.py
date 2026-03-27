@@ -14,8 +14,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-# Resolve the vault-template root relative to this package
-_PACK_ROOT = Path(__file__).resolve().parent.parent.parent / "vault-template" / "professions"
+def _resolve_pack_root() -> Path:
+    """Locate the professions directory inside the vault template."""
+    # Package location first (pip/wheel installs)
+    pkg = Path(__file__).resolve().parent / "vault_template" / "professions"
+    if pkg.is_dir():
+        return pkg
+    # Repo root fallback (git checkout / editable installs)
+    repo = Path(__file__).resolve().parent.parent.parent / "vault-template" / "professions"
+    if repo.is_dir():
+        return repo
+    return repo  # return repo path even if missing — callers handle exists()
+
+
+_PACK_ROOT = _resolve_pack_root()
 
 
 @dataclass
