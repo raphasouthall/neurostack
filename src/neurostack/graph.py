@@ -25,26 +25,53 @@ class GraphResult:
     neighbors: list[GraphNode]
 
 
-def resolve_wiki_link(link_target: str, all_paths: list[str]) -> str | None:
+def _build_link_index(all_paths: list[str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Build O(1) lookup dicts for wiki-link resolution.
+
+    Returns (path_map, stem_map):
+    - path_map: lowered path (with and without .md) -> original path
+    - stem_map: lowered filename stem -> original path (first match wins)
+    """
+    path_map: dict[str, str] = {}
+    stem_map: dict[str, str] = {}
+    for p in all_paths:
+        p_lower = p.lower()
+        path_map[p_lower] = p
+        if p_lower.endswith(".md"):
+            path_map[p_lower[:-3]] = p
+        stem = Path(p).stem.lower()
+        if stem not in stem_map:
+            stem_map[stem] = p
+    return path_map, stem_map
+
+
+def resolve_wiki_link(
+    link_target: str,
+    all_paths: list[str],
+    _link_index: tuple[dict[str, str], dict[str, str]] | None = None,
+) -> str | None:
     """Resolve a wiki-link target to a note path.
 
     Wiki-links in Obsidian can be:
     - Just a filename: [[my-note]] -> matches any path ending in my-note.md
     - A path: [[folder/my-note]] -> matches exactly
+
+    Pass _link_index (from _build_link_index) for O(1) lookups in batch.
+    Without it, falls back to building the index on the fly.
     """
-    # Try exact match first
+    if _link_index is None:
+        _link_index = _build_link_index(all_paths)
+    path_map, stem_map = _link_index
+
     target_lower = link_target.lower().strip()
-    for p in all_paths:
-        if p.lower() == target_lower or p.lower() == target_lower + ".md":
-            return p
 
-    # Try filename-only match
-    for p in all_paths:
-        stem = Path(p).stem.lower()
-        if stem == target_lower:
-            return p
+    # Try exact path match (O(1))
+    match = path_map.get(target_lower)
+    if match:
+        return match
 
-    return None
+    # Try filename-only match (O(1))
+    return stem_map.get(target_lower)
 
 
 def build_graph(conn: sqlite3.Connection, vault_root: Path):
@@ -53,6 +80,9 @@ def build_graph(conn: sqlite3.Connection, vault_root: Path):
 
     # Get all note paths
     all_paths = [r["path"] for r in conn.execute("SELECT path FROM notes").fetchall()]
+
+    # Pre-build O(1) lookup index for wiki-link resolution
+    link_index = _build_link_index(all_paths)
 
     # Clear existing edges
     conn.execute("DELETE FROM graph_edges")
@@ -66,7 +96,7 @@ def build_graph(conn: sqlite3.Connection, vault_root: Path):
         links = extract_wiki_links(text)
 
         for link in links:
-            target = resolve_wiki_link(link, all_paths)
+            target = resolve_wiki_link(link, all_paths, _link_index=link_index)
             if target and target != note_path:
                 conn.execute(
                     "INSERT OR IGNORE INTO graph_edges"
