@@ -9,7 +9,9 @@ Implements GraphRAG 'global search':
 4. Reduce: synthesize a final answer from map outputs
 """
 
+import hashlib
 import logging
+import time
 
 import httpx
 
@@ -31,6 +33,18 @@ SUMMARIZE_URL = _cfg.llm_url
 EMBED_URL = _cfg.embed_url
 SUMMARIZE_MODEL = _cfg.llm_model
 _LLM_HEADERS = _auth_headers(_cfg.llm_api_key)
+
+# ── Map result cache (content-hash keyed, 5-min TTL) ──
+# Matches existing LLM cache pattern used elsewhere in NeuroStack.
+_MAP_CACHE: dict[str, tuple[float, str]] = {}  # hash -> (timestamp, result)
+_MAP_CACHE_TTL = 300.0  # 5 minutes
+
+
+def _map_cache_key(community_title: str, summary: str, query: str) -> str:
+    """Content-hash key for a map step input."""
+    content = f"{community_title}|{summary}|{query}"
+    return hashlib.sha256(content.encode()).hexdigest()[:16]
+
 
 _MAP_PROMPT = """You are analyzing a knowledge community summary to answer a question.
 
@@ -186,11 +200,25 @@ def global_query(
             "community_hits": hits,
         }
 
-    # Map step
+    # Map step (with content-hash cache, 5-min TTL)
+    now = time.monotonic()
+    # Evict stale entries
+    stale = [k for k, (ts, _) in _MAP_CACHE.items() if now - ts > _MAP_CACHE_TTL]
+    for k in stale:
+        del _MAP_CACHE[k]
+
     findings: list[str] = []
     for hit in hits:
         if hit["score"] < 0.15:
             continue
+
+        cache_key = _map_cache_key(hit["title"] or "", hit["summary"] or "", query)
+        cached = _MAP_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < _MAP_CACHE_TTL:
+            if cached[1]:
+                findings.append(f"[{hit['title']}]\n{cached[1]}")
+            continue
+
         prompt = _MAP_PROMPT.format(
             title=hit["title"],
             summary=hit["summary"],
@@ -212,6 +240,7 @@ def global_query(
             )
             resp.raise_for_status()
             finding = resp.json()["choices"][0]["message"]["content"].strip()
+            _MAP_CACHE[cache_key] = (now, finding)
             if finding:
                 findings.append(f"[{hit['title']}]\n{finding}")
         except Exception as e:
