@@ -64,6 +64,9 @@ class DebouncedHandler(FileSystemEventHandler):
         self._exclude_dirs = set(
             exclude_dirs or [],
         )
+        # Reuse a single DB connection across events (WAL mode is safe for
+        # concurrent reads).  The connection is created lazily on first use.
+        self._conn = None
 
     def _should_process(self, path: str) -> bool:
         p = Path(path)
@@ -94,12 +97,18 @@ class DebouncedHandler(FileSystemEventHandler):
             )
             self._timers[path].start()
 
+    def _get_conn(self):
+        """Return a reused DB connection, creating it on first call."""
+        if self._conn is None:
+            self._conn = get_db()
+        return self._conn
+
     def _process_file(self, path_str: str, event_type: str):
         path = Path(path_str)
         with self._timers_lock:
             self._timers.pop(path_str, None)
 
-        conn = get_db(DB_PATH)
+        conn = self._get_conn()
 
         if event_type == "deleted" or not path.exists():
             rel_path = str(path.relative_to(self.vault_root))

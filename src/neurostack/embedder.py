@@ -85,7 +85,16 @@ def embedding_to_blob(vec: "np.ndarray") -> bytes:
 
 
 def blob_to_embedding(blob: bytes) -> "np.ndarray":
-    """Convert SQLite BLOB back to numpy array."""
+    """Convert SQLite BLOB back to numpy array.
+
+    Validates that the blob size is a multiple of 4 bytes (float32) and
+    produces a plausible embedding dimension (> 0).
+    """
+    if len(blob) == 0 or len(blob) % 4 != 0:
+        raise ValueError(
+            f"Invalid embedding blob: size {len(blob)} is not a"
+            " positive multiple of 4 bytes (float32)"
+        )
     return np.frombuffer(blob, dtype=np.float32)
 
 
