@@ -232,6 +232,7 @@ def global_query(
     try:
         resp = httpx.post(
             f"{summarize_url}/v1/chat/completions",
+            headers=_LLM_HEADERS,
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": reduce_prompt}],
