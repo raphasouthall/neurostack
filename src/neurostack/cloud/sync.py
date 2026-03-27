@@ -13,7 +13,6 @@ import hashlib
 import io
 import json
 import logging
-import sqlite3
 import tarfile
 import tempfile
 import time
