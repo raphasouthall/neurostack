@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import logging
@@ -58,8 +59,8 @@ def create_mcp_server(name: str = "neurostack", **fastmcp_kwargs) -> FastMCP:
 
     for tool_def in registry.list_tools():
         @functools.wraps(tool_def.fn)
-        def wrapper(_td=tool_def, **kwargs):
-            return _td.call(**kwargs)
+        async def wrapper(_td=tool_def, **kwargs):
+            return await asyncio.to_thread(_td.call, **kwargs)
 
         wrapper.__signature__ = inspect.signature(tool_def.fn)
         wrapper.__doc__ = tool_def.fn.__doc__
