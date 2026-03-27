@@ -25,6 +25,24 @@ from .cloud.config import (
 from .config import CONFIG_PATH, get_config
 
 
+def _get_vault_template_dir() -> Path | None:
+    """Locate the vault-template directory.
+
+    Checks the package directory first (pip/wheel installs), then
+    falls back to the repo root (git checkout / editable installs).
+    Returns None if not found.
+    """
+    # Package location: src/neurostack/vault_template/
+    pkg_dir = Path(__file__).resolve().parent / "vault_template"
+    if pkg_dir.is_dir():
+        return pkg_dir
+    # Repo root fallback: vault-template/
+    repo_dir = Path(__file__).resolve().parent.parent.parent / "vault-template"
+    if repo_dir.is_dir():
+        return repo_dir
+    return None
+
+
 def cmd_index(args):
     from .schema import DB_PATH, get_db
     from .watcher import full_index
@@ -836,8 +854,8 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
             created.append(d)
 
     # Copy base templates from vault-template/
-    base_template = Path(__file__).resolve().parent.parent.parent / "vault-template"
-    if base_template.exists():
+    base_template = _get_vault_template_dir()
+    if base_template is not None:
         src_agents = base_template / "AGENTS.md"
         dst_agents = vault_root / "AGENTS.md"
         if src_agents.exists() and not dst_agents.exists():
@@ -1544,10 +1562,8 @@ def cmd_onboard(args):
             dirs_created += 1
 
     # 5. Copy AGENTS.md and base templates if missing
-    base_template = (
-        Path(__file__).resolve().parent.parent.parent / "vault-template"
-    )
-    if base_template.exists():
+    base_template = _get_vault_template_dir()
+    if base_template is not None:
         src_agents = base_template / "AGENTS.md"
         dst_agents = target / "AGENTS.md"
         if src_agents.exists() and not dst_agents.exists():
@@ -2488,10 +2504,10 @@ def cmd_demo(args):
     from .search import fts_search
 
     # Copy sample vault to a temp directory
-    sample_src = Path(__file__).parent.parent.parent / "vault-template"
-    if not sample_src.exists():
+    sample_src = _get_vault_template_dir()
+    if sample_src is None:
         print("Error: vault-template not found. "
-              "Demo requires the full repo checkout.")
+              "Please reinstall neurostack.")
         sys.exit(1)
 
     tmpdir = Path(tempfile.mkdtemp(prefix="neurostack-demo-"))
