@@ -321,6 +321,43 @@ def hotness_score(conn: sqlite3.Connection, note_path: str, half_life_days: floa
     return freq * decay
 
 
+def batch_hotness_scores(
+    conn: sqlite3.Connection,
+    note_paths: list[str],
+    half_life_days: float = 30.0,
+) -> dict[str, float]:
+    """Compute hotness scores for multiple notes in a single batch query.
+
+    Returns a dict mapping note_path -> hotness score (0-1).
+    Notes with no usage history are omitted from the result.
+    """
+    import math
+
+    if not note_paths:
+        return {}
+
+    placeholders = ",".join("?" for _ in note_paths)
+    rows = conn.execute(
+        f"SELECT note_path, COUNT(*) as usage_count, "
+        f"julianday('now') - julianday(MAX(used_at)) as age_days "
+        f"FROM note_usage "
+        f"WHERE note_path IN ({placeholders}) "
+        f"GROUP BY note_path",
+        list(note_paths),
+    ).fetchall()
+
+    scores: dict[str, float] = {}
+    ln2 = math.log(2)
+    for row in rows:
+        age_days = max(0.0, float(row["age_days"]))
+        usage_count = int(row["usage_count"])
+        decay = math.exp(-ln2 / half_life_days * age_days)
+        freq = 1.0 / (1.0 + math.exp(-math.log1p(usage_count)))
+        scores[row["note_path"]] = freq * decay
+
+    return scores
+
+
 def get_dormancy_report(
     conn: sqlite3.Connection,
     threshold: float = 0.05,
@@ -568,8 +605,9 @@ def hybrid_search(
                 r["score"] *= 1.2
 
     # Apply hotness blend: final_score = 0.8 * semantic + 0.2 * hotness
+    hotness_map = batch_hotness_scores(conn, [r["note_path"] for r in valid_results])
     for r in valid_results:
-        h = hotness_score(conn, r["note_path"])
+        h = hotness_map.get(r["note_path"], 0.0)
         if h > 0.0:
             r["score"] = 0.8 * r["score"] + 0.2 * h
 
