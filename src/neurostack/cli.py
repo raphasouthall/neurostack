@@ -52,6 +52,7 @@ def cmd_index(args):
         summarize_url=args.summarize_url,
         skip_summary=args.skip_summary,
         skip_triples=args.skip_triples,
+        workers=getattr(args, "workers", 2),
     )
     db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", DB_PATH))
     conn = get_db(db_path)
@@ -4416,6 +4417,10 @@ def main():
     p = sub.add_parser("index", help="Full re-index of vault")
     p.add_argument("--skip-summary", action="store_true", help="Skip LLM summarization")
     p.add_argument("--skip-triples", action="store_true", help="Skip triple extraction")
+    p.add_argument(
+        "--workers", "-w", type=int, default=2,
+        help="Number of parallel workers for LLM calls (default: 2)",
+    )
     p.set_defaults(func=cmd_index)
 
     # search
