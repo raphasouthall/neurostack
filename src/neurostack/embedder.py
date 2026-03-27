@@ -15,17 +15,11 @@ except ImportError:
 
 from .config import _auth_headers, get_config
 
-_cfg = get_config()
-DEFAULT_EMBED_URL = _cfg.embed_url
-EMBED_MODEL = _cfg.embed_model
-EMBED_DIM = _cfg.embed_dim
-_EMBED_HEADERS = _auth_headers(_cfg.embed_api_key)
-
 
 def get_embedding(
     text: str,
-    base_url: str = DEFAULT_EMBED_URL,
-    model: str = EMBED_MODEL,
+    base_url: str | None = None,
+    model: str | None = None,
 ) -> "np.ndarray":
     """Get embedding vector for a single text."""
     if not HAS_NUMPY:
@@ -33,12 +27,15 @@ def get_embedding(
             "Embedding functions require numpy. "
             "Install with: pip install neurostack[full]"
         )
+    cfg = get_config()
+    base_url = base_url or cfg.embed_url
+    model = model or cfg.embed_model
     payload = {"model": model, "input": text}
-    if EMBED_DIM:
-        payload["dimensions"] = EMBED_DIM
+    if cfg.embed_dim:
+        payload["dimensions"] = cfg.embed_dim
     resp = httpx.post(
         f"{base_url}/v1/embeddings",
-        headers=_EMBED_HEADERS,
+        headers=_auth_headers(cfg.embed_api_key),
         json=payload,
         timeout=300.0,
     )
@@ -49,8 +46,8 @@ def get_embedding(
 
 def get_embeddings_batch(
     texts: list[str],
-    base_url: str = DEFAULT_EMBED_URL,
-    model: str = EMBED_MODEL,
+    base_url: str | None = None,
+    model: str | None = None,
     batch_size: int = 50,
 ) -> "list[np.ndarray]":
     """Get embeddings for multiple texts in batches."""
@@ -59,15 +56,19 @@ def get_embeddings_batch(
             "Embedding functions require numpy. "
             "Install with: pip install neurostack[full]"
         )
+    cfg = get_config()
+    base_url = base_url or cfg.embed_url
+    model = model or cfg.embed_model
+    headers = _auth_headers(cfg.embed_api_key)
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
         payload = {"model": model, "input": batch}
-        if EMBED_DIM:
-            payload["dimensions"] = EMBED_DIM
+        if cfg.embed_dim:
+            payload["dimensions"] = cfg.embed_dim
         resp = httpx.post(
             f"{base_url}/v1/embeddings",
-            headers=_EMBED_HEADERS,
+            headers=headers,
             json=payload,
             timeout=300.0,
         )

@@ -28,12 +28,6 @@ log = logging.getLogger("neurostack")
 
 from .config import _auth_headers, get_config
 
-_cfg = get_config()
-SUMMARIZE_URL = _cfg.llm_url
-EMBED_URL = _cfg.embed_url
-SUMMARIZE_MODEL = _cfg.llm_model
-_LLM_HEADERS = _auth_headers(_cfg.llm_api_key)
-
 # ── Map result cache (content-hash keyed, 5-min TTL) ──
 # Matches existing LLM cache pattern used elsewhere in NeuroStack.
 _MAP_CACHE: dict[str, tuple[float, str]] = {}  # hash -> (timestamp, result)
@@ -77,9 +71,10 @@ def search_communities(
     top_k: int = 8,
     level: int | None = None,
     conn=None,
-    embed_url: str = EMBED_URL,
+    embed_url: str | None = None,
 ) -> list[dict]:
     """Semantic search over community summaries. Returns ranked list."""
+    embed_url = embed_url or get_config().embed_url
     if conn is None:
         conn = get_db(DB_PATH)
 
@@ -128,9 +123,9 @@ def global_query(
     level: int = 0,
     use_map_reduce: bool = True,
     conn=None,
-    embed_url: str = EMBED_URL,
-    summarize_url: str = SUMMARIZE_URL,
-    model: str = SUMMARIZE_MODEL,
+    embed_url: str | None = None,
+    summarize_url: str | None = None,
+    model: str | None = None,
     workspace: str = None,
 ) -> dict:
     """Answer a global query using community summaries (GraphRAG global search).
@@ -144,6 +139,11 @@ def global_query(
 
     Returns dict: {answer, communities_used, community_hits}
     """
+    cfg = get_config()
+    embed_url = embed_url or cfg.embed_url
+    summarize_url = summarize_url or cfg.llm_url
+    model = model or cfg.llm_model
+
     if conn is None:
         conn = get_db(DB_PATH)
 
@@ -207,6 +207,7 @@ def global_query(
     for k in stale:
         del _MAP_CACHE[k]
 
+    llm_headers = _auth_headers(cfg.llm_api_key)
     findings: list[str] = []
     for hit in hits:
         if hit["score"] < 0.15:
@@ -227,7 +228,7 @@ def global_query(
         try:
             resp = httpx.post(
                 f"{summarize_url}/v1/chat/completions",
-                headers=_LLM_HEADERS,
+                headers=llm_headers,
                 json={
                     "model": model,
                     "messages": [{"role": "user", "content": prompt}],
@@ -261,7 +262,7 @@ def global_query(
     try:
         resp = httpx.post(
             f"{summarize_url}/v1/chat/completions",
-            headers=_LLM_HEADERS,
+            headers=llm_headers,
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": reduce_prompt}],
