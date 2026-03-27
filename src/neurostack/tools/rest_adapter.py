@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -23,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from . import ensure_registered
-from .openai_adapter import _param_to_json_schema
+from .schema_utils import param_to_json_schema as _param_to_json_schema
 
 log = logging.getLogger("neurostack.tools.rest_adapter")
 
@@ -87,7 +88,7 @@ def create_tools_router(prefix: str = "/v1/tools") -> APIRouter:
             body = {}
 
         try:
-            result = tool.call(**body)
+            result = await asyncio.to_thread(tool.call, **body)
             return JSONResponse(result if isinstance(result, dict) else {"result": result})
         except TypeError as exc:
             raise HTTPException(
