@@ -25,7 +25,7 @@ class TestCheckOllama:
 
         with patch("neurostack.preflight.httpx.get", return_value=mock_response):
             result = check_ollama(
-                "http://localhost:11435", "nomic-embed-text",
+                "http://localhost:11434", "nomic-embed-text",
                 "http://localhost:11434", "phi3.5",
             )
         assert result.embed_ok
@@ -55,7 +55,7 @@ class TestCheckOllama:
 
         with patch("neurostack.preflight.httpx.get", return_value=mock_response):
             result = check_ollama(
-                "http://localhost:11435", "missing-model",
+                "http://localhost:11434", "missing-model",
                 "http://localhost:11434", "phi3.5",
             )
         assert not result.embed_ok
