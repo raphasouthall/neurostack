@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "neurostack",
   "display_name": "NeuroStack",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "description": "Neuroscience-grounded knowledge management for your Markdown vault. Semantic search, knowledge graphs, AI memory, stale note detection, and 21 MCP tools.",
   "author": {
     "name": "Raphael Southall"
