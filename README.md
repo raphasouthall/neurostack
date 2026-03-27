@@ -3,9 +3,15 @@
 [![PyPI](https://img.shields.io/pypi/v/neurostack)](https://pypi.org/project/neurostack/)
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
 
-**Long-term memory for AI agents.** NeuroStack indexes your Markdown vault into a knowledge graph your AI can search -- structured facts, summaries, or full content, automatically tiered by query complexity. It persists agent memories, detects stale notes, and recovers context across sessions. Your vault files are never modified.
+**Your notes are lying to you.** That runbook from last quarter? It references an API endpoint you deprecated in February. The architecture decision record your AI just cited? It was reversed two sprints ago. Every knowledge base decays -- and AI agents that search it will confidently repeat whatever they find.<sup>1</sup>
+
+NeuroStack is the memory layer that fights this. It indexes your Markdown vault into a knowledge graph, detects stale notes before your AI cites them, and tiers retrieval so simple queries cost ~15 tokens instead of ~300. It persists agent memories across sessions, tracks what you actually use, and surfaces what's gone stale. Your vault files are never modified.
+
+**Built for DevOps/SRE teams and infrastructure engineers** who maintain runbooks, incident reports, architecture docs, and operational playbooks -- the kind of knowledge that changes fast and hurts when it's wrong.
 
 Works with Claude Code, Cursor, Windsurf, Codex, and Gemini CLI via MCP.
+
+<sub><sup>1</sup> Prediction error signals -- when retrieved content diverges from query context -- trigger reconsolidation in biological memory (Sinclair & Bhatt 2022). NeuroStack applies the same principle: notes that keep appearing where they don't belong are flagged and demoted.</sub>
 
 ## Get started
 
@@ -143,9 +149,9 @@ Retrieval is tiered. Most queries resolve at the cheapest tier:
 Full mode adds hybrid semantic + keyword search with neuroscience-grounded ranking: energy landscape convergence, lateral inhibition, and prediction error feedback. Workspace scoping restricts queries to a vault subdirectory.
 
 ```bash
-neurostack search "deployment checklist"
-neurostack tiered "auth flow" --top-k 3
-neurostack search -w "work/" "query"       # workspace scoping
+neurostack search "k8s pod eviction policy"
+neurostack tiered "incident response runbook" --top-k 3
+neurostack search -w "work/infra" "terraform state migration"
 neurostack --json search "query" | jq      # machine-readable output
 ```
 
@@ -178,8 +184,8 @@ AI assistants can write typed memories back to NeuroStack: `observation`, `decis
 - Update in place or merge two memories with audit trail
 
 ```bash
-neurostack memories add "postgres 16 requires --wal-level=replica" --type decision --tags "db,postgres"
-neurostack memories search "postgres"
+neurostack memories add "postgres 16 requires --wal-level=replica for logical replication" --type decision --tags "db,postgres"
+neurostack memories search "postgres replication"
 neurostack memories merge <target> <source>
 neurostack memories prune --expired
 ```
@@ -202,7 +208,7 @@ Two modes for rebuilding working context after `/clear` or starting a new sessio
 - **`session_brief`** -- time-anchored. Compact briefing of recent activity, hot notes, and alerts.
 
 ```bash
-neurostack context "migrate auth to OAuth2" --budget 2000
+neurostack context "migrate auth service to OIDC" --budget 2000
 neurostack brief
 ```
 
@@ -359,6 +365,8 @@ journal/*.md
 **How large a vault can it handle?** Tested with ~5,000 notes. FTS5 search stays fast at any size. Cloud indexing handles 500+ notes in minutes.
 
 **Can I use it without MCP?** Yes. The CLI works standalone. Pipe output into any LLM.
+
+**Why DevOps/SRE?** Operational knowledge decays faster than most: runbooks go stale after infrastructure changes, incident postmortems reference services that have been renamed, and deployment procedures drift as pipelines evolve. NeuroStack's stale detection catches this before your AI recommends a rollback procedure that no longer works.
 
 **Is my vault private?** In local mode, nothing leaves your machine. In cloud mode, your Markdown files are uploaded for indexing via HTTPS, processed by Gemini, and the indexed DB is returned. Files are not stored after indexing completes.
 
