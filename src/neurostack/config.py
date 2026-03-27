@@ -37,7 +37,7 @@ class Config:
     mode: str = "local"  # "local" | "cloud"
     vault_root: Path = field(default_factory=lambda: Path.home() / "brain")
     db_dir: Path = field(default_factory=_data_dir)
-    embed_url: str = "http://localhost:11435"
+    embed_url: str = "http://localhost:11434"
     embed_model: str = "nomic-embed-text"
     embed_dim: int = 768
     llm_url: str = "http://localhost:11434"

@@ -167,7 +167,7 @@ File: `~/.config/neurostack/config.toml`
 | Key | Default | Env Override |
 |-----|---------|-------------|
 | `vault_root` | `~/brain` | `NEUROSTACK_VAULT_ROOT` |
-| `embed_url` | `http://localhost:11435` | `NEUROSTACK_EMBED_URL` |
+| `embed_url` | `http://localhost:11434` | `NEUROSTACK_EMBED_URL` |
 | `embed_model` | `nomic-embed-text` | `NEUROSTACK_EMBED_MODEL` |
 | `llm_url` | `http://localhost:11434` | `NEUROSTACK_LLM_URL` |
 | `llm_model` | `phi3.5` | `NEUROSTACK_LLM_MODEL` |
