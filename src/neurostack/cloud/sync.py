@@ -662,15 +662,19 @@ class VaultSyncEngine:
     def _merge_memories(self, memories: list[dict]) -> None:
         """Merge fetched memories into local SQLite DB.
 
-        Uses INSERT OR REPLACE for upsert (dedup by UUID).
+        Uses INSERT ... ON CONFLICT to upsert by UUID, preserving
+        existing fields (embedding, revision_count, merge_count,
+        merged_from) not present in the cloud response.
         Deletes memories marked with deleted=true.
         """
+        from ..schema import get_db
+
         db_path = self._db_dir / "neurostack.db"
         if not db_path.exists():
             logger.warning("Local DB not found at %s, skipping memory merge", db_path)
             return
 
-        conn = sqlite3.connect(str(db_path))
+        conn = get_db(db_path)
         try:
             for mem in memories:
                 if mem.get("deleted"):
@@ -683,10 +687,21 @@ class VaultSyncEngine:
                     if isinstance(tags, list):
                         tags = json.dumps(tags)
                     conn.execute(
-                        "INSERT OR REPLACE INTO memories "
+                        "INSERT INTO memories "
                         "(uuid, content, entity_type, tags, workspace, "
-                        "source_agent, session_id, ttl_hours, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "source_agent, session_id, expires_at, "
+                        "created_at, updated_at, file_path) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(uuid) DO UPDATE SET "
+                        "content = excluded.content, "
+                        "entity_type = excluded.entity_type, "
+                        "tags = excluded.tags, "
+                        "workspace = excluded.workspace, "
+                        "source_agent = excluded.source_agent, "
+                        "session_id = excluded.session_id, "
+                        "expires_at = excluded.expires_at, "
+                        "updated_at = excluded.updated_at, "
+                        "file_path = excluded.file_path",
                         (
                             mem["uuid"],
                             mem.get("content", ""),
@@ -695,9 +710,10 @@ class VaultSyncEngine:
                             mem.get("workspace"),
                             mem.get("source_agent"),
                             mem.get("session_id"),
-                            mem.get("ttl_hours"),
+                            mem.get("expires_at"),
                             mem.get("created_at"),
                             mem.get("updated_at"),
+                            mem.get("file_path"),
                         ),
                     )
             conn.commit()
