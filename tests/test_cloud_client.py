@@ -25,7 +25,7 @@ class TestSaveCloudConfig:
     def test_save_writes_cloud_section(self, tmp_path, monkeypatch):
         """save_cloud_config(url, key) writes [cloud] section to config.toml."""
         config_path = tmp_path / "config.toml"
-        monkeypatch.setattr("neurostack.cloud.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("neurostack.cloud.config._get_config_path", lambda: config_path)
 
         from neurostack.cloud.config import save_cloud_config
 
@@ -44,7 +44,7 @@ class TestSaveCloudConfig:
         """save_cloud_config() preserves existing non-cloud config sections."""
         config_path = tmp_path / "config.toml"
         config_path.write_text('vault_root = "~/my-vault"\nembed_url = "http://gpu:11435"\n')
-        monkeypatch.setattr("neurostack.cloud.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("neurostack.cloud.config._get_config_path", lambda: config_path)
 
         from neurostack.cloud.config import save_cloud_config
 
@@ -62,7 +62,7 @@ class TestSaveCloudConfig:
     def test_save_creates_directory(self, tmp_path, monkeypatch):
         """save_cloud_config() creates ~/.config/neurostack/ directory if missing."""
         config_path = tmp_path / "subdir" / "nested" / "config.toml"
-        monkeypatch.setattr("neurostack.cloud.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("neurostack.cloud.config._get_config_path", lambda: config_path)
 
         from neurostack.cloud.config import save_cloud_config
 
@@ -81,7 +81,7 @@ class TestClearCloudCredentials:
             '[cloud]\ncloud_api_url = "https://api.neurostack.sh"\n'
             'cloud_api_key = "ns_secret"\n'
         )
-        monkeypatch.setattr("neurostack.cloud.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("neurostack.cloud.config._get_config_path", lambda: config_path)
 
         from neurostack.cloud.config import clear_cloud_credentials
 
@@ -103,7 +103,7 @@ class TestLoadCloudConfigToml:
             '[cloud]\ncloud_api_url = "https://api.neurostack.sh"\n'
             'cloud_api_key = "ns_toml_key"\n'
         )
-        monkeypatch.setattr("neurostack.cloud.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("neurostack.cloud.config._get_config_path", lambda: config_path)
         # Clear env vars that would override
         monkeypatch.delenv("NEUROSTACK_CLOUD_API_URL", raising=False)
         monkeypatch.delenv("NEUROSTACK_CLOUD_API_KEY", raising=False)
@@ -121,7 +121,7 @@ class TestLoadCloudConfigToml:
             '[cloud]\ncloud_api_url = "https://toml.example.com"\n'
             'cloud_api_key = "toml_key"\n'
         )
-        monkeypatch.setattr("neurostack.cloud.config.CONFIG_PATH", config_path)
+        monkeypatch.setattr("neurostack.cloud.config._get_config_path", lambda: config_path)
         monkeypatch.setenv("NEUROSTACK_CLOUD_API_URL", "https://env.example.com")
         monkeypatch.setenv("NEUROSTACK_CLOUD_API_KEY", "env_key")
 
