@@ -16,7 +16,7 @@ class TestSaveConsent:
         """save_consent() writes consent_given=true and consent_date to config."""
         config_path = tmp_path / "config.toml"
 
-        with patch("neurostack.cloud.config.CONFIG_PATH", config_path):
+        with patch("neurostack.cloud.config._get_config_path", return_value=config_path):
             from neurostack.cloud.config import save_consent
 
             save_consent()
@@ -48,7 +48,7 @@ class TestSaveConsent:
         with open(config_path, "wb") as f:
             tomli_w.dump(data, f)
 
-        with patch("neurostack.cloud.config.CONFIG_PATH", config_path):
+        with patch("neurostack.cloud.config._get_config_path", return_value=config_path):
             from neurostack.cloud.config import load_cloud_config
 
             cfg = load_cloud_config()

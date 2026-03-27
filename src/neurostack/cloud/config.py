@@ -18,7 +18,11 @@ except ImportError:
 
 import tomli_w
 
-from neurostack.config import CONFIG_PATH
+
+def _get_config_path():
+    """Get CONFIG_PATH lazily to avoid circular import with neurostack.config."""
+    from neurostack.config import CONFIG_PATH
+    return CONFIG_PATH
 
 
 @dataclass
@@ -33,16 +37,18 @@ class CloudConfig:
 
 def _read_toml() -> dict:
     """Read existing config.toml or return empty dict."""
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, "rb") as f:
+    config_path = _get_config_path()
+    if config_path.exists():
+        with open(config_path, "rb") as f:
             return tomllib.load(f)
     return {}
 
 
 def _write_toml(data: dict) -> None:
     """Write config dict to config.toml, creating parent dirs if needed."""
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_PATH, "wb") as f:
+    config_path = _get_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "wb") as f:
         tomli_w.dump(data, f)
 
 
