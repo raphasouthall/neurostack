@@ -46,10 +46,24 @@ def _load_harvest_state() -> dict[str, float]:
 
 
 def _save_harvest_state(state: dict[str, float]) -> None:
-    """Persist harvest state."""
+    """Persist harvest state atomically (temp file + os.replace)."""
+    import os
+    import tempfile
+
     path = _harvest_state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state))
+    data = json.dumps(state)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------

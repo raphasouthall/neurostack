@@ -32,7 +32,7 @@ Before your first contribution can be merged, you must agree to our [Contributor
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/neurostack-project/neurostack/issues) with:
+Use [GitHub Issues](https://github.com/raphasouthall/neurostack/issues) with:
 - Steps to reproduce
 - Expected vs actual behavior
 - OS, Python version, install mode (lite/full)
