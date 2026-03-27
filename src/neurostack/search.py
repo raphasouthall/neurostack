@@ -154,8 +154,22 @@ def semantic_search(
     limit: int = 50,
     workspace: str | None = None,
 ) -> list[dict]:
-    """Pure semantic search over all chunks with embeddings."""
+    """Pure semantic search over all chunks with embeddings.
+
+    Uses sqlite-vec KNN index when available, falls back to brute-force numpy scan.
+    """
+    from .vecindex import has_vec_index, vec_knn_chunks
+
     workspace = _normalize_workspace(workspace)
+
+    # Fast path: sqlite-vec KNN index
+    if has_vec_index(conn):
+        try:
+            return vec_knn_chunks(conn, query_embedding, k=limit, workspace=workspace)
+        except Exception as e:
+            log.warning("sqlite-vec KNN failed, falling back to brute-force: %s", e)
+
+    # Fallback: brute-force numpy scan
     if workspace:
         rows = conn.execute(
             """
@@ -949,8 +963,22 @@ def triple_semantic_search(
     limit: int = 30,
     workspace: str | None = None,
 ) -> list[dict]:
-    """Pure semantic search over triples with embeddings."""
+    """Pure semantic search over triples with embeddings.
+
+    Uses sqlite-vec KNN index when available, falls back to brute-force numpy scan.
+    """
+    from .vecindex import has_vec_index, vec_knn_triples
+
     workspace = _normalize_workspace(workspace)
+
+    # Fast path: sqlite-vec KNN index
+    if has_vec_index(conn):
+        try:
+            return vec_knn_triples(conn, query_embedding, k=limit, workspace=workspace)
+        except Exception as e:
+            log.warning("sqlite-vec triple KNN failed, falling back to brute-force: %s", e)
+
+    # Fallback: brute-force numpy scan
     if workspace:
         rows = conn.execute(
             """SELECT triple_id, note_path, subject, predicate, object,

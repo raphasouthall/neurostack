@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Timer
+from threading import Lock, Timer
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -21,6 +21,13 @@ from .graph import build_graph, compute_pagerank
 from .schema import DB_PATH, get_db
 from .summarizer import summarize_note
 from .triples import extract_triples, triple_to_text
+from .vecindex import (
+    delete_chunk_vecs,
+    delete_triple_vecs,
+    has_vec_index,
+    upsert_chunk_vec,
+    upsert_triple_vec,
+)
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -50,6 +57,7 @@ class DebouncedHandler(FileSystemEventHandler):
         self.embed_url = embed_url
         self.summarize_url = summarize_url
         self._timers: dict[str, Timer] = {}
+        self._timers_lock = Lock()
         self._exclude_dirs = set(
             exclude_dirs or [],
         )
@@ -72,19 +80,21 @@ class DebouncedHandler(FileSystemEventHandler):
             return
 
         # Debounce
-        if path in self._timers:
-            self._timers[path].cancel()
+        with self._timers_lock:
+            if path in self._timers:
+                self._timers[path].cancel()
 
-        self._timers[path] = Timer(
-            DEBOUNCE_SECONDS,
-            self._process_file,
-            args=[path, event.event_type],
-        )
-        self._timers[path].start()
+            self._timers[path] = Timer(
+                DEBOUNCE_SECONDS,
+                self._process_file,
+                args=[path, event.event_type],
+            )
+            self._timers[path].start()
 
     def _process_file(self, path_str: str, event_type: str):
         path = Path(path_str)
-        del self._timers[path_str]
+        with self._timers_lock:
+            self._timers.pop(path_str, None)
 
         conn = get_db(DB_PATH)
 
@@ -184,7 +194,10 @@ def index_single_note(
         if existing_sum:
             summary = existing_sum["summary_text"]
 
-    # Delete old chunks
+    # Delete old chunks (and their vec index entries)
+    _has_vec = has_vec_index(conn)
+    if _has_vec:
+        delete_chunk_vecs(conn, parsed.path)
     conn.execute("DELETE FROM chunks WHERE note_path = ?", (parsed.path,))
 
     # Insert new chunks with contextual embeddings
@@ -218,6 +231,10 @@ def index_single_note(
                     emb_blob,
                 ),
             )
+            # Populate sqlite-vec index
+            if _has_vec and emb_blob:
+                chunk_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                upsert_chunk_vec(conn, chunk_id, emb_blob)
 
     # Extract triples
     if not skip_triples:
@@ -244,7 +261,10 @@ def _index_triples_for_note(
     summarize_url: str,
 ):
     """Extract and store triples for a single note."""
-    # Delete old triples for this note
+    # Delete old triples (and their vec index entries)
+    _has_vec = has_vec_index(conn)
+    if _has_vec:
+        delete_triple_vecs(conn, note_path)
     conn.execute("DELETE FROM triples WHERE note_path = ?", (note_path,))
 
     triples = extract_triples(title, content, base_url=summarize_url)
@@ -276,11 +296,196 @@ def _index_triples_for_note(
                 triple_texts[i], emb_blob, content_hash, now,
             ),
         )
+        # Populate sqlite-vec index
+        if _has_vec and emb_blob:
+            triple_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            upsert_triple_vec(conn, triple_id, emb_blob)
 
     log.info(f"  Extracted {len(triples)} triples from {note_path}")
 
     # Update co-occurrence for entities in this note
     upsert_cooccurrence_for_note(conn, note_path)
+
+
+def _prepare_note(
+    path: Path,
+    vault_root: Path,
+    embed_url: str,
+    summarize_url: str,
+    skip_summary: bool,
+    skip_triples: bool,
+    existing_hashes: dict[str, str],
+) -> dict | None:
+    """Prepare a note for indexing (network/CPU-bound, no DB writes).
+
+    Thread-safe: does parsing, summarization, embedding, and triple extraction
+    without touching the database. Returns a dict of results to be written by
+    the main thread, or None if the note hasn't changed.
+    """
+    parsed = parse_note(path, vault_root)
+
+    # Skip unchanged notes
+    if parsed.path in existing_hashes and existing_hashes[parsed.path] == parsed.content_hash:
+        return None
+
+    now = datetime.now(timezone.utc).isoformat()
+    frontmatter_json = json.dumps(parsed.frontmatter, default=str)
+    full_content = "\n\n".join(c.content for c in parsed.chunks)
+
+    # Generate summary (LLM call)
+    summary = None
+    if not skip_summary and full_content:
+        try:
+            summary = summarize_note(parsed.title, full_content, base_url=summarize_url)
+        except Exception as e:
+            log.warning(f"Summary failed for {parsed.path}: {e}")
+
+    # Generate chunk embeddings
+    chunk_embeddings = [None] * len(parsed.chunks)
+    if parsed.chunks and HAS_NUMPY:
+        texts = [
+            build_chunk_context(parsed.title, frontmatter_json, summary, c.content)
+            for c in parsed.chunks
+        ]
+        try:
+            chunk_embeddings = get_embeddings_batch(texts, base_url=embed_url)
+        except Exception as e:
+            log.warning(f"Embedding failed for {parsed.path}: {e}")
+            chunk_embeddings = [None] * len(texts)
+
+    # Extract triples (LLM call)
+    triples = []
+    triple_embeddings = []
+    if not skip_triples and full_content:
+        try:
+            triples = extract_triples(parsed.title, full_content, base_url=summarize_url)
+            if triples and HAS_NUMPY:
+                triple_texts = [triple_to_text(t) for t in triples]
+                try:
+                    triple_embeddings = get_embeddings_batch(triple_texts, base_url=embed_url)
+                except Exception as e:
+                    log.warning(f"Triple embedding failed for {parsed.path}: {e}")
+                    triple_embeddings = [None] * len(triples)
+            else:
+                triple_embeddings = [None] * len(triples)
+        except Exception as e:
+            log.warning(f"Triple extraction failed for {parsed.path}: {e}")
+
+    return {
+        "parsed": parsed,
+        "now": now,
+        "frontmatter_json": frontmatter_json,
+        "summary": summary,
+        "chunk_embeddings": chunk_embeddings,
+        "triples": triples,
+        "triple_embeddings": triple_embeddings,
+    }
+
+
+def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
+    """Write prepared note results to the database (main thread only)."""
+    parsed = result["parsed"]
+    now = result["now"]
+    frontmatter_json = result["frontmatter_json"]
+    summary = result["summary"]
+    chunk_embeddings = result["chunk_embeddings"]
+    triples = result["triples"]
+    triple_embeddings = result["triple_embeddings"]
+
+    # Update note
+    conn.execute(
+        """INSERT OR REPLACE INTO notes (path, title, frontmatter, content_hash, updated_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (parsed.path, parsed.title, frontmatter_json, parsed.content_hash, now),
+    )
+
+    # Upsert note_metadata
+    fm = parsed.frontmatter or {}
+    conn.execute(
+        "INSERT INTO note_metadata"
+        " (note_path, status, tags, note_type,"
+        "  actionable, compositional, date_added)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT(note_path) DO UPDATE SET"
+        "  tags = excluded.tags,"
+        "  note_type = excluded.note_type,"
+        "  actionable = excluded.actionable,"
+        "  compositional = excluded.compositional",
+        (
+            parsed.path,
+            fm.get("status", "active"),
+            json.dumps(fm.get("tags", [])),
+            fm.get("type", "permanent"),
+            1 if fm.get("actionable") else 0,
+            1 if fm.get("compositional") else 0,
+            fm.get("date", now[:10]),
+        ),
+    )
+
+    # Write summary
+    if summary:
+        conn.execute(
+            "INSERT OR REPLACE INTO summaries"
+            " (note_path, summary_text, content_hash, updated_at)"
+            " VALUES (?, ?, ?, ?)",
+            (parsed.path, summary, parsed.content_hash, now),
+        )
+
+    # Delete old chunks
+    if _has_vec:
+        delete_chunk_vecs(conn, parsed.path)
+    conn.execute("DELETE FROM chunks WHERE note_path = ?", (parsed.path,))
+
+    # Insert new chunks
+    for i, chunk in enumerate(parsed.chunks):
+        emb = chunk_embeddings[i] if i < len(chunk_embeddings) else None
+        emb_blob = embedding_to_blob(emb) if emb is not None else None
+        conn.execute(
+            "INSERT INTO chunks"
+            " (note_path, heading_path, content,"
+            " content_hash, position, embedding)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                parsed.path,
+                chunk.heading_path,
+                chunk.content,
+                hashlib.sha256(chunk.content.encode()).hexdigest()[:16],
+                chunk.position,
+                emb_blob,
+            ),
+        )
+        if _has_vec and emb_blob:
+            chunk_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            upsert_chunk_vec(conn, chunk_id, emb_blob)
+
+    # Delete old triples and insert new ones
+    if triples:
+        if _has_vec:
+            delete_triple_vecs(conn, parsed.path)
+        conn.execute("DELETE FROM triples WHERE note_path = ?", (parsed.path,))
+
+        triple_texts = [triple_to_text(t) for t in triples]
+        for i, t in enumerate(triples):
+            emb = triple_embeddings[i] if i < len(triple_embeddings) else None
+            emb_blob = embedding_to_blob(emb) if emb is not None else None
+            conn.execute(
+                "INSERT INTO triples"
+                " (note_path, subject, predicate, object,"
+                " triple_text, embedding,"
+                " content_hash, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    parsed.path, t["s"], t["p"], t["o"],
+                    triple_texts[i], emb_blob, parsed.content_hash, now,
+                ),
+            )
+            if _has_vec and emb_blob:
+                triple_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                upsert_triple_vec(conn, triple_id, emb_blob)
+
+        upsert_cooccurrence_for_note(conn, parsed.path)
+
+    conn.commit()
 
 
 def full_index(
@@ -290,8 +495,16 @@ def full_index(
     skip_summary: bool = False,
     skip_triples: bool = False,
     exclude_dirs: list[str] | None = None,
+    workers: int = 2,
 ):
-    """Full re-index of the entire vault."""
+    """Full re-index of the entire vault.
+
+    Uses ThreadPoolExecutor to parallelize LLM-bound work (summaries, triples,
+    embeddings) across multiple notes. SQLite writes remain single-threaded.
+    Set workers=1 for sequential processing (original behavior).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     embed_url = embed_url or _cfg.embed_url
     summarize_url = summarize_url or _cfg.llm_url
 
@@ -327,18 +540,53 @@ def full_index(
     ]
 
     total = len(md_files)
-    log.info(f"Indexing {total} notes...")
+    log.info(f"Indexing {total} notes ({workers} workers)...")
 
-    for i, path in enumerate(md_files):
-        try:
-            index_single_note(
-                path, vault_root, conn, embed_url, summarize_url,
-                skip_summary, skip_triples,
-            )
-            if (i + 1) % 50 == 0 or i + 1 == total:
-                log.info(f"  Progress: {i + 1}/{total}")
-        except Exception as e:
-            log.error(f"Error indexing {path}: {e}")
+    # Pre-fetch content hashes for skip-unchanged check
+    existing_hashes = {}
+    for row in conn.execute("SELECT path, content_hash FROM notes").fetchall():
+        existing_hashes[row["path"]] = row["content_hash"]
+
+    _has_vec = has_vec_index(conn)
+    done = 0
+
+    if workers <= 1:
+        # Sequential fallback
+        for path in md_files:
+            try:
+                result = _prepare_note(
+                    path, vault_root, embed_url, summarize_url,
+                    skip_summary, skip_triples, existing_hashes,
+                )
+                if result:
+                    _write_note_results(conn, result, _has_vec)
+            except Exception as e:
+                log.error(f"Error indexing {path}: {e}")
+            done += 1
+            if done % 50 == 0 or done == total:
+                log.info(f"  Progress: {done}/{total}")
+    else:
+        # Parallel: prepare in threads, write sequentially
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_path = {
+                executor.submit(
+                    _prepare_note,
+                    path, vault_root, embed_url, summarize_url,
+                    skip_summary, skip_triples, existing_hashes,
+                ): path
+                for path in md_files
+            }
+            for future in as_completed(future_to_path):
+                path = future_to_path[future]
+                try:
+                    result = future.result()
+                    if result:
+                        _write_note_results(conn, result, _has_vec)
+                except Exception as e:
+                    log.error(f"Error indexing {path}: {e}")
+                done += 1
+                if done % 50 == 0 or done == total:
+                    log.info(f"  Progress: {done}/{total}")
 
     # Build graph
     log.info("Building wiki-link graph...")
@@ -349,6 +597,14 @@ def full_index(
     log.info("Populating co-occurrence weights...")
     n_pairs = persist_cooccurrence(conn)
     log.info(f"Co-occurrence: {n_pairs} entity pairs.")
+
+    # Rebuild sqlite-vec index from all embeddings
+    if has_vec_index(conn):
+        from .vecindex import populate_vec_chunks, populate_vec_triples
+        log.info("Rebuilding vector search index...")
+        n_chunks = populate_vec_chunks(conn)
+        n_triples = populate_vec_triples(conn)
+        log.info(f"Vector index: {n_chunks} chunks, {n_triples} triples.")
 
     log.info("Index complete.")
 
@@ -591,6 +847,15 @@ def reembed_all_chunks(
 
         done = min(batch_start + batch_size, total)
         print(f"  {done}/{total} chunks re-embedded ({updated} updated, {errors} errors)")
+
+    # Rebuild sqlite-vec index after full re-embed
+    main_conn = get_db(DB_PATH)
+    if has_vec_index(main_conn):
+        from .vecindex import populate_vec_chunks
+        print("Rebuilding vector search index...")
+        n = populate_vec_chunks(main_conn)
+        print(f"Vector index: {n} chunks indexed.")
+    main_conn.close()
 
     print(f"Done. {updated}/{total} chunks re-embedded with context.")
 
