@@ -123,7 +123,7 @@ if [ ! -f "$CONFIG_DIR/config.toml" ]; then
 # See: https://github.com/raphasouthall/neurostack#configuration
 
 vault_root = "$HOME/brain"
-embed_url = "http://localhost:11435"
+embed_url = "http://localhost:11434"
 llm_url = "http://localhost:11434"
 llm_model = "phi3.5"  # phi3.5 is MIT licensed
 TOML
