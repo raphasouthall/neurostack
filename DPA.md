@@ -3,7 +3,7 @@
 **Effective date:** 25 March 2026
 **Last updated:** 25 March 2026
 
-This Data Processing Agreement ("DPA") forms part of the NeuroStack Terms of Service between Raphael Southall, operating NeuroStack ("Processor", "we", "us"), and the individual or entity using NeuroStack Cloud or Remote MCP features ("Controller", "you").
+This Data Processing Agreement ("DPA") forms part of the [NeuroStack Terms of Service](TERMS.md) between Raphael Southall, operating NeuroStack ("Processor", "we", "us"), and the individual or entity using NeuroStack Cloud or Remote MCP features ("Controller", "you").
 
 This DPA applies **only** to Cloud Mode and Remote MCP Mode. Local mode involves no data processing by NeuroStack and is outside the scope of this agreement.
 
@@ -259,7 +259,7 @@ We maintain records of processing activities as required by GDPR Article 30(2).
 
 ## 14. Liability
 
-Our liability under this DPA is subject to the limitations set out in the NeuroStack Terms of Service. Nothing in this DPA limits liability for breaches of data protection law that cannot be limited under applicable law.
+Our liability under this DPA is subject to the limitations set out in the [NeuroStack Terms of Service](TERMS.md). Nothing in this DPA limits liability for breaches of data protection law that cannot be limited under applicable law.
 
 ---
 
