@@ -29,11 +29,12 @@ def capture_thought(
     rel_path = f"inbox/{filename}"
 
     tags_list = tags if tags else []
+    tags_yaml = "[" + ", ".join(tags_list) + "]" if tags_list else "[]"
     frontmatter = (
         "---\n"
         f"date: {now.strftime('%Y-%m-%d')}\n"
         "type: capture\n"
-        f"tags: {tags_list}\n"
+        f"tags: {tags_yaml}\n"
         "---\n"
     )
 
