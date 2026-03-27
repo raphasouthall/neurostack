@@ -12,9 +12,25 @@ from .config import get_config
 
 log = logging.getLogger("neurostack")
 
-_cfg = get_config()
-DB_DIR = _cfg.db_dir
-DB_PATH = _cfg.db_path
+
+# DB_DIR / DB_PATH resolved lazily via __getattr__ so that test config
+# overrides take effect even after this module is imported.  External
+# callers using `from .schema import DB_PATH` trigger __getattr__ at
+# import time.  Internal functions use None defaults + _db_path() helper.
+def _db_dir():
+    return get_config().db_dir
+
+
+def _db_path():
+    return get_config().db_path
+
+
+def __getattr__(name: str):
+    if name == "DB_DIR":
+        return _db_dir()
+    if name == "DB_PATH":
+        return _db_path()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 SCHEMA_VERSION = 13
 
@@ -735,8 +751,11 @@ def _run_migrations(conn: sqlite3.Connection):
         log.info("Migration to v13 complete.")
 
 
-def get_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
+def get_db(db_path: Path | None = None) -> sqlite3.Connection:
     """Get a database connection, creating schema if needed."""
+    if db_path is None:
+        db_path = _db_path()
+    db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), timeout=60.0)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -770,6 +789,6 @@ def _init_vec_index(conn: sqlite3.Connection) -> None:
         from .vecindex import ensure_vec_tables, load_vec_extension
 
         if load_vec_extension(conn):
-            ensure_vec_tables(conn, embed_dim=_cfg.embed_dim)
+            ensure_vec_tables(conn, embed_dim=get_config().embed_dim)
     except Exception:
         pass  # sqlite-vec is optional; degrade gracefully

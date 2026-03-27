@@ -38,9 +38,12 @@ from .config import get_config
 
 log = logging.getLogger("neurostack.indexer")
 
-_cfg = get_config()
-VAULT_ROOT = _cfg.vault_root
 DEBOUNCE_SECONDS = 2.0
+
+
+def _vault_root():
+    """Resolve vault root lazily to support test config overrides."""
+    return get_config().vault_root
 
 
 class DebouncedHandler(FileSystemEventHandler):
@@ -122,8 +125,8 @@ def index_single_note(
     skip_triples: bool = False,
 ):
     """Index a single note: parse, embed, summarize, extract triples."""
-    embed_url = embed_url or _cfg.embed_url
-    summarize_url = summarize_url or _cfg.llm_url
+    embed_url = embed_url or get_config().embed_url
+    summarize_url = summarize_url or get_config().llm_url
     parsed = parse_note(path, vault_root)
 
     # Check if content changed
@@ -489,7 +492,7 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
 
 
 def full_index(
-    vault_root: Path = VAULT_ROOT,
+    vault_root: Path | None = None,
     embed_url: str = None,
     summarize_url: str = None,
     skip_summary: bool = False,
@@ -505,17 +508,18 @@ def full_index(
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    embed_url = embed_url or _cfg.embed_url
-    summarize_url = summarize_url or _cfg.llm_url
+    vault_root = vault_root or _vault_root()
+    embed_url = embed_url or get_config().embed_url
+    summarize_url = summarize_url or get_config().llm_url
 
     # Pre-flight: check Ollama before starting a long indexing run
     if not skip_summary or not skip_triples:
         from .preflight import check_ollama, preflight_report
         result = check_ollama(
             embed_url=embed_url,
-            embed_model=_cfg.embed_model,
+            embed_model=get_config().embed_model,
             llm_url=summarize_url,
-            llm_model=_cfg.llm_model,
+            llm_model=get_config().llm_model,
         )
         report = preflight_report(result)
         if report:
@@ -610,11 +614,12 @@ def full_index(
 
 
 def backfill_summaries(
-    vault_root: Path = VAULT_ROOT,
+    vault_root: Path | None = None,
     summarize_url: str = None,
 ):
     """Generate summaries for all notes that don't have one yet."""
-    summarize_url = summarize_url or _cfg.llm_url
+    vault_root = vault_root or _vault_root()
+    summarize_url = summarize_url or get_config().llm_url
     conn = get_db(DB_PATH)
     # Find notes without summaries
     rows = conn.execute(
@@ -670,11 +675,12 @@ def backfill_summaries(
 
 
 def backfill_stale_summaries(
-    vault_root: Path = VAULT_ROOT,
+    vault_root: Path | None = None,
     summarize_url: str = None,
 ):
     """Regenerate summaries where content has changed since last summary."""
-    summarize_url = summarize_url or _cfg.llm_url
+    vault_root = vault_root or _vault_root()
+    summarize_url = summarize_url or get_config().llm_url
     conn = get_db(DB_PATH)
     rows = conn.execute(
         """SELECT n.path, n.title, n.content_hash FROM notes n
@@ -727,13 +733,14 @@ def backfill_stale_summaries(
 
 
 def backfill_triples(
-    vault_root: Path = VAULT_ROOT,
+    vault_root: Path | None = None,
     embed_url: str = None,
     summarize_url: str = None,
 ):
     """Generate triples for all notes that don't have any yet."""
-    embed_url = embed_url or _cfg.embed_url
-    summarize_url = summarize_url or _cfg.llm_url
+    vault_root = vault_root or _vault_root()
+    embed_url = embed_url or get_config().embed_url
+    summarize_url = summarize_url or get_config().llm_url
     conn = get_db(DB_PATH)
     # Find notes without triples
     rows = conn.execute(
@@ -789,7 +796,7 @@ def reembed_all_chunks(
     embed_url: str = None,
     batch_size: int = 50,
 ):
-    embed_url = embed_url or _cfg.embed_url
+    embed_url = embed_url or get_config().embed_url
     """Re-embed all chunks using contextual embeddings (title + tags + summary + chunk).
 
     Uses existing summaries and note metadata from the DB — no LLM calls needed.
@@ -861,14 +868,15 @@ def reembed_all_chunks(
 
 
 def run_watcher(
-    vault_root: Path = VAULT_ROOT,
+    vault_root: Path | None = None,
     embed_url: str = None,
     summarize_url: str = None,
     exclude_dirs: list[str] | None = None,
 ):
     """Run the watchdog file watcher."""
-    embed_url = embed_url or _cfg.embed_url
-    summarize_url = summarize_url or _cfg.llm_url
+    vault_root = vault_root or _vault_root()
+    embed_url = embed_url or get_config().embed_url
+    summarize_url = summarize_url or get_config().llm_url
     log.info(f"Watching {vault_root} for changes...")
 
     handler = DebouncedHandler(

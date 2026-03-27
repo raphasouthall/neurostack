@@ -115,30 +115,15 @@ class VaultSyncEngine:
 
         return buf.getvalue()
 
-    def push(
-        self, *, progress_callback: Callable[[str], None] | None = None
+    def _push_changes(
+        self,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> dict:
-        """Upload changed vault files and wait for indexing.
+        """Shared push logic: scan, diff, upload, poll, save manifest.
 
-        Steps:
-        1. Check consent
-        2. Scan vault -> new manifest
-        3. Load saved manifest -> old manifest
-        4. Compute diff
-        5. If no changes, return early
-        6. Upload changed files via tar.gz POST
-        7. Poll status until complete or failed
-        8. Save new manifest on success
-        9. Return job result dict
+        Returns a result dict with status/upload_stats.  Used by both
+        ``push()`` and the push phase of ``sync()``.
         """
-        # 1: Consent check
-        if not self._consent_given:
-            raise ConsentError(
-                "Cloud consent not given. Run `neurostack cloud consent` "
-                "or `neurostack init --cloud` to grant consent."
-            )
-
-        # 2-4: Scan and diff
         ignore_path = self._vault_root / NEUROSTACKIGNORE_FILE
         new_manifest = Manifest.scan_vault(
             self._vault_root,
@@ -171,10 +156,8 @@ class VaultSyncEngine:
             len(diff.removed),
         )
 
-        # 5-7: Upload via tar.gz and poll
         archive_data = self._build_tar_archive(upload_files, diff)
 
-        # Calculate upload stats
         total_raw_bytes = sum(
             (self._vault_root / rel_path).stat().st_size for rel_path in upload_files
         )
@@ -212,10 +195,8 @@ class VaultSyncEngine:
             if progress_callback:
                 progress_callback(f"Upload accepted, polling job {job_id}...")
 
-            # Poll for completion
             result = self._poll_job(client, job_id, progress_callback)
 
-        # 8: Save manifest on success
         new_manifest.save(self._manifest_path)
         logger.info("Manifest saved to %s", self._manifest_path)
 
@@ -227,6 +208,17 @@ class VaultSyncEngine:
         }
 
         return result
+
+    def push(
+        self, *, progress_callback: Callable[[str], None] | None = None
+    ) -> dict:
+        """Upload changed vault files and wait for indexing."""
+        if not self._consent_given:
+            raise ConsentError(
+                "Cloud consent not given. Run `neurostack cloud consent` "
+                "or `neurostack init --cloud` to grant consent."
+            )
+        return self._push_changes(progress_callback)
 
     def _poll_job(
         self,
@@ -396,108 +388,18 @@ class VaultSyncEngine:
 
         Steps:
         1. Check consent
-        2. Scan vault and compute diff (reuses push logic)
-        3. Upload changed files if any (reuses push upload + poll)
-        4. Save manifest on success
-        5. Fetch new memories from cloud since last sync
-        6. Merge memories into local SQLite (INSERT OR REPLACE, dedup by UUID)
-        7. Store last_sync_time from server response
-        8. Return combined result dict
+        2. Push changes (shared with push())
+        3. Fetch new memories from cloud since last sync
+        4. Merge memories into local SQLite
+        5. Return combined result dict
         """
-        # 1: Consent check
         if not self._consent_given:
             raise ConsentError(
                 "Cloud consent not given. Run `neurostack cloud consent` "
                 "or `neurostack init --cloud` to grant consent."
             )
 
-        # --- Push phase (reuse push logic inline) ---
-        from .manifest import Manifest  # noqa: F811
-
-        ignore_path = self._vault_root / NEUROSTACKIGNORE_FILE
-        new_manifest = Manifest.scan_vault(
-            self._vault_root,
-            ignore_file=ignore_path if ignore_path.exists() else None,
-        )
-        old_manifest = Manifest.load(self._manifest_path)
-        diff = Manifest.diff(old_manifest, new_manifest)
-
-        push_result: dict
-        if not diff.has_changes:
-            logger.info("No changes detected, skipping upload")
-            if progress_callback:
-                progress_callback("No changes detected")
-            push_result = {
-                "status": "no_changes",
-                "message": "Vault is up to date",
-                "upload_stats": {
-                    "files_uploaded": 0,
-                    "raw_bytes": 0,
-                    "compressed_bytes": 0,
-                    "compression_ratio": 0.0,
-                },
-            }
-        else:
-            upload_files = diff.upload_files
-            logger.info(
-                "Uploading %d files (%d added, %d changed, %d removed)",
-                len(upload_files),
-                len(diff.added),
-                len(diff.changed),
-                len(diff.removed),
-            )
-
-            archive_data = self._build_tar_archive(upload_files, diff)
-
-            # Calculate upload stats
-            total_raw_bytes = sum(
-                (self._vault_root / rel_path).stat().st_size for rel_path in upload_files
-            )
-            archive_bytes = len(archive_data)
-            compression_ratio = (
-            (1 - archive_bytes / total_raw_bytes) * 100 if total_raw_bytes > 0 else 0
-        )
-
-            if progress_callback:
-                progress_callback(
-                    f"Uploading {len(upload_files)} files "
-                    f"({archive_bytes / 1024:.1f} KB, "
-                    f"{compression_ratio:.0f}% compression)"
-                )
-
-            with httpx.Client(headers=self._headers(), timeout=300.0) as client:
-                headers = {
-                    "Content-Type": "application/gzip",
-                    "X-Upload-Format": "tar.gz",
-                }
-                resp = client.post(
-                    f"{self._api_url}/v1/vault/upload",
-                    content=archive_data,
-                    headers=headers,
-                )
-                resp.raise_for_status()
-                upload_data = resp.json()
-
-                job_id = upload_data["job_id"]
-                logger.info("Upload accepted, job_id=%s", job_id)
-
-                if progress_callback:
-                    progress_callback(f"Upload complete ({archive_bytes / 1024:.1f} KB sent)")
-
-                if progress_callback:
-                    progress_callback(f"Upload accepted, polling job {job_id}...")
-
-                push_result = self._poll_job(client, job_id, progress_callback)
-
-            new_manifest.save(self._manifest_path)
-            logger.info("Manifest saved to %s", self._manifest_path)
-
-            push_result["upload_stats"] = {
-                "files_uploaded": len(upload_files),
-                "raw_bytes": total_raw_bytes,
-                "compressed_bytes": archive_bytes,
-                "compression_ratio": round(compression_ratio, 1),
-            }
+        push_result = self._push_changes(progress_callback)
 
         # --- Memory fetch phase ---
         if progress_callback:
