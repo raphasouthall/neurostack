@@ -308,7 +308,7 @@ For questions about these Terms, the NeuroStack Cloud service, or to report abus
 
 - **Email:** [hello@neurostack.sh](mailto:hello@neurostack.sh)
 - **Website:** [https://neurostack.sh](https://neurostack.sh)
-- **GitHub:** [https://github.com/neurostackai/neurostack](https://github.com/neurostackai/neurostack)
+- **GitHub:** [https://github.com/raphasouthall/neurostack](https://github.com/raphasouthall/neurostack)
 
 **SolidPlus LTD**
 A company registered in England and Wales.
