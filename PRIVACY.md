@@ -194,4 +194,4 @@ We will update this policy as NeuroStack evolves. Material changes will be annou
 For privacy questions, data requests, or concerns:
 
 - **Email:** [hello@neurostack.sh](mailto:hello@neurostack.sh)
-- **GitHub:** [https://github.com/neurostackai/neurostack](https://github.com/neurostackai/neurostack)
+- **GitHub:** [https://github.com/raphasouthall/neurostack](https://github.com/raphasouthall/neurostack)
