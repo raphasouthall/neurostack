@@ -7,7 +7,7 @@
 
 NeuroStack is the memory layer that fights this. It indexes your Markdown vault into a knowledge graph, detects stale notes before your AI cites them, and tiers retrieval so simple queries cost ~15 tokens instead of ~300. It persists agent memories across sessions, tracks what you actually use, and surfaces what's gone stale. Your vault files are never modified.
 
-**Built for DevOps/SRE teams and infrastructure engineers** who maintain runbooks, incident reports, architecture docs, and operational playbooks -- the kind of knowledge that changes fast and hurts when it's wrong.
+**Built for anyone whose knowledge goes stale.** Researchers tracking evolving literature. Writers managing world-building bibles. Engineers maintaining runbooks. Students revising across courses. If your notes change faster than you can remember, NeuroStack keeps your AI honest.
 
 Works with Claude Code, Cursor, Windsurf, Codex, and Gemini CLI via MCP.
 
@@ -141,7 +141,7 @@ Retrieval is tiered. Most queries resolve at the cheapest tier:
 
 | Tier | Tokens | What your AI gets | Example |
 |------|--------|-------------------|---------|
-| **Triples** | ~15 | Structured facts: `Alpha API -> uses -> PostgreSQL 16` | Quick lookups, factual questions |
+| **Triples** | ~15 | Structured facts: `Chapter 3 -> introduces -> Elena's backstory` | Quick lookups, factual questions |
 | **Summaries** | ~75 | AI-generated note summary | "What is this project about?" |
 | **Full content** | ~300 | Actual Markdown content | Deep dives, editing context |
 | **Auto** | Varies | Starts at triples, escalates only if coverage is low | Default for most queries |
@@ -149,9 +149,9 @@ Retrieval is tiered. Most queries resolve at the cheapest tier:
 Full mode adds hybrid semantic + keyword search with neuroscience-grounded ranking: energy landscape convergence, lateral inhibition, and prediction error feedback. Workspace scoping restricts queries to a vault subdirectory.
 
 ```bash
-neurostack search "k8s pod eviction policy"
-neurostack tiered "incident response runbook" --top-k 3
-neurostack search -w "work/infra" "terraform state migration"
+neurostack search "spaced repetition vs interleaving"
+neurostack tiered "character motivation in act 2" --top-k 3
+neurostack search -w "work/project-x" "API migration plan"
 neurostack --json search "query" | jq      # machine-readable output
 ```
 
@@ -184,8 +184,8 @@ AI assistants can write typed memories back to NeuroStack: `observation`, `decis
 - Update in place or merge two memories with audit trail
 
 ```bash
-neurostack memories add "postgres 16 requires --wal-level=replica for logical replication" --type decision --tags "db,postgres"
-neurostack memories search "postgres replication"
+neurostack memories add "revised thesis to focus on complementary learning systems, not just consolidation" --type decision --tags "thesis,neuroscience"
+neurostack memories search "thesis direction"
 neurostack memories merge <target> <source>
 neurostack memories prune --expired
 ```
@@ -366,7 +366,7 @@ journal/*.md
 
 **Can I use it without MCP?** Yes. The CLI works standalone. Pipe output into any LLM.
 
-**Why DevOps/SRE?** Operational knowledge decays faster than most: runbooks go stale after infrastructure changes, incident postmortems reference services that have been renamed, and deployment procedures drift as pipelines evolve. NeuroStack's stale detection catches this before your AI recommends a rollback procedure that no longer works.
+**Who is this for?** Anyone whose notes go stale. Researchers whose cited papers get retracted or superseded. Writers whose character backstories contradict later chapters. Engineers whose runbooks reference deprecated APIs. Students whose revision notes cover a syllabus that changed. NeuroStack's stale detection catches this before your AI confidently cites something that's no longer true.
 
 **Is my vault private?** In local mode, nothing leaves your machine. In cloud mode, your Markdown files are uploaded for indexing via HTTPS, processed by Gemini, and the indexed DB is returned. Files are not stored after indexing completes.
 
