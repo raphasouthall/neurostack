@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""Watchdog-based file watcher with debounce for vault indexing."""
+"""Watchdog-based file watcher with debounce for vault indexing.
+
+Supports optional cloud sync via ``--cloud`` flag or ``cloud.auto_push``
+config toggle.  When enabled, vault changes are pushed to NeuroStack Cloud
+after an idle period (no file changes for ``CLOUD_IDLE_SECONDS``).  The push
+runs in a background thread so it never blocks local indexing.
+"""
 
 import hashlib
 import json
@@ -9,7 +15,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock, Timer
+from threading import Lock, Thread, Timer
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -39,11 +45,103 @@ from .config import get_config
 log = logging.getLogger("neurostack.indexer")
 
 DEBOUNCE_SECONDS = 2.0
+CLOUD_IDLE_SECONDS = 60.0  # Push to cloud after 60s of no file changes
+CLOUD_RETRY_DELAYS = (5, 15, 45)  # Exponential backoff for push failures
 
 
 def _vault_root():
     """Resolve vault root lazily to support test config overrides."""
     return get_config().vault_root
+
+
+class CloudPusher:
+    """Background cloud push with idle detection and retry.
+
+    Tracks file changes and triggers a cloud push after the vault has been
+    idle for ``CLOUD_IDLE_SECONDS``.  The push runs in a daemon thread so
+    it never blocks local indexing.  Retries with exponential backoff on
+    transient failures; the 15-min systemd timer acts as ultimate fallback.
+    """
+
+    def __init__(self, vault_root: Path) -> None:
+        self._vault_root = vault_root
+        self._idle_timer: Timer | None = None
+        self._lock = Lock()
+        self._push_in_progress = False
+
+    def notify_change(self) -> None:
+        """Called by DebouncedHandler on every file event.  Resets idle timer."""
+        with self._lock:
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+            self._idle_timer = Timer(CLOUD_IDLE_SECONDS, self._trigger_push)
+            self._idle_timer.daemon = True
+            self._idle_timer.start()
+
+    def _trigger_push(self) -> None:
+        """Fire a cloud push in a background thread."""
+        with self._lock:
+            if self._push_in_progress:
+                log.debug("Cloud push already in progress, skipping")
+                return
+            self._push_in_progress = True
+
+        thread = Thread(target=self._do_push, daemon=True)
+        thread.start()
+
+    def _do_push(self) -> None:
+        """Execute cloud push with retry.  Runs in a daemon thread."""
+        try:
+            from .cloud.config import load_cloud_config
+            from .cloud.sync import ConsentError, SyncError, VaultSyncEngine
+            from .config import get_config
+
+            cfg = get_config()
+            cloud_cfg = load_cloud_config()
+            if not cloud_cfg.cloud_api_url or not cloud_cfg.cloud_api_key:
+                log.debug("Cloud not configured, skipping push")
+                return
+
+            engine = VaultSyncEngine(
+                cloud_api_url=cloud_cfg.cloud_api_url,
+                cloud_api_key=cloud_cfg.cloud_api_key,
+                vault_root=self._vault_root,
+                db_dir=Path(cfg.db_path).parent if hasattr(cfg, "db_path") else self._vault_root,
+            )
+
+            for attempt, delay in enumerate(CLOUD_RETRY_DELAYS):
+                try:
+                    result = engine.push(
+                        progress_callback=lambda msg: log.info("Cloud: %s", msg),
+                    )
+                    status = result.get("status", "unknown")
+                    if status == "no_changes":
+                        log.debug("Cloud push: no changes")
+                    else:
+                        uploaded = result.get("upload_stats", {}).get("files_uploaded", 0)
+                        log.info("Cloud push complete: %d files synced", uploaded)
+                    return
+                except ConsentError:
+                    log.debug("Cloud consent not given, skipping push")
+                    return
+                except (SyncError, Exception) as exc:
+                    log.warning(
+                        "Cloud push attempt %d/%d failed: %s",
+                        attempt + 1, len(CLOUD_RETRY_DELAYS), exc,
+                    )
+                    if attempt < len(CLOUD_RETRY_DELAYS) - 1:
+                        time.sleep(delay)
+
+            log.error(
+                "Cloud push failed after %d attempts (timer will retry)",
+                len(CLOUD_RETRY_DELAYS),
+            )
+
+        except Exception as exc:
+            log.error("Cloud push error: %s", exc)
+        finally:
+            with self._lock:
+                self._push_in_progress = False
 
 
 class DebouncedHandler(FileSystemEventHandler):
@@ -55,6 +153,7 @@ class DebouncedHandler(FileSystemEventHandler):
         embed_url: str,
         summarize_url: str,
         exclude_dirs: list[str] | None = None,
+        cloud_pusher: CloudPusher | None = None,
     ):
         self.vault_root = vault_root
         self.embed_url = embed_url
@@ -64,6 +163,7 @@ class DebouncedHandler(FileSystemEventHandler):
         self._exclude_dirs = set(
             exclude_dirs or [],
         )
+        self._cloud_pusher = cloud_pusher
         # Reuse a single DB connection across events (WAL mode is safe for
         # concurrent reads).  The connection is created lazily on first use.
         self._conn = None
@@ -85,7 +185,11 @@ class DebouncedHandler(FileSystemEventHandler):
         if not self._should_process(path):
             return
 
-        # Debounce
+        # Notify cloud pusher (resets idle timer)
+        if self._cloud_pusher is not None:
+            self._cloud_pusher.notify_change()
+
+        # Debounce local indexing
         with self._timers_lock:
             if path in self._timers:
                 self._timers[path].cancel()
@@ -881,16 +985,41 @@ def run_watcher(
     embed_url: str = None,
     summarize_url: str = None,
     exclude_dirs: list[str] | None = None,
+    cloud: bool = False,
 ):
-    """Run the watchdog file watcher."""
+    """Run the watchdog file watcher.
+
+    Args:
+        cloud: Enable automatic cloud push after idle period.  Can also
+            be enabled via ``cloud.auto_push = true`` in config.toml.
+    """
     vault_root = vault_root or _vault_root()
     embed_url = embed_url or get_config().embed_url
     summarize_url = summarize_url or get_config().llm_url
-    log.info(f"Watching {vault_root} for changes...")
+
+    # Check config toggle if flag not passed
+    if not cloud:
+        try:
+            from .cloud.config import load_cloud_config
+            cfg = load_cloud_config()
+            cloud = bool(getattr(cfg, "auto_push", False))
+        except Exception:
+            pass
+
+    cloud_pusher = None
+    if cloud:
+        cloud_pusher = CloudPusher(vault_root)
+        log.info(
+            "Watching %s for changes (cloud sync enabled, %ds idle push)...",
+            vault_root, int(CLOUD_IDLE_SECONDS),
+        )
+    else:
+        log.info(f"Watching {vault_root} for changes...")
 
     handler = DebouncedHandler(
         vault_root, embed_url, summarize_url,
         exclude_dirs=exclude_dirs,
+        cloud_pusher=cloud_pusher,
     )
     observer = Observer()
     observer.schedule(handler, str(vault_root), recursive=True)
