@@ -702,6 +702,10 @@ def main():
 
     # watch
     p = sub.add_parser("watch", help="Watch vault for changes")
+    p.add_argument(
+        "--cloud", action="store_true", default=False,
+        help="Enable automatic cloud push after idle period (60s)",
+    )
     p.set_defaults(func=cmd_watch)
 
     args = parser.parse_args()
