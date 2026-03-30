@@ -13,7 +13,12 @@
     "entry_point": "src/neurostack/server.py",
     "env": {
       "NEUROSTACK_VAULT_ROOT": "${user_config.vault_root}",
-      "NEUROSTACK_API_KEY": "${user_config.api_key}"
+      "NEUROSTACK_API_KEY": "${user_config.api_key}",
+      "NEUROSTACK_MODE": "${user_config.mode}",
+      "NEUROSTACK_EMBED_URL": "${user_config.embed_url}",
+      "NEUROSTACK_EMBED_MODEL": "${user_config.embed_model}",
+      "NEUROSTACK_LLM_URL": "${user_config.llm_url}",
+      "NEUROSTACK_LLM_MODEL": "${user_config.llm_model}"
     }
   },
   "user_config": {
@@ -37,92 +42,141 @@
       "description": "NeuroStack Cloud API key (only needed for cloud mode). Get one at https://app.neurostack.sh",
       "required": false,
       "sensitive": true
+    },
+    "embed_url": {
+      "type": "string",
+      "title": "Embedding Server URL",
+      "description": "URL of the embedding server (Ollama-compatible). Only used in full/community modes.",
+      "required": false,
+      "default": "http://localhost:11434"
+    },
+    "embed_model": {
+      "type": "string",
+      "title": "Embedding Model",
+      "description": "Model name for generating embeddings. Must be served at embed_url.",
+      "required": false,
+      "default": "nomic-embed-text"
+    },
+    "llm_url": {
+      "type": "string",
+      "title": "LLM Server URL",
+      "description": "URL of the LLM server for summaries, triples extraction, and RAG. Only used in full/community modes.",
+      "required": false,
+      "default": "http://localhost:11434"
+    },
+    "llm_model": {
+      "type": "string",
+      "title": "LLM Model",
+      "description": "Model name for AI-generated summaries and RAG Q&A. Must be served at llm_url.",
+      "required": false,
+      "default": "phi3.5"
     }
   },
   "tools": [
     {
       "name": "vault_search",
-      "description": "Hybrid FTS5 + semantic search across the vault with tiered depth control"
+      "description": "Hybrid FTS5 + semantic search across the vault with tiered depth control",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_ask",
-      "description": "RAG Q&A with inline [[citations]] from vault notes"
+      "description": "RAG Q&A with inline [[citations]] from vault notes",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_summary",
-      "description": "Get pre-computed AI summary for a note"
+      "description": "Get pre-computed AI summary for a note",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_graph",
-      "description": "Wiki-link neighborhood with PageRank scores"
+      "description": "Wiki-link neighborhood with PageRank scores",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_related",
-      "description": "Find semantically similar notes by embedding distance"
+      "description": "Find semantically similar notes by embedding distance",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_triples",
-      "description": "Search knowledge graph triples (subject-predicate-object facts)"
+      "description": "Search knowledge graph triples (subject-predicate-object facts)",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_communities",
-      "description": "GraphRAG global queries across topic clusters"
+      "description": "GraphRAG global queries across topic clusters",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_stats",
-      "description": "Index health: note count, embedding coverage, graph stats"
+      "description": "Index health: note count, embedding coverage, graph stats",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_record_usage",
-      "description": "Track note hotness for excitability-weighted search"
+      "description": "Track note hotness for excitability-weighted search",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_prediction_errors",
-      "description": "Detect stale or poorly-indexed notes"
+      "description": "Detect stale or poorly-indexed notes",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_remember",
-      "description": "Save a memory with tags and entity type"
+      "description": "Save a memory with tags and entity type",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
     },
     {
       "name": "vault_forget",
-      "description": "Delete a memory by ID"
+      "description": "Delete a memory by ID",
+      "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_update_memory",
-      "description": "Update an existing memory's content, tags, or type"
+      "description": "Update an existing memory's content, tags, or type",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_merge",
-      "description": "Merge two memories (unions tags, audit trail)"
+      "description": "Merge two memories (unions tags, audit trail)",
+      "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false }
     },
     {
       "name": "vault_memories",
-      "description": "List or search saved memories"
+      "description": "List or search saved memories",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_capture",
-      "description": "Quick-capture a thought to the vault inbox"
+      "description": "Quick-capture a thought to the vault inbox",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
     },
     {
       "name": "vault_session_start",
-      "description": "Begin a memory session for grouping memories"
+      "description": "Begin a memory session for grouping memories",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
     },
     {
       "name": "vault_session_end",
-      "description": "End a session with optional summary and auto-harvest"
+      "description": "End a session with optional summary and auto-harvest",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_harvest",
-      "description": "Extract insights from recent AI coding sessions"
+      "description": "Extract insights from recent AI coding sessions",
+      "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false }
     },
     {
       "name": "session_brief",
-      "description": "Compact ~500 token session briefing"
+      "description": "Compact ~500 token session briefing",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
       "name": "vault_context",
-      "description": "Assemble task-scoped context for session recovery"
+      "description": "Assemble task-scoped context for session recovery",
+      "annotations": { "readOnlyHint": true, "openWorldHint": false }
     }
   ],
   "tools_generated": false,
