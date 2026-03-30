@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import logging
 
-from .registry import registry
+from .registry import ToolAnnotationHints as Hints, registry
+
+# Annotation constants
+_WRITE_ADDITIVE = Hints(read_only=False, destructive=False, idempotent=False, open_world=False)
+_WRITE_IDEMPOTENT = Hints(read_only=False, destructive=False, idempotent=True, open_world=False)
 
 log = logging.getLogger("neurostack.tools.session")
 
@@ -26,7 +30,7 @@ def _cache_clear() -> None:
     _tool_cache.clear()
 
 
-@registry.tool(tags=["session"])
+@registry.tool(tags=["session"], annotations=_WRITE_ADDITIVE)
 def vault_session_start(
     source_agent: str = None,
     workspace: str = None,
@@ -54,7 +58,7 @@ def vault_session_start(
     )
 
 
-@registry.tool(tags=["session"])
+@registry.tool(tags=["session"], annotations=_WRITE_IDEMPOTENT)
 def vault_session_end(
     session_id: int,
     summarize: bool = True,
@@ -99,7 +103,7 @@ def vault_session_end(
     return result
 
 
-@registry.tool(tags=["session", "memory"])
+@registry.tool(tags=["session", "memory"], annotations=_WRITE_ADDITIVE)
 def vault_harvest(sessions: int = 1, dry_run: bool = False, provider: str | None = None) -> dict:
     """Extract insights from recent AI coding sessions and save as memories.
 

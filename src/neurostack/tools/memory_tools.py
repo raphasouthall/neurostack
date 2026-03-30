@@ -4,7 +4,13 @@
 
 from __future__ import annotations
 
-from .registry import registry
+from .registry import ToolAnnotationHints as Hints, registry
+
+# Annotation constants
+_READ_ONLY = Hints(read_only=True, open_world=False)
+_WRITE_ADDITIVE = Hints(read_only=False, destructive=False, idempotent=False, open_world=False)
+_WRITE_IDEMPOTENT = Hints(read_only=False, destructive=False, idempotent=True, open_world=False)
+_WRITE_DESTRUCTIVE = Hints(read_only=False, destructive=True, idempotent=True, open_world=False)
 
 
 def _embed_url():
@@ -12,7 +18,7 @@ def _embed_url():
     return get_config().embed_url
 
 
-@registry.tool(tags=["memory", "write"])
+@registry.tool(tags=["memory", "write"], annotations=_WRITE_ADDITIVE)
 def vault_remember(
     content: str,
     tags: list[str] = None,
@@ -68,7 +74,7 @@ def vault_remember(
     return result
 
 
-@registry.tool(tags=["memory", "write"])
+@registry.tool(tags=["memory", "write"], annotations=_WRITE_DESTRUCTIVE)
 def vault_forget(memory_id: int) -> dict:
     """Delete a specific memory by ID.
 
@@ -83,7 +89,7 @@ def vault_forget(memory_id: int) -> dict:
     return {"deleted": deleted, "memory_id": memory_id}
 
 
-@registry.tool(tags=["memory", "write"])
+@registry.tool(tags=["memory", "write"], annotations=_WRITE_IDEMPOTENT)
 def vault_update_memory(
     memory_id: int,
     content: str = None,
@@ -154,7 +160,7 @@ def vault_update_memory(
     }
 
 
-@registry.tool(tags=["memory", "write"])
+@registry.tool(tags=["memory", "write"], annotations=Hints(read_only=False, destructive=True, idempotent=False, open_world=False))
 def vault_merge(
     target_id: int,
     source_id: int,
@@ -196,7 +202,7 @@ def vault_merge(
     }
 
 
-@registry.tool(tags=["memory", "read"])
+@registry.tool(tags=["memory", "read"], annotations=_READ_ONLY)
 def vault_memories(
     query: str = None,
     entity_type: str = None,
@@ -246,7 +252,7 @@ def vault_memories(
     return {"memories": output}
 
 
-@registry.tool(tags=["memory", "write"])
+@registry.tool(tags=["memory", "write"], annotations=_WRITE_ADDITIVE)
 def vault_capture(
     content: str,
     tags: list[str] = None,

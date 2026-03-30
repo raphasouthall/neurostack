@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import logging
 
-from .registry import registry
+from .registry import ToolAnnotationHints as Hints, registry
+
+# Annotation constants
+_READ_ONLY = Hints(read_only=True, open_world=False)
+_WRITE_ADDITIVE = Hints(read_only=False, destructive=False, idempotent=True, open_world=False)
 
 log = logging.getLogger("neurostack.tools.search")
 
@@ -44,7 +48,7 @@ def _search_memories_for_results(query: str, workspace: str = None, limit: int =
         return []
 
 
-@registry.tool(tags=["search", "retrieval"])
+@registry.tool(tags=["search", "retrieval"], annotations=_READ_ONLY)
 def vault_search(
     query: str,
     top_k: int = 5,
@@ -120,7 +124,7 @@ def vault_search(
     return result
 
 
-@registry.tool(tags=["search", "retrieval"])
+@registry.tool(tags=["search", "retrieval"], annotations=_READ_ONLY)
 def vault_ask(
     question: str,
     top_k: int = 8,
@@ -148,7 +152,7 @@ def vault_ask(
     )
 
 
-@registry.tool(tags=["search", "retrieval"])
+@registry.tool(tags=["search", "retrieval"], annotations=_READ_ONLY)
 def vault_summary(path_or_query: str) -> dict:
     """Get pre-computed summary for a note by path or search query.
 
@@ -195,7 +199,7 @@ def vault_summary(path_or_query: str) -> dict:
     }
 
 
-@registry.tool(tags=["search", "graph"])
+@registry.tool(tags=["search", "graph"], annotations=_READ_ONLY)
 def vault_graph(note: str, depth: int = 1, workspace: str = None) -> dict:
     """Get wiki-link neighborhood for a note with summaries and PageRank.
 
@@ -239,7 +243,7 @@ def vault_graph(note: str, depth: int = 1, workspace: str = None) -> dict:
     }
 
 
-@registry.tool(tags=["search", "semantic"])
+@registry.tool(tags=["search", "semantic"], annotations=_READ_ONLY)
 def vault_related(note: str, top_k: int = 10, workspace: str = None) -> dict:
     """Find semantically related notes using embedding similarity.
 
@@ -258,7 +262,7 @@ def vault_related(note: str, top_k: int = 10, workspace: str = None) -> dict:
     return {"related": find_related(note_path=note, top_k=top_k, workspace=workspace)}
 
 
-@registry.tool(tags=["search", "retrieval"])
+@registry.tool(tags=["search", "retrieval"], annotations=_READ_ONLY)
 def vault_triples(query: str, top_k: int = 10, mode: str = "hybrid", workspace: str = None) -> dict:
     """Search knowledge graph triples for structured facts.
 
@@ -295,7 +299,7 @@ def vault_triples(query: str, top_k: int = 10, mode: str = "hybrid", workspace: 
     }
 
 
-@registry.tool(tags=["search", "community"])
+@registry.tool(tags=["search", "community"], annotations=_READ_ONLY)
 def vault_communities(
     query: str,
     top_k: int = 6,
@@ -331,7 +335,7 @@ def vault_communities(
     )
 
 
-@registry.tool(tags=["search", "stats"])
+@registry.tool(tags=["search", "stats"], annotations=_READ_ONLY)
 def vault_stats() -> dict:
     """Get index health: note count, embedding coverage, graph stats, triple stats."""
     from ..cooccurrence import get_cooccurrence_stats
@@ -409,7 +413,7 @@ def vault_stats() -> dict:
     return result
 
 
-@registry.tool(tags=["search", "usage"])
+@registry.tool(tags=["search", "usage"], annotations=_WRITE_ADDITIVE)
 def vault_record_usage(note_paths: list[str]) -> dict:
     """Record that specific notes were retrieved and used in this session.
 
@@ -430,7 +434,7 @@ def vault_record_usage(note_paths: list[str]) -> dict:
     return {"recorded": len(note_paths), "paths": note_paths}
 
 
-@registry.tool(tags=["search", "quality"])
+@registry.tool(tags=["search", "quality"], annotations=_READ_ONLY)
 def vault_prediction_errors(
     error_type: str = None,
     limit: int = 20,

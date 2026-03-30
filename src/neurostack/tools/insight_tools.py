@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
-from .registry import registry
+from .registry import ToolAnnotationHints as Hints, registry
+
+_READ_ONLY = Hints(read_only=True, open_world=False)
 
 
 def _cfg():
@@ -13,7 +15,7 @@ def _cfg():
     return cfg.vault_root, cfg.embed_url
 
 
-@registry.tool(tags=["context", "retrieval"])
+@registry.tool(tags=["context", "retrieval"], annotations=_READ_ONLY)
 def session_brief(workspace: str = None) -> dict:
     """Get a compact ~500 token session brief.
 
@@ -37,7 +39,7 @@ def session_brief(workspace: str = None) -> dict:
         return {"brief": raw}
 
 
-@registry.tool(tags=["context", "retrieval"])
+@registry.tool(tags=["context", "retrieval"], annotations=_READ_ONLY)
 def vault_context(
     task: str,
     token_budget: int = 2000,
