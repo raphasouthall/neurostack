@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from .registry import ToolAnnotationHints as Hints, registry
+from .registry import ToolAnnotationHints as Hints
+from .registry import registry
 
 # Annotation constants
 _READ_ONLY = Hints(read_only=True, open_world=False)
@@ -160,7 +161,12 @@ def vault_update_memory(
     }
 
 
-@registry.tool(tags=["memory", "write"], annotations=Hints(read_only=False, destructive=True, idempotent=False, open_world=False))
+_WRITE_DESTRUCTIVE_NON_IDEMPOTENT = Hints(
+    read_only=False, destructive=True, idempotent=False, open_world=False,
+)
+
+
+@registry.tool(tags=["memory", "write"], annotations=_WRITE_DESTRUCTIVE_NON_IDEMPOTENT)
 def vault_merge(
     target_id: int,
     source_id: int,

@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from .registry import ToolAnnotationHints as Hints, registry
+from .registry import ToolAnnotationHints as Hints
+from .registry import registry
 
 _READ_ONLY = Hints(read_only=True, open_world=False)
 

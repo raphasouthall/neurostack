@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import logging
 
-from .registry import ToolAnnotationHints as Hints, registry
+from .registry import ToolAnnotationHints as Hints
+from .registry import registry
 
 # Annotation constants
 _WRITE_ADDITIVE = Hints(read_only=False, destructive=False, idempotent=False, open_world=False)
