@@ -45,6 +45,16 @@ class ToolParam:
 
 
 @dataclass(frozen=True)
+class ToolAnnotationHints:
+    """MCP annotation hints for a tool (mirrors mcp.types.ToolAnnotations)."""
+
+    read_only: bool | None = None
+    destructive: bool | None = None
+    idempotent: bool | None = None
+    open_world: bool | None = None
+
+
+@dataclass(frozen=True)
 class ToolDef:
     """Complete definition of a registered tool."""
 
@@ -53,6 +63,7 @@ class ToolDef:
     fn: Callable[..., dict]
     params: list[ToolParam]
     tags: tuple[str, ...] = ()
+    annotations: ToolAnnotationHints | None = None
 
     def call(self, **kwargs: Any) -> dict:
         """Invoke the tool function with the given kwargs."""
@@ -125,6 +136,7 @@ class ToolRegistry:
         *,
         name: str | None = None,
         tags: list[str] | None = None,
+        annotations: ToolAnnotationHints | None = None,
     ) -> Callable:
         """Decorator to register a tool function.
 
@@ -133,6 +145,7 @@ class ToolRegistry:
         Args:
             name: Override the tool name (defaults to function name)
             tags: Categorisation tags like ["search", "retrieval"]
+            annotations: MCP annotation hints (readOnly, destructive, etc.)
         """
         def decorator(fn: Callable) -> Callable:
             tool_name = name or fn.__name__
@@ -145,6 +158,7 @@ class ToolRegistry:
                 fn=fn,
                 params=_extract_params(fn),
                 tags=tuple(tags or []),
+                annotations=annotations,
             )
             self._tools[tool_name] = tool_def
             # Preserve the original function for direct imports

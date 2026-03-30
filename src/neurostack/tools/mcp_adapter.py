@@ -16,6 +16,7 @@ import inspect
 import logging
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from . import ensure_registered
 
@@ -64,7 +65,21 @@ def create_mcp_server(name: str = "neurostack", **fastmcp_kwargs) -> FastMCP:
 
         wrapper.__signature__ = inspect.signature(tool_def.fn)
         wrapper.__doc__ = tool_def.fn.__doc__
-        mcp.tool()(wrapper)
+
+        # Build MCP ToolAnnotations from registry hints
+        mcp_annotations = None
+        if tool_def.annotations:
+            hints = tool_def.annotations
+            # In cloud mode, all tools contact an external service
+            open_world = True if cfg.is_cloud else hints.open_world
+            mcp_annotations = ToolAnnotations(
+                readOnlyHint=hints.read_only,
+                destructiveHint=hints.destructive,
+                idempotentHint=hints.idempotent,
+                openWorldHint=open_world,
+            )
+
+        mcp.tool(annotations=mcp_annotations)(wrapper)
 
     log.debug("Registered %d tools on MCP server %r", len(registry), name)
     return mcp
