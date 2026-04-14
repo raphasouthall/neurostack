@@ -5,6 +5,7 @@ import struct
 from neurostack.config import Config
 from neurostack.search import (
     PREDICTION_ERROR_SIM_THRESHOLD,
+    _record_note_usage,
     fts_search,
     hotness_score,
     hybrid_search,
@@ -154,6 +155,51 @@ class TestAutoRecordUsage:
             ("test.md",),
         ).fetchone()[0]
         assert count == 3
+
+    def test_record_note_usage_helper(self, in_memory_db):
+        """Shared helper inserts one row per unique path and ignores duplicates."""
+        conn = in_memory_db
+        _record_note_usage(conn, ["a.md", "b.md", "a.md", "a.md"])
+        rows = conn.execute(
+            "SELECT note_path FROM note_usage ORDER BY note_path"
+        ).fetchall()
+        assert [r["note_path"] for r in rows] == ["a.md", "b.md"]
+
+    def test_record_note_usage_empty(self, in_memory_db):
+        """Helper is a no-op on empty input and does not raise."""
+        conn = in_memory_db
+        _record_note_usage(conn, [])
+        count = conn.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0]
+        assert count == 0
+
+    def test_record_note_usage_non_blocking(self, in_memory_db):
+        """A broken connection must not raise — retrieval must never be disrupted."""
+        conn = in_memory_db
+        conn.close()
+        _record_note_usage(conn, ["a.md"])  # should not raise
+
+    def test_get_neighborhood_records_usage(self, populated_db):
+        """get_neighborhood must record usage for center + neighbors."""
+        from neurostack.graph import get_neighborhood
+
+        conn = populated_db
+        conn.execute(
+            "INSERT INTO graph_edges (source_path, target_path) VALUES (?, ?)",
+            ("research/predictive-coding.md", "research/memory-consolidation.md"),
+        )
+        conn.commit()
+
+        before = conn.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0]
+        result = get_neighborhood("research/predictive-coding.md", depth=1, conn=conn)
+        after = conn.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0]
+
+        assert result is not None
+        assert after >= before + 1
+        recorded = {
+            r["note_path"]
+            for r in conn.execute("SELECT note_path FROM note_usage").fetchall()
+        }
+        assert result.center.path in recorded
 
 
 class TestExcitabilityDemotion:
