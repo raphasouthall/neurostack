@@ -70,6 +70,25 @@ def log_prediction_error(
         pass  # Never let error logging disrupt search
 
 
+def _record_note_usage(conn: sqlite3.Connection, note_paths: list[str]) -> None:
+    """Record note access for hotness scoring. Non-blocking.
+
+    Deduplicates paths so a single retrieval counts as one usage event per note,
+    regardless of how many chunks/triples/edges from that note were returned.
+    """
+    if not note_paths:
+        return
+    unique_paths = list(dict.fromkeys(note_paths))
+    try:
+        conn.executemany(
+            "INSERT INTO note_usage (note_path) VALUES (?)",
+            [(p,) for p in unique_paths],
+        )
+        conn.commit()
+    except Exception:
+        pass  # Never let usage recording disrupt retrieval
+
+
 @dataclass
 class SearchResult:
     note_path: str
@@ -816,15 +835,7 @@ def hybrid_search(
 
     # Auto-record usage for returned results (drives hotness scoring)
     returned_paths = [r["note_path"] for r in deduped[:top_k]]
-    if returned_paths:
-        try:
-            conn.executemany(
-                "INSERT INTO note_usage (note_path) VALUES (?)",
-                [(p,) for p in returned_paths],
-            )
-            conn.commit()
-        except Exception:
-            pass  # Never let usage recording disrupt search
+    _record_note_usage(conn, returned_paths)
 
     # Hebbian reinforcement: strengthen co-occurrence for entity pairs shared
     # between query-matched entities and result-note entities.
@@ -1036,7 +1047,9 @@ def search_triples(
 
     if mode == "keyword":
         fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
-        return _to_triple_results(conn, fts_results[:top_k])
+        results = _to_triple_results(conn, fts_results[:top_k])
+        _record_note_usage(conn, [r.note_path for r in results])
+        return results
 
     try:
         query_embedding = get_embedding(query, base_url=embed_url)
@@ -1047,13 +1060,17 @@ def search_triples(
             exc,
         )
         fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
-        return _to_triple_results(conn, fts_results[:top_k])
+        results = _to_triple_results(conn, fts_results[:top_k])
+        _record_note_usage(conn, [r.note_path for r in results])
+        return results
 
     if mode == "semantic":
         sem_results = triple_semantic_search(
             conn, query_embedding, limit=top_k, workspace=workspace,
         )
-        return _to_triple_results(conn, sem_results[:top_k])
+        results = _to_triple_results(conn, sem_results[:top_k])
+        _record_note_usage(conn, [r.note_path for r in results])
+        return results
 
     # Hybrid: FTS5 pre-filter + semantic rerank
     fts_results = triple_fts_search(
@@ -1064,7 +1081,9 @@ def search_triples(
         sem_results = triple_semantic_search(
             conn, query_embedding, limit=top_k, workspace=workspace,
         )
-        return _to_triple_results(conn, sem_results[:top_k])
+        results = _to_triple_results(conn, sem_results[:top_k])
+        _record_note_usage(conn, [r.note_path for r in results])
+        return results
 
     embeddings = []
     valid_results = []
@@ -1074,7 +1093,9 @@ def search_triples(
             valid_results.append(r)
 
     if not valid_results:
-        return _to_triple_results(conn, fts_results[:top_k])
+        results = _to_triple_results(conn, fts_results[:top_k])
+        _record_note_usage(conn, [r.note_path for r in results])
+        return results
 
     matrix = np.stack(embeddings)
     scores = cosine_similarity_batch(query_embedding, matrix)
@@ -1085,7 +1106,9 @@ def search_triples(
 
     valid_results.sort(key=lambda x: x["score"], reverse=True)
 
-    return _to_triple_results(conn, valid_results[:top_k])
+    results = _to_triple_results(conn, valid_results[:top_k])
+    _record_note_usage(conn, [r.note_path for r in results])
+    return results
 
 
 def _to_triple_results(conn: sqlite3.Connection, results: list[dict]) -> list[TripleResult]:
