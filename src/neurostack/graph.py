@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .schema import get_db
+from .search import _record_note_usage
 
 
 @dataclass
@@ -259,4 +260,5 @@ def get_neighborhood(
     # Sort by PageRank descending
     neighbors.sort(key=lambda x: x.pagerank, reverse=True)
 
+    _record_note_usage(conn, [center.path] + [n.path for n in neighbors])
     return GraphResult(center=center, neighbors=neighbors)
