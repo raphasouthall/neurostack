@@ -43,7 +43,7 @@ def find_related(
 
     from .embedder import blob_to_embedding, cosine_similarity
     from .schema import DB_PATH, get_db
-    from .search import _normalize_workspace
+    from .search import _normalize_workspace, _record_note_usage
 
     conn = get_db(DB_PATH)
     workspace = _normalize_workspace(workspace)
@@ -121,4 +121,5 @@ def find_related(
             "summary": summary,
         })
 
+    _record_note_usage(conn, [r["path"] for r in results])
     return results
