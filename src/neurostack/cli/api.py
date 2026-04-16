@@ -12,6 +12,13 @@ def cmd_serve(args):
     if transport == "http":
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+        if args.host not in ("127.0.0.1", "localhost", "::1"):
+            from mcp.server.transport_security import TransportSecuritySettings
+            mcp.settings.transport_security = TransportSecuritySettings(
+                enable_dns_rebinding_protection=False,
+                allowed_hosts=["*"],
+                allowed_origins=["*"],
+            )
         print(f"Starting NeuroStack MCP (Streamable HTTP) on {args.host}:{args.port}")
         mcp.run(transport="streamable-http")
     else:
