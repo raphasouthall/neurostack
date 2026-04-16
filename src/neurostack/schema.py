@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -161,6 +161,19 @@ CREATE TABLE IF NOT EXISTS community_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_community_members_entity ON community_members(entity);
+
+-- Per-level community partition statistics (size distribution + modularity).
+-- One row per level — used by vault_stats to surface partition quality and
+-- to detect an inverted hierarchy (issue #33).
+CREATE TABLE IF NOT EXISTS community_level_stats (
+    level INTEGER PRIMARY KEY,
+    n_communities INTEGER,
+    min_size INTEGER,
+    max_size INTEGER,
+    mean_size REAL,
+    modularity REAL,
+    updated_at TEXT
+);
 
 -- Folder-level aggregate summaries for semantic context= boosting
 CREATE TABLE IF NOT EXISTS folder_summaries (
@@ -522,6 +535,20 @@ CREATE INDEX IF NOT EXISTS idx_cooccurrence_b ON entity_cooccurrence(entity_b);
 MIGRATION_V13 = "-- vec index tables created by vecindex.ensure_vec_tables()"
 
 
+# Migration from v13 to v14: add community_level_stats table (issue #33)
+MIGRATION_V14 = """
+CREATE TABLE IF NOT EXISTS community_level_stats (
+    level INTEGER PRIMARY KEY,
+    n_communities INTEGER,
+    min_size INTEGER,
+    max_size INTEGER,
+    mean_size REAL,
+    modularity REAL,
+    updated_at TEXT
+);
+"""
+
+
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
@@ -749,6 +776,19 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.commit()
         # Vec tables are created by _init_vec_index() after migrations
         log.info("Migration to v13 complete.")
+
+    if current < 14:
+        log.info(
+            "Migrating schema v13 -> v14: "
+            "adding community_level_stats table..."
+        )
+        conn.executescript(MIGRATION_V14)
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (14)"
+        )
+        conn.commit()
+        log.info("Migration to v14 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:

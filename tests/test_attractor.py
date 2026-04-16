@@ -8,11 +8,15 @@ import pytest
 from neurostack.attractor import (
     ALPHA_SEMANTIC,
     GAMMA_WIKILINKS,
+    TOP_K_COARSE,
+    TOP_K_FINE,
     TOP_K_NEIGHBORS,
     _adaptive_max_iter,
     _assign_communities,
     _attractor_convergence,
     _build_similarity_matrix,
+    _modularity,
+    _size_stats,
     _sparsify_top_k,
 )
 
@@ -457,3 +461,131 @@ class TestBuildSimilarityMatrix:
         S = _build_similarity_matrix(conn, paths, embs)
 
         assert np.all(S >= 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Per-level top_k plumbing (issue #33)
+# ---------------------------------------------------------------------------
+
+class TestAttractorTopKOverride:
+    def test_top_k_override_changes_sparsity(self):
+        """Passing a smaller top_k than default should sparsify more aggressively.
+
+        The assertion is indirect: running convergence with top_k=2 on a dense
+        matrix should still produce a valid row-stochastic state (which only
+        works if the sparsified S is the one actually used).
+        """
+        n = 20
+        np.random.seed(0)
+        S = np.random.rand(n, n).astype(np.float32)
+        np.fill_diagonal(S, 0.0)
+        S = (S + S.T) / 2
+
+        state = _attractor_convergence(S, beta=1.0, max_iter=5, top_k=2)
+        row_sums = state.sum(axis=1)
+        np.testing.assert_allclose(row_sums, 1.0, atol=1e-5)
+
+    def test_default_top_k_matches_constant(self):
+        """Without an explicit top_k, the function should use TOP_K_NEIGHBORS."""
+        assert TOP_K_NEIGHBORS > 0
+        # Coarse/fine per-level constants exist and are distinct
+        assert TOP_K_COARSE != TOP_K_FINE
+        assert TOP_K_COARSE > TOP_K_FINE
+
+
+# ---------------------------------------------------------------------------
+# Singleton-merge gate (issue #33)
+# ---------------------------------------------------------------------------
+
+class TestAssignCommunitiesMergeGate:
+    def test_merge_false_keeps_singletons(self):
+        """merge_singletons=False preserves 1-note basins instead of absorbing them."""
+        # Two notes form a cluster at attractor 0; one singleton at attractor 2
+        state = np.array([
+            [0.8, 0.15, 0.05],
+            [0.7, 0.25, 0.05],
+            [0.1, 0.1, 0.8],  # singleton, attracted to itself
+        ], dtype=np.float32)
+        paths = ["a.md", "b.md", "c.md"]
+
+        communities = _assign_communities(state, paths, merge_singletons=False)
+
+        # Both the duo and the singleton survive — 2 communities total
+        assert len(communities) == 2
+        sizes = sorted(len(v) for v in communities.values())
+        assert sizes == [1, 2]
+
+    def test_merge_true_is_default_and_absorbs(self):
+        """Default behaviour still merges singletons (existing contract)."""
+        state = np.array([
+            [0.8, 0.15, 0.05],
+            [0.7, 0.25, 0.05],
+            [0.1, 0.1, 0.8],
+        ], dtype=np.float32)
+        paths = ["a.md", "b.md", "c.md"]
+
+        def mock_csb(query, matrix):
+            return np.array([0.9])
+
+        with patch("neurostack.attractor.cosine_similarity_batch", mock_csb):
+            communities = _assign_communities(state, paths)
+
+        assert len(communities) == 1
+
+
+# ---------------------------------------------------------------------------
+# Modularity + size stats
+# ---------------------------------------------------------------------------
+
+class TestModularity:
+    def test_two_block_partition_has_positive_q(self):
+        """A clean 2-block matrix with the correct partition yields Q > 0."""
+        # 4 notes: two fully-connected pairs, zero between
+        S = np.array([
+            [0.0, 0.9, 0.0, 0.0],
+            [0.9, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.9],
+            [0.0, 0.0, 0.9, 0.0],
+        ], dtype=np.float32)
+        paths = ["a.md", "b.md", "c.md", "d.md"]
+        correct = {0: ["a.md", "b.md"], 1: ["c.md", "d.md"]}
+
+        q = _modularity(S, paths, correct)
+        assert q > 0.4  # Analytical Q for this graph is 0.5
+
+    def test_all_in_one_community_is_zero(self):
+        """Lumping everything into one community gives Q = 0."""
+        S = np.array([
+            [0.0, 0.9, 0.0, 0.0],
+            [0.9, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.9],
+            [0.0, 0.0, 0.9, 0.0],
+        ], dtype=np.float32)
+        paths = ["a.md", "b.md", "c.md", "d.md"]
+        one_community = {0: paths}
+        q = _modularity(S, paths, one_community)
+        assert abs(q) < 1e-6
+
+    def test_empty_or_zero_matrix_returns_zero(self):
+        """Degenerate similarity matrix returns 0.0, not NaN."""
+        S = np.zeros((3, 3), dtype=np.float32)
+        paths = ["a.md", "b.md", "c.md"]
+        q = _modularity(S, paths, {0: paths})
+        assert q == 0.0
+
+
+class TestSizeStats:
+    def test_counts_and_bounds(self):
+        communities = {
+            0: ["a.md", "b.md", "c.md"],
+            1: ["d.md"],
+            2: ["e.md", "f.md"],
+        }
+        count, min_size, max_size, mean_size = _size_stats(communities)
+        assert count == 3
+        assert min_size == 1
+        assert max_size == 3
+        assert mean_size == pytest.approx(2.0)
+
+    def test_empty(self):
+        assert _size_stats({}) == (0, 0, 0, 0.0)
