@@ -60,6 +60,12 @@ CONVERGENCE_THRESHOLD = 1e-4  # stop when state change < threshold
 # convergence happens in fewer iterations.
 TOP_K_NEIGHBORS = 50
 
+# Per-level top-K. Coarse uses a wider neighbourhood so broad basins form;
+# fine uses a narrower one so high-β softmax doesn't funnel every note into
+# a handful of hub attractors (see issue #33 for the inversion this fixes).
+TOP_K_COARSE = 80
+TOP_K_FINE = 20
+
 # Minimum shared entities for a note-note edge (co-occurrence signal)
 MIN_SHARED = 2
 
@@ -217,6 +223,7 @@ def _attractor_convergence(
     beta: float,
     max_iter: int | None = None,
     threshold: float = CONVERGENCE_THRESHOLD,
+    top_k: int | None = None,
 ) -> np.ndarray:
     """Run Hopfield-style attractor dynamics on the similarity matrix.
 
@@ -226,16 +233,21 @@ def _attractor_convergence(
 
     state_i(t+1) = softmax(β · S_i · state(t))
 
-    For large matrices (n > TOP_K_NEIGHBORS), S is sparsified to keep only
-    the top-k neighbors per row, and iterations are scaled adaptively.
+    For large matrices (n > top_k), S is sparsified to keep only the top-k
+    neighbors per row, and iterations are scaled adaptively. Callers can
+    override top_k per level — coarse/fine partitions need different
+    neighbourhood widths to avoid hub monopolisation at high β (issue #33).
 
     Returns the converged state matrix (n × n).
     """
     n = S.shape[0]
 
+    if top_k is None:
+        top_k = TOP_K_NEIGHBORS
+
     # Sparsify for large matrices — keeps convergence fast
-    if n > TOP_K_NEIGHBORS:
-        S = _sparsify_top_k(S, TOP_K_NEIGHBORS)
+    if n > top_k:
+        S = _sparsify_top_k(S, top_k)
 
     if max_iter is None:
         max_iter = _adaptive_max_iter(n)
@@ -273,6 +285,7 @@ def _attractor_convergence(
 def _assign_communities(
     state: np.ndarray,
     note_paths: list[str],
+    merge_singletons: bool = True,
 ) -> dict[int, list[str]]:
     """Assign notes to communities based on converged attractor states.
 
@@ -280,8 +293,10 @@ def _assign_communities(
     We assign each note to the index of its dominant attractor (argmax of
     its state vector), then group by attractor.
 
-    Applies lateral inhibition: singleton communities (only 1 note) are
-    merged into the nearest non-singleton community.
+    When merge_singletons is True (default), lateral inhibition folds every
+    1-note basin into the nearest non-singleton community. At high β this
+    wipes out the narrow basins that a fine partition is supposed to
+    expose — pass False at β_FINE so singletons survive (issue #33).
     """
     n = len(note_paths)
 
@@ -292,6 +307,9 @@ def _assign_communities(
     raw_communities: dict[int, list[str]] = defaultdict(list)
     for i in range(n):
         raw_communities[int(assignments[i])].append(note_paths[i])
+
+    if not merge_singletons:
+        return {i: notes for i, notes in enumerate(raw_communities.values())}
 
     # Lateral inhibition: merge singletons into nearest non-singleton
     non_singletons = {
@@ -325,6 +343,53 @@ def _assign_communities(
     return {i: notes for i, notes in enumerate(communities.values())}
 
 
+def _modularity(
+    S: np.ndarray,
+    note_paths: list[str],
+    communities: dict[int, list[str]],
+) -> float:
+    """Weighted Newman modularity Q of a partition on similarity matrix S.
+
+        Q = (1 / 2m) Σ_ij [A_ij - k_i·k_j / 2m] · δ(c_i, c_j)
+
+    Uses the pre-sparsification S so the metric reflects the partition's
+    fit to the full similarity structure, not the truncated neighbourhood.
+    Returns 0.0 for degenerate matrices (zero total weight).
+    """
+    n = S.shape[0]
+    # Ensure symmetry: modularity is defined on an undirected weighted graph
+    A = (S + S.T) / 2.0
+    two_m = float(A.sum())
+    if two_m <= 0.0 or n == 0:
+        return 0.0
+
+    k = A.sum(axis=1)  # strength (weighted degree) per node
+    path_to_idx = {p: i for i, p in enumerate(note_paths)}
+
+    q = 0.0
+    for members in communities.values():
+        idx = np.array(
+            [path_to_idx[p] for p in members if p in path_to_idx],
+            dtype=np.int64,
+        )
+        if idx.size == 0:
+            continue
+        # Sum of A within the community block minus expected under null model
+        block = A[np.ix_(idx, idx)]
+        k_block = k[idx]
+        q += float(block.sum()) - float(k_block.sum() ** 2) / two_m
+
+    return q / two_m
+
+
+def _size_stats(communities: dict[int, list[str]]) -> tuple[int, int, int, float]:
+    """Return (count, min_size, max_size, mean_size) for a partition."""
+    sizes = [len(v) for v in communities.values()]
+    if not sizes:
+        return 0, 0, 0, 0.0
+    return len(sizes), min(sizes), max(sizes), sum(sizes) / len(sizes)
+
+
 def _store_communities(
     conn: sqlite3.Connection,
     level: int,
@@ -347,6 +412,23 @@ def _store_communities(
             " (community_id, entity) VALUES (?, ?)",
             [(db_id, np_) for np_ in note_paths],
         )
+
+
+def _store_level_stats(
+    conn: sqlite3.Connection,
+    level: int,
+    communities: dict[int, list[str]],
+    modularity: float,
+) -> None:
+    """Persist per-level aggregate stats (size distribution + modularity)."""
+    count, min_size, max_size, mean_size = _size_stats(communities)
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT OR REPLACE INTO community_level_stats"
+        " (level, n_communities, min_size, max_size, mean_size,"
+        "  modularity, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (level, count, min_size, max_size, mean_size, modularity, now),
+    )
 
 
 def detect_communities(
@@ -374,6 +456,7 @@ def detect_communities(
     # Clear existing
     conn.execute("DELETE FROM community_members")
     conn.execute("DELETE FROM communities")
+    conn.execute("DELETE FROM community_level_stats")
     conn.commit()
 
     # Persist entity co-occurrence weights from triples
@@ -417,26 +500,48 @@ def detect_communities(
     # ── Coarse communities (low β → broad basins) ──
     log.info(
         f"Running attractor convergence level 0"
-        f" (coarse, β={BETA_COARSE})..."
+        f" (coarse, β={BETA_COARSE}, top_k={TOP_K_COARSE})..."
     )
-    state_coarse = _attractor_convergence(S, beta=BETA_COARSE)
+    state_coarse = _attractor_convergence(
+        S, beta=BETA_COARSE, top_k=TOP_K_COARSE,
+    )
     communities_coarse = _assign_communities(state_coarse, note_paths)
     _store_communities(conn, level=0, communities=communities_coarse)
+    q_coarse = _modularity(S, note_paths, communities_coarse)
+    _store_level_stats(conn, 0, communities_coarse, q_coarse)
     n_coarse = len(communities_coarse)
 
     # ── Fine communities (high β → narrow basins) ──
+    # Narrower top_k keeps softmax basins narrow; merge_singletons=False
+    # preserves the 1-note basins that are the whole point at β=2.0
+    # (issue #33).
     log.info(
         f"Running attractor convergence level 1"
-        f" (fine, β={BETA_FINE})..."
+        f" (fine, β={BETA_FINE}, top_k={TOP_K_FINE})..."
     )
-    state_fine = _attractor_convergence(S, beta=BETA_FINE)
-    communities_fine = _assign_communities(state_fine, note_paths)
+    state_fine = _attractor_convergence(
+        S, beta=BETA_FINE, top_k=TOP_K_FINE,
+    )
+    communities_fine = _assign_communities(
+        state_fine, note_paths, merge_singletons=False,
+    )
     _store_communities(conn, level=1, communities=communities_fine)
+    q_fine = _modularity(S, note_paths, communities_fine)
+    _store_level_stats(conn, 1, communities_fine, q_fine)
     n_fine = len(communities_fine)
+
+    if q_fine <= q_coarse:
+        log.warning(
+            "Community hierarchy sanity check failed:"
+            f" Q(fine)={q_fine:.4f} <= Q(coarse)={q_coarse:.4f}."
+            " The fine partition is not a tighter fit than coarse —"
+            " expect n_fine > n_coarse and Q(fine) > Q(coarse)."
+        )
 
     conn.commit()
     log.info(
         f"Community detection done:"
-        f" {n_coarse} coarse, {n_fine} fine communities."
+        f" {n_coarse} coarse (Q={q_coarse:.4f}),"
+        f" {n_fine} fine (Q={q_fine:.4f}) communities."
     )
     return n_coarse, n_fine
