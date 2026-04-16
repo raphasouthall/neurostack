@@ -22,6 +22,44 @@ def _cfg():
     return cfg.vault_root, cfg.embed_url
 
 
+def _community_level_stats(conn) -> list[dict]:
+    """Return per-level community partition stats (size distribution + modularity).
+
+    Reads community_level_stats populated by attractor.detect_communities.
+    Empty list if the table doesn't exist yet or no levels have been written.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT level, n_communities, min_size, max_size, mean_size,"
+            " modularity FROM community_level_stats ORDER BY level"
+        ).fetchall()
+    except Exception:
+        return []
+    def _label(level: int) -> str:
+        if level == 0:
+            return "coarse"
+        if level == 1:
+            return "fine"
+        return f"level{level}"
+
+    return [
+        {
+            "level": r["level"],
+            "label": _label(r["level"]),
+            "n_communities": r["n_communities"],
+            "min_size": r["min_size"],
+            "max_size": r["max_size"],
+            "mean_size": (
+                round(r["mean_size"], 2) if r["mean_size"] is not None else None
+            ),
+            "modularity": (
+                round(r["modularity"], 4) if r["modularity"] is not None else None
+            ),
+        }
+        for r in rows
+    ]
+
+
 def _search_memories_for_results(query: str, workspace: str = None, limit: int = 3) -> list[dict]:
     """Search memories and return compact results for inclusion in vault_search."""
     try:
@@ -400,6 +438,7 @@ def vault_stats() -> dict:
         "communities_summarized": conn.execute(
             "SELECT COUNT(*) as c FROM communities WHERE summary IS NOT NULL"
         ).fetchone()["c"],
+        "community_levels": _community_level_stats(conn),
         "excitability": {
             "active": dormancy["active_count"],
             "dormant": dormancy["dormant_count"],
