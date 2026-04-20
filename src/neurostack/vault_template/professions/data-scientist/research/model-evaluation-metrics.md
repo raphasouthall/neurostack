@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [evaluation, metrics, methodology]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Model Evaluation Metrics

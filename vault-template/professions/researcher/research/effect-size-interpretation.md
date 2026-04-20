@@ -3,8 +3,6 @@ date: 2026-01-20
 tags: [statistics, methodology, meta-analysis]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Effect Size Interpretation

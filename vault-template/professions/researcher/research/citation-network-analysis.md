@@ -3,8 +3,6 @@ date: 2026-01-20
 tags: [methodology, bibliometrics, network-analysis]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Citation Network Analysis

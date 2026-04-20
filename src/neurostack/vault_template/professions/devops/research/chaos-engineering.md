@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [chaos-engineering, resilience, testing, sre]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Chaos Engineering
