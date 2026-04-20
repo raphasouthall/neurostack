@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [study-technique, note-taking, lectures]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Cornell Note Method

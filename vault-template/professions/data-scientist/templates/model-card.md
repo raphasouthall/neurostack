@@ -3,8 +3,6 @@ date: {{date}}
 tags: [model]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # {{model}}

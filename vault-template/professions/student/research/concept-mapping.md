@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [study-technique, visual-learning, knowledge-structure]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Concept Mapping

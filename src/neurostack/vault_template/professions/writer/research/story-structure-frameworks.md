@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [craft, structure, plotting]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Story Structure Frameworks

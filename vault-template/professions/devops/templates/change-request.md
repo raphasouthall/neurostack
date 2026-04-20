@@ -3,8 +3,6 @@ date: {{date}}
 tags: [change-management]
 type: project
 status: active
-actionable: true
-compositional: false
 ---
 
 # {{title}}
