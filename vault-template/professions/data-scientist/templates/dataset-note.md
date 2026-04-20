@@ -3,8 +3,6 @@ date: {{date}}
 tags: [dataset]
 type: permanent
 status: active
-actionable: false
-compositional: true
 ---
 
 # {{dataset}}

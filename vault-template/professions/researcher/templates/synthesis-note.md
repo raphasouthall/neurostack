@@ -3,8 +3,6 @@ date: {{date}}
 tags: []
 type: permanent
 status: active
-actionable: false
-compositional: true
 ---
 
 # {{title}}

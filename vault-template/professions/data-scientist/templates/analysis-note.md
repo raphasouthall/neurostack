@@ -3,8 +3,6 @@ date: {{date}}
 tags: [analysis]
 type: project
 status: active
-actionable: true
-compositional: true
 ---
 
 # {{title}}

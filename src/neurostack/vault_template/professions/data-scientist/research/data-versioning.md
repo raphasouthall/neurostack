@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [versioning, reproducibility, infrastructure]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Data Versioning

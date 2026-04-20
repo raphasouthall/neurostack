@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [gitops, ci-cd, deployment, automation]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # GitOps Workflow

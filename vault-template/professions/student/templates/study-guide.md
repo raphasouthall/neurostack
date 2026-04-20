@@ -3,8 +3,6 @@ date: {{date}}
 tags: [study-guide]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # {{title}}
