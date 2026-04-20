@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [eda, methodology, data-quality]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Exploratory Data Analysis

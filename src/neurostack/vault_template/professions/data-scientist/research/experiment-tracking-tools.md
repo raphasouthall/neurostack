@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [experiment-tracking, tooling, infrastructure]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Experiment Tracking Tools

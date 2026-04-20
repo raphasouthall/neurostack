@@ -3,8 +3,6 @@ date: 2026-01-20
 tags: [methodology, data-management, open-science]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Research Data Management

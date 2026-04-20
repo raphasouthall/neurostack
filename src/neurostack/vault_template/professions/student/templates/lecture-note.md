@@ -3,8 +3,6 @@ date: {{date}}
 tags: [lecture]
 type: literature
 status: active
-actionable: false
-compositional: false
 ---
 
 # {{title}}

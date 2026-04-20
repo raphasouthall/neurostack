@@ -3,8 +3,6 @@ date: 2026-01-20
 tags: [methodology, open-science, reproducibility]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Reproducibility Crisis

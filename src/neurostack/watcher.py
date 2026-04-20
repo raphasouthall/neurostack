@@ -267,21 +267,16 @@ def index_single_note(
     fm = parsed.frontmatter or {}
     conn.execute(
         "INSERT INTO note_metadata"
-        " (note_path, status, tags, note_type,"
-        "  actionable, compositional, date_added)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " (note_path, status, tags, note_type, date_added)"
+        " VALUES (?, ?, ?, ?, ?)"
         " ON CONFLICT(note_path) DO UPDATE SET"
         "  tags = excluded.tags,"
-        "  note_type = excluded.note_type,"
-        "  actionable = excluded.actionable,"
-        "  compositional = excluded.compositional",
+        "  note_type = excluded.note_type",
         (
             parsed.path,
             fm.get("status", "active"),
             json.dumps(fm.get("tags", [])),
             fm.get("type", "permanent"),
-            1 if fm.get("actionable") else 0,
-            1 if fm.get("compositional") else 0,
             fm.get("date", now[:10]),
         ),
     )
@@ -519,21 +514,16 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
     fm = parsed.frontmatter or {}
     conn.execute(
         "INSERT INTO note_metadata"
-        " (note_path, status, tags, note_type,"
-        "  actionable, compositional, date_added)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        " (note_path, status, tags, note_type, date_added)"
+        " VALUES (?, ?, ?, ?, ?)"
         " ON CONFLICT(note_path) DO UPDATE SET"
         "  tags = excluded.tags,"
-        "  note_type = excluded.note_type,"
-        "  actionable = excluded.actionable,"
-        "  compositional = excluded.compositional",
+        "  note_type = excluded.note_type",
         (
             parsed.path,
             fm.get("status", "active"),
             json.dumps(fm.get("tags", [])),
             fm.get("type", "permanent"),
-            1 if fm.get("actionable") else 0,
-            1 if fm.get("compositional") else 0,
             fm.get("date", now[:10]),
         ),
     )

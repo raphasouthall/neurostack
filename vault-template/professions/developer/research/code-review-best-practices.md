@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [code-review, collaboration, quality]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Code Review Best Practices
