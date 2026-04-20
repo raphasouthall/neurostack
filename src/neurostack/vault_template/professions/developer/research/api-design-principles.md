@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [api-design, architecture, interfaces]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # API Design Principles

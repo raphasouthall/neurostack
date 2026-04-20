@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [study-technique, time-management, focus]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Pomodoro Technique

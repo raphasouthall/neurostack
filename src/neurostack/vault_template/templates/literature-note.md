@@ -3,7 +3,6 @@ date: {{date}}
 tags: []
 type: literature
 status: active
-actionable: false
 ---
 
 # {{title}}

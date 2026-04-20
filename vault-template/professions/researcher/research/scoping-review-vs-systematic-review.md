@@ -3,8 +3,6 @@ date: 2026-01-20
 tags: [methodology, literature-review, research-design]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Scoping Review vs Systematic Review
