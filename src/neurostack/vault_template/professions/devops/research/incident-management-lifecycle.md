@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [incident-management, sre, process, on-call]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Incident Management Lifecycle

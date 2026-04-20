@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [technical-debt, architecture, planning]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Technical Debt Management

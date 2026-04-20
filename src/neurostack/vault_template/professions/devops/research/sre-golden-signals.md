@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [sre, monitoring, observability, mental-model]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # SRE Golden Signals

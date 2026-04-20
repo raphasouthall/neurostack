@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [craft, prose, voice]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Voice and Tone

@@ -3,8 +3,6 @@ date: {{date}}
 tags: [architecture, decision]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # {{title}}

@@ -3,8 +3,6 @@ date: 2026-01-08
 tags: [neuroscience, memory, sleep]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Memory Consolidation
