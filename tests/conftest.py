@@ -22,7 +22,6 @@ def tmp_vault(tmp_path):
         tags: [neuroscience, prediction]
         type: permanent
         status: active
-        actionable: true
         ---
 
         # Predictive Coding
@@ -49,7 +48,6 @@ def tmp_vault(tmp_path):
         tags: [neuroscience, memory]
         type: permanent
         status: active
-        actionable: false
         ---
 
         # Memory Consolidation

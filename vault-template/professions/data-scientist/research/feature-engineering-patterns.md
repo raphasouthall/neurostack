@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [feature-engineering, preprocessing, methodology]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Feature Engineering Patterns

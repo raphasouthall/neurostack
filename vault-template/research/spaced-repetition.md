@@ -3,8 +3,6 @@ date: 2026-01-10
 tags: [learning, memory, neuroscience]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Spaced Repetition

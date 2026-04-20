@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [craft, editing, revision]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Editing Checklist

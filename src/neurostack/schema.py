@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -273,8 +273,6 @@ CREATE TABLE IF NOT EXISTS note_metadata (
     status TEXT DEFAULT 'active',
     tags JSON,
     note_type TEXT DEFAULT 'permanent',
-    actionable INTEGER DEFAULT 0,
-    compositional INTEGER DEFAULT 0,
     date_added TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -549,6 +547,17 @@ CREATE TABLE IF NOT EXISTS community_level_stats (
 """
 
 
+# Retires note_metadata.actionable and .compositional columns. Both were
+# write-only (no retrieval path read them) and were unconditionally reset to
+# 0 on every re-index when the vault stopped carrying the fields in
+# frontmatter. Replaced by folder-based lifecycle: notes graduate to
+# archive/ when no active project links them.
+MIGRATION_V15 = """
+-- Columns dropped dynamically in _run_migrations so fresh installs
+-- (which never created them) don't error.
+"""
+
+
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
@@ -789,6 +798,30 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v14 complete.")
+
+    if current < 15:
+        log.info(
+            "Migrating schema v14 -> v15: "
+            "retiring note_metadata.actionable/compositional columns..."
+        )
+        cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(note_metadata)")
+        }
+        if "actionable" in cols:
+            conn.execute(
+                "ALTER TABLE note_metadata DROP COLUMN actionable"
+            )
+        if "compositional" in cols:
+            conn.execute(
+                "ALTER TABLE note_metadata DROP COLUMN compositional"
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (15)"
+        )
+        conn.commit()
+        log.info("Migration to v15 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:

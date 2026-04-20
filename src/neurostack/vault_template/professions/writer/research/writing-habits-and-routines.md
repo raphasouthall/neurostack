@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [craft, productivity, habits]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Writing Habits and Routines

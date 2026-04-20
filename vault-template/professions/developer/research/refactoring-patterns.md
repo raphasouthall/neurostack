@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [refactoring, code-quality, patterns]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Refactoring Patterns

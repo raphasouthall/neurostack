@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [fairness, ethics, evaluation, methodology]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Bias and Fairness

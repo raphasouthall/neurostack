@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [observability, monitoring, logging, tracing]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Observability: Three Pillars

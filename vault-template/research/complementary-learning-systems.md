@@ -3,8 +3,6 @@ date: 2026-01-05
 tags: [neuroscience, architecture, memory]
 type: permanent
 status: reference
-actionable: false
-compositional: true
 ---
 
 # Complementary Learning Systems

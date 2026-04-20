@@ -3,8 +3,6 @@ date: 2026-01-18
 tags: [learning, practice, strategy]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Interleaving

@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [study-technique, comprehension, explanation]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Feynman Technique
