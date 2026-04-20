@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [architecture, cloud-native, devops]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Twelve-Factor App

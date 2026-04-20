@@ -3,8 +3,6 @@ date: {{date}}
 tags: [worldbuilding]
 type: permanent
 status: active
-actionable: false
-compositional: true
 ---
 
 # {{title}}

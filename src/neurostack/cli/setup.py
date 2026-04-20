@@ -787,7 +787,7 @@ def cmd_onboard(args):
                 pending_metadata.append((
                     str(rel), "active",
                     json.dumps(tags_list),
-                    note_type, 0, 0, today,
+                    note_type, today,
                 ))
                 print(f"  {prefix}+ metadata → {rel}")
             frontmatter_added += 1
@@ -919,9 +919,8 @@ def cmd_onboard(args):
         if pending_metadata:
             conn.executemany(
                 "INSERT OR IGNORE INTO note_metadata"
-                " (note_path, status, tags, note_type,"
-                "  actionable, compositional, date_added)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " (note_path, status, tags, note_type, date_added)"
+                " VALUES (?, ?, ?, ?, ?)",
                 pending_metadata,
             )
             conn.commit()

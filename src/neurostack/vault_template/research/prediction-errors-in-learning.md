@@ -3,8 +3,6 @@ date: 2026-01-12
 tags: [neuroscience, prediction, learning]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Prediction Errors in Learning

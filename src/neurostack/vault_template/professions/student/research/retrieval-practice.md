@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [study-technique, memory, testing-effect]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Retrieval Practice

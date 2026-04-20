@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [testing, quality, architecture]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Testing Pyramid

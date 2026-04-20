@@ -52,9 +52,11 @@ NeuroStack's features are grounded in memory neuroscience. This appendix maps ea
 
 ## Compositional Notes (PFC Subspaces)
 
-**Feature**: Notes tagged `compositional: true` are reusable structural patterns that transfer across domains.
+**Feature**: A linking heuristic — when cross-referencing, preferentially connect to notes that encode reusable structural patterns that transfer across domains.
 
 **Science**: Prefrontal cortex encodes task structure as compositional subspaces — reusable neural patterns that can be combined to solve novel tasks without retraining. Compositional notes are the vault's equivalent of these transferable representations.
+
+**Note**: Earlier versions tracked this with a `compositional` column in `note_metadata`. The column was write-only (no retrieval path used it) and was retired in schema v15. The *concept* remains a valid linking bias; it's just no longer encoded as metadata.
 
 **References**:
 - Zheng, H. et al. (2025). Compositional coding of task structure in human PFC. *Nature Neuroscience* (preprint).

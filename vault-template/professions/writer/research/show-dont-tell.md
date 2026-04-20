@@ -3,8 +3,6 @@ date: 2025-01-15
 tags: [craft, prose, technique]
 type: permanent
 status: active
-actionable: true
-compositional: true
 ---
 
 # Show, Don't Tell

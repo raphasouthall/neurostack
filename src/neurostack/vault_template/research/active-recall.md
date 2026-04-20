@@ -3,8 +3,6 @@ date: 2026-01-15
 tags: [learning, memory, practice]
 type: permanent
 status: active
-actionable: true
-compositional: false
 ---
 
 # Active Recall
