@@ -258,26 +258,3 @@ def vault_memories(
     return {"memories": output}
 
 
-@registry.tool(tags=["memory", "write"], annotations=_WRITE_ADDITIVE)
-def vault_capture(
-    content: str,
-    tags: list[str] = None,
-) -> dict:
-    """Quick-capture a thought into the vault inbox.
-
-    Zero-friction way to dump a thought without creating a full note.
-    Creates a timestamped markdown file in the vault's inbox/ folder.
-
-    Args:
-        content: The thought or idea to capture
-        tags: Optional tags for the capture (e.g. ["idea", "research"])
-    """
-    from ..capture import capture_thought
-    from ..config import get_config
-
-    vault_root = get_config().vault_root
-    return capture_thought(
-        content=content,
-        vault_root=str(vault_root),
-        tags=tags,
-    )

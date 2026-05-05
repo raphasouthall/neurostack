@@ -206,19 +206,6 @@ def cmd_brief(args):
     print(brief)
 
 
-def cmd_capture(args):
-    from ..capture import capture_thought
-    result = capture_thought(
-        content=args.content,
-        vault_root=args.vault,
-        tags=args.tags.split(",") if args.tags else None,
-    )
-    if args.json:
-        print(json.dumps(result, indent=2))
-        return
-    print(f"  Captured to: {result['path']}")
-
-
 def cmd_triples(args):
     from ..search import search_triples
     results = search_triples(
