@@ -43,7 +43,6 @@ _TOOL_TO_METHOD = {
     "vault_update_memory": "vault_update_memory",
     "vault_merge": "vault_merge",
     "vault_memories": "vault_memories",
-    "vault_capture": "vault_capture",
     "vault_session_start": "vault_session_start",
     "vault_session_end": "vault_session_end",
     "vault_harvest": "vault_harvest",
