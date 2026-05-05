@@ -15,7 +15,6 @@ from .memories import cmd_memories
 from .search import (
     cmd_ask,
     cmd_brief,
-    cmd_capture,
     cmd_communities,
     cmd_context,
     cmd_cooccurrence,
@@ -590,12 +589,6 @@ def main():
         "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_brief)
-
-    # capture
-    p = sub.add_parser("capture", help="Quick-capture a thought into the vault inbox")
-    p.add_argument("content", help="The thought to capture")
-    p.add_argument("--tags", "-t", help="Comma-separated tags")
-    p.set_defaults(func=cmd_capture)
 
     # folder-summaries
     p = sub.add_parser(

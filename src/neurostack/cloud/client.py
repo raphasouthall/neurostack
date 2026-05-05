@@ -370,15 +370,6 @@ class CloudClient:
             workspace=workspace, limit=limit,
         )
 
-    def vault_capture(
-        self,
-        content: str,
-        *,
-        tags: list[str] | None = None,
-    ) -> dict:
-        """Quick-capture to vault inbox."""
-        return self._tool_call("vault_capture", content=content, tags=tags)
-
     # -----------------------------------------------------------------
     # Sessions
     # -----------------------------------------------------------------

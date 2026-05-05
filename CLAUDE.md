@@ -65,7 +65,6 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack memories merge TARGET SOURCE` | Merge two memories (unions tags, audit trail) |
 | `neurostack memories prune` | Clean up. `--expired` or `--older-than N` (days) |
 | `neurostack memories stats` | Memory statistics |
-| `neurostack capture "thought"` | Quick-capture to vault inbox. `--tags "a,b"` |
 
 ### Sessions
 | Command | Description |
@@ -115,7 +114,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack serve` | Start MCP server. `--transport stdio\|sse\|http`, `--host`, `--port` |
 | `neurostack api` | Start OpenAI-compatible HTTP API. `--host`, `--port` |
 
-## MCP Tools (21 tools)
+## MCP Tools (20 tools)
 
 ### Search & Retrieval
 - `vault_search(query, top_k, mode, depth, context, workspace)` - Hybrid search with tiered depth
@@ -140,7 +139,6 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 - `vault_forget(memory_id)` - Delete memory
 - `vault_memories(query, entity_type, workspace, limit)` - List/search memories
 - `vault_harvest(sessions, dry_run)` - Extract session insights
-- `vault_capture(content, tags)` - Quick-capture to inbox
 
 ### Sessions
 - `vault_session_start(source_agent, workspace)` - Begin memory session
