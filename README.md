@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/neurostack)](https://www.npmjs.com/package/neurostack)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
-[![MCP](https://img.shields.io/badge/MCP-21%20tools-green)](https://modelcontextprotocol.io)
+[![MCP](https://img.shields.io/badge/MCP-20%20tools-green)](https://modelcontextprotocol.io)
 
 **Not a note-taking app. A memory layer for the notes you already have.**
 
@@ -301,7 +301,7 @@ NeuroStack reads your vault. It writes nothing back to it. All index data lives 
 ---
 
 <details>
-<summary><strong>All 21 MCP tools</strong></summary>
+<summary><strong>All 20 MCP tools</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -323,7 +323,6 @@ NeuroStack reads your vault. It writes nothing back to it. All index data lives 
 | `vault_forget` | Delete a memory |
 | `vault_memories` | List or search memories |
 | `vault_harvest` | Extract insights from session transcripts |
-| `vault_capture` | Quick-capture to vault inbox |
 | `vault_session_start` | Begin a memory session |
 | `vault_session_end` | End session with optional summary and auto-harvest |
 
