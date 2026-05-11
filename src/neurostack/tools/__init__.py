@@ -19,6 +19,7 @@ def ensure_registered() -> ToolRegistry:
     global _registered
     if not _registered:
         from . import (
+            file_tools,  # noqa: F401
             insight_tools,  # noqa: F401
             memory_tools,  # noqa: F401
             search_tools,  # noqa: F401
