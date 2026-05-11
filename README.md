@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/neurostack)](https://www.npmjs.com/package/neurostack)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
-[![MCP](https://img.shields.io/badge/MCP-20%20tools-green)](https://modelcontextprotocol.io)
+[![MCP](https://img.shields.io/badge/MCP-24%20tools-green)](https://modelcontextprotocol.io)
 
 **Not a note-taking app. A memory layer for the notes you already have.**
 
@@ -12,7 +12,7 @@ Your AI assistant forgets everything when the conversation ends. You ask it abou
 
 And even when it does find your notes, it might find the wrong version. The thesis argument you reversed, the runbook endpoint you deprecated, the decision you made in April that you overturned in June. It cites these confidently. It has no idea they're wrong.
 
-NeuroStack reads your existing Markdown notes — from Obsidian, Logseq, Notion exports, or any folder of `.md` files — indexes them into a searchable knowledge graph, and connects that graph to your AI. It detects when notes have gone stale before your AI cites them. Your files are never modified.
+NeuroStack reads your existing Markdown notes — from Obsidian, Logseq, Notion exports, or any folder of `.md` files — indexes them into a searchable knowledge graph, and connects that graph to your AI. It detects when notes have gone stale before your AI cites them. Indexing never modifies your files; optional MCP write tools let an AI client author or edit notes through your git history when you want it to.
 
 ```bash
 npm install -g neurostack && neurostack init
@@ -22,15 +22,17 @@ Works with Claude, Cursor, Windsurf, Gemini CLI, VS Code, and Codex — anything
 
 ---
 
-## Your notes, untouched
+## Your notes, in your control
 
-Before anything else: NeuroStack is strictly read-only.
+By default, NeuroStack is a read-only indexing layer:
 
-- Your Markdown files are **never modified, moved, or deleted**
+- Indexing, search, summaries, and graph analysis **never modify your Markdown files**
 - All index data lives in NeuroStack's own separate database
 - To remove it completely: `neurostack uninstall` — your notes are untouched
 - In local mode: nothing ever leaves your machine
 - In cloud mode: you review and approve exactly what gets sent, and can exclude any folder with a `.neurostackignore` file
+
+If your vault is a git repo, four **opt-in MCP write tools** let an AI client author and edit notes for you: `vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`. Every write commits and pushes to your git remote with a descriptive message — so every change is visible in `git log`, revertable with `git revert`, and serialised under a per-vault lock. Writes hard-reject invalid frontmatter, paths outside the vault, and hidden directories (`.git`, `.obsidian`, …). Because the tools are exposed to any client talking to `neurostack serve`, gate them at the transport (auth, tunnel, LAN only) if you put the MCP endpoint on the public internet.
 
 ---
 
@@ -170,7 +172,7 @@ NeuroStack is not a replacement for Obsidian, Notion, or any note-taking app. It
 
 | Capability | Note apps | Basic RAG | NeuroStack |
 |-----------|-----------|-----------|------------|
-| Stores your notes | Yes | No | No (read-only layer) |
+| Stores your notes | Yes | No | No (read-only by default; opt-in git-backed write tools) |
 | AI can search your notes | Some | Yes | Yes |
 | Detects stale/outdated notes | No | No | Yes |
 | AI memories persist across sessions | No | No | Yes |
@@ -289,19 +291,21 @@ The index updates as you write. Stale detection runs continuously. You don't mai
 ## How your vault is stored
 
 ```
-~/your-vault/                           # your Markdown files (never modified)
+~/your-vault/                           # your Markdown files (not modified by indexing; AI clients can edit via opt-in MCP write tools)
 ~/.config/neurostack/config.toml        # configuration
 ~/.local/share/neurostack/
     neurostack.db                       # SQLite + FTS5 knowledge graph
     sessions.db                         # session transcript index
 ```
 
-NeuroStack reads your vault. It writes nothing back to it. All index data lives in its own SQLite databases.
+NeuroStack reads your vault. By default, it writes nothing back — all index data lives in its own SQLite databases. The opt-in MCP write tools (`vault_write_file` / `vault_delete_file`) are the one exception: they create or edit `.md` files in the vault and commit + push the change to your git remote on the spot.
 
 ---
 
 <details>
-<summary><strong>All 20 MCP tools</strong></summary>
+<summary><strong>All 24 MCP tools</strong></summary>
+
+**Search & retrieval**
 
 | Tool | Description |
 |------|-------------|
@@ -313,18 +317,42 @@ NeuroStack reads your vault. It writes nothing back to it. All index data lives 
 | `vault_triples` | Knowledge graph facts (subject-predicate-object) |
 | `vault_communities` | GraphRAG queries across topic clusters |
 | `vault_context` | Task-scoped context assembly within token budget |
+
+**Context & insights**
+
+| Tool | Description |
+|------|-------------|
 | `session_brief` | Compact session briefing |
 | `vault_stats` | Index health, excitability breakdown, memory stats |
 | `vault_record_usage` | Track note hotness |
 | `vault_prediction_errors` | Surface stale notes |
+
+**Memories**
+
+| Tool | Description |
+|------|-------------|
 | `vault_remember` | Store a memory (returns duplicate warnings + tag suggestions) |
 | `vault_update_memory` | Update a memory in place |
 | `vault_merge` | Merge two memories (unions tags, audit trail) |
 | `vault_forget` | Delete a memory |
 | `vault_memories` | List or search memories |
 | `vault_harvest` | Extract insights from session transcripts |
+
+**Sessions**
+
+| Tool | Description |
+|------|-------------|
 | `vault_session_start` | Begin a memory session |
 | `vault_session_end` | End session with optional summary and auto-harvest |
+
+**Vault files** (opt-in write surface — git-backed)
+
+| Tool | Description |
+|------|-------------|
+| `vault_read_file` | Read a `.md` file under your vault root |
+| `vault_list_files` | List `.md` files; hidden segments (`.git`, `.obsidian`, …) always excluded |
+| `vault_write_file` | Create or overwrite a `.md` file; commits + pushes `origin/main`. Hard-rejects writes without required frontmatter (`date`, `tags`, `type`). On push conflict: `git pull --rebase --autostash` + retry once, then rollback. |
+| `vault_delete_file` | Delete a `.md` file; commits + pushes `origin/main` |
 
 </details>
 
@@ -449,7 +477,7 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 ## FAQ
 
-**Does it modify my vault files?** No. All data lives in NeuroStack's own SQLite databases. Your Markdown files are strictly read-only.
+**Does it modify my vault files?** Not by default. Indexing, search, summaries, and every read tool leave your files untouched — all index data lives in NeuroStack's own SQLite databases. Four opt-in MCP write tools (`vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`) let an AI client author and edit notes; every write commits and pushes to your git remote, so changes are tracked and revertable. If your vault is not a git repo, the file is still written to disk but the commit step is skipped.
 
 **Do I need a GPU?** No. Cloud mode requires only Node.js. Local Lite mode has zero ML dependencies. Local Full mode runs on CPU but summarization is slow without a GPU.
 
