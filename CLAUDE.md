@@ -114,7 +114,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack serve` | Start MCP server. `--transport stdio\|sse\|http`, `--host`, `--port` |
 | `neurostack api` | Start OpenAI-compatible HTTP API. `--host`, `--port` |
 
-## MCP Tools (20 tools)
+## MCP Tools (24 tools)
 
 ### Search & Retrieval
 - `vault_search(query, top_k, mode, depth, context, workspace)` - Hybrid search with tiered depth
@@ -143,6 +143,12 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 ### Sessions
 - `vault_session_start(source_agent, workspace)` - Begin memory session
 - `vault_session_end(session_id, summarize, auto_harvest)` - End session
+
+### Vault Files (raw markdown CRUD over MCP)
+- `vault_read_file(path)` - Read a .md file under vault_root
+- `vault_list_files(directory, pattern, recursive)` - List .md files (hidden segments excluded)
+- `vault_write_file(path, content, commit_message)` - Create/overwrite a .md file; commits + pushes origin/main. Hard-rejects writes without required frontmatter (`date`, `tags`, `type`). On push conflict: `git pull --rebase --autostash` + retry once, then rollback.
+- `vault_delete_file(path, commit_message)` - Delete a .md file; commits + pushes origin/main
 
 ## Global Flags
 
