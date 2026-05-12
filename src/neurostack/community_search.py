@@ -154,8 +154,10 @@ def global_query(
     if not hits:
         hits = search_communities(query, top_k=fetch_k, level=None, conn=conn, embed_url=embed_url)
 
-    # Workspace filtering: keep only communities whose member entities appear
-    # in triples from notes within the workspace prefix.
+    # Workspace filtering: community_members.entity holds note paths, so we
+    # match the workspace prefix directly. The previous implementation joined
+    # member entities against triples.subject/object, which hold free-text
+    # entity names — different value spaces, so the filter dropped every hit.
     if workspace and hits:
         from .search import _normalize_workspace
         ws = _normalize_workspace(workspace)
@@ -163,23 +165,14 @@ def global_query(
             ws_prefix = ws + "/"
             filtered = []
             for hit in hits:
-                # Check if any community member entity exists in triples from workspace notes
-                members = conn.execute(
-                    "SELECT entity FROM community_members WHERE community_id = ?",
-                    (hit["community_id"],),
-                ).fetchall()
-                member_entities = {m["entity"] for m in members}
-                if member_entities:
-                    placeholders = ",".join("?" * len(member_entities))
-                    match = conn.execute(
-                        f"""SELECT 1 FROM triples
-                            WHERE (subject IN ({placeholders}) OR object IN ({placeholders}))
-                              AND note_path LIKE ?
-                            LIMIT 1""",
-                        list(member_entities) + list(member_entities) + [ws_prefix + "%"],
-                    ).fetchone()
-                    if match:
-                        filtered.append(hit)
+                match = conn.execute(
+                    """SELECT 1 FROM community_members
+                        WHERE community_id = ? AND entity LIKE ?
+                        LIMIT 1""",
+                    (hit["community_id"], ws_prefix + "%"),
+                ).fetchone()
+                if match:
+                    filtered.append(hit)
             hits = filtered[:top_k]
         else:
             hits = hits[:top_k]
