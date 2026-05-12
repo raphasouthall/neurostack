@@ -1,6 +1,7 @@
 """Tests for neurostack.community_search — cache key hashing and global_query."""
 
 import hashlib
+import sqlite3
 from unittest.mock import MagicMock, patch
 
 from neurostack.community_search import _MAP_CACHE, _map_cache_key, global_query
@@ -115,5 +116,124 @@ class TestGlobalQueryRawHits:
         )
 
         assert "No community summaries found" in result["answer"]
+        assert result["communities_used"] == 0
+        assert result["community_hits"] == []
+
+
+class TestGlobalQueryWorkspaceFilter:
+    """Regression: workspace filter must match community_members.entity (note paths)
+    directly, not via triples.subject/object (free-text entity names)."""
+
+    def _make_conn(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE community_members (community_id INTEGER, entity TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO community_members(community_id, entity) VALUES (?, ?)",
+            [
+                (1, "work/acme-cloud/projects/index.md"),
+                (1, "work/acme-cloud/notes/foo.md"),
+                (2, "home/recipes/lasagna.md"),
+                (3, "research/cognition/attention.md"),
+            ],
+        )
+        conn.commit()
+        return conn
+
+    def _hit(self, cid: int, title: str) -> dict:
+        return {
+            "community_id": cid,
+            "level": 0,
+            "title": title,
+            "summary": f"summary {cid}",
+            "entity_count": 2,
+            "member_notes": "",
+            "score": 0.9,
+        }
+
+    @patch("neurostack.community_search.get_config")
+    @patch("neurostack.community_search.search_communities")
+    def test_workspace_keeps_only_communities_with_members_under_prefix(
+        self, mock_search, mock_config
+    ):
+        cfg = MagicMock()
+        cfg.embed_url = "http://localhost:11434"
+        cfg.llm_url = "http://localhost:11434"
+        cfg.llm_model = "phi3.5"
+        mock_config.return_value = cfg
+        mock_search.return_value = [
+            self._hit(1, "Acme"),
+            self._hit(2, "Recipes"),
+            self._hit(3, "Cognition"),
+        ]
+
+        result = global_query(
+            "test",
+            use_map_reduce=False,
+            conn=self._make_conn(),
+            workspace="work/acme-cloud",
+        )
+
+        assert result["communities_used"] == 1
+        assert [h["community_id"] for h in result["community_hits"]] == [1]
+
+    @patch("neurostack.community_search.get_config")
+    @patch("neurostack.community_search.search_communities")
+    def test_workspace_normalised_slashes(self, mock_search, mock_config):
+        cfg = MagicMock()
+        cfg.embed_url = "http://localhost:11434"
+        cfg.llm_url = "http://localhost:11434"
+        cfg.llm_model = "phi3.5"
+        mock_config.return_value = cfg
+        mock_search.return_value = [self._hit(1, "Acme"), self._hit(2, "Recipes")]
+
+        result = global_query(
+            "test",
+            use_map_reduce=False,
+            conn=self._make_conn(),
+            workspace="/work/acme-cloud/",
+        )
+
+        assert [h["community_id"] for h in result["community_hits"]] == [1]
+
+    @patch("neurostack.community_search.get_config")
+    @patch("neurostack.community_search.search_communities")
+    def test_no_workspace_returns_all_hits(self, mock_search, mock_config):
+        cfg = MagicMock()
+        cfg.embed_url = "http://localhost:11434"
+        cfg.llm_url = "http://localhost:11434"
+        cfg.llm_model = "phi3.5"
+        mock_config.return_value = cfg
+        mock_search.return_value = [self._hit(1, "Acme"), self._hit(2, "Recipes")]
+
+        result = global_query(
+            "test",
+            use_map_reduce=False,
+            conn=self._make_conn(),
+        )
+
+        assert [h["community_id"] for h in result["community_hits"]] == [1, 2]
+
+    @patch("neurostack.community_search.get_config")
+    @patch("neurostack.community_search.search_communities")
+    def test_workspace_with_no_matches_returns_build_message(
+        self, mock_search, mock_config
+    ):
+        cfg = MagicMock()
+        cfg.embed_url = "http://localhost:11434"
+        cfg.llm_url = "http://localhost:11434"
+        cfg.llm_model = "phi3.5"
+        mock_config.return_value = cfg
+        mock_search.return_value = [self._hit(2, "Recipes")]
+
+        result = global_query(
+            "test",
+            use_map_reduce=False,
+            conn=self._make_conn(),
+            workspace="work/acme-cloud",
+        )
+
         assert result["communities_used"] == 0
         assert result["community_hits"] == []
