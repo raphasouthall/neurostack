@@ -442,6 +442,11 @@ def main():
         "--workers", "-w", type=int, default=2,
         help="Number of parallel workers for LLM calls (default: 2)",
     )
+    p.add_argument(
+        "--no-prune", action="store_true",
+        help="Keep notes whose files were deleted from disk "
+             "(default: prune orphaned notes from the index)",
+    )
     p.set_defaults(func=cmd_index)
 
     # search
