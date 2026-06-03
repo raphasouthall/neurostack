@@ -15,6 +15,7 @@ from neurostack.attractor import (
     _assign_communities,
     _attractor_convergence,
     _build_similarity_matrix,
+    _hierarchy_health_warning,
     _modularity,
     _size_stats,
     _sparsify_top_k,
@@ -656,3 +657,26 @@ class TestSemanticThreshold:
         emb = np.ones(8, dtype=np.float32)
         S = _build_similarity_matrix(conn, paths, np.stack([emb, emb]))
         assert S[0, 1] == pytest.approx(ALPHA_SEMANTIC, abs=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Hierarchy health check (issue #33)
+# ---------------------------------------------------------------------------
+
+class TestHierarchyHealthWarning:
+    def test_healthy_hierarchy_no_warning(self):
+        # Finer partition, both Q healthy. Q(fine) < Q(coarse) is EXPECTED at
+        # gamma=1 and must NOT warn (the old check fired on every good build).
+        assert _hierarchy_health_warning(7, 11, 0.339, 0.281) is None
+
+    def test_inverted_count_warns(self):
+        w = _hierarchy_health_warning(10, 6, 0.30, 0.25)
+        assert w is not None and "inverted" in w
+
+    def test_weak_structure_warns(self):
+        w = _hierarchy_health_warning(7, 11, 0.04, 0.03)
+        assert w is not None and "Weak" in w
+
+    def test_equal_counts_ok(self):
+        # n_fine == n_coarse is a valid (non-collapsed) refinement boundary.
+        assert _hierarchy_health_warning(7, 7, 0.30, 0.20) is None
