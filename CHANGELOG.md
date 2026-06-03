@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Folder-path signal in community detection.** Embeddings treat "infrastructure" as one topic whether a note lives under `work/` or `home/`, so distinct organisational areas bled into one cluster. `_build_similarity_matrix` now blends a fourth channel — notes sharing a top-level folder prefix get a uniform similarity bump (`PATH_SIGNAL_WEIGHT`, default 0.3; `PATH_PREFIX_DEPTH`, default 1). Measured on a ~490-note vault: folder purity rose 0.68 → 0.85 (coarse) / 0.76 → 0.93 (fine) with modularity held or slightly improved. Degrades gracefully — root-level files form no path edges and a flat single-folder vault yields an all-zero signal; set the weight to 0 to disable.
+
 ### Fixed
 
 - **Community hierarchy check no longer false-alarms on every healthy build.** The build asserted `Q(fine) > Q(coarse)` and logged "sanity check failed" whenever it didn't. But Newman modularity is resolution-dependent and maximised at a single scale, so a finer partition scores *lower* at the implicit γ=1 by construction — the assertion could never hold for a healthy hierarchy. Verified empirically: the fine partition only overtakes coarse at γ≈`BETA_FINE` (≈2.0). Replaced with `_hierarchy_health_warning()`, which checks what issue #33 is actually about — the fine level collapsing into *fewer* communities than coarse — plus a `MIN_HEALTHY_Q` floor for near-random partitions.
