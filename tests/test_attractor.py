@@ -8,6 +8,7 @@ import pytest
 from neurostack.attractor import (
     ALPHA_SEMANTIC,
     GAMMA_WIKILINKS,
+    PATH_SIGNAL_WEIGHT,
     TOP_K_COARSE,
     TOP_K_FINE,
     TOP_K_NEIGHBORS,
@@ -680,3 +681,54 @@ class TestHierarchyHealthWarning:
     def test_equal_counts_ok(self):
         # n_fine == n_coarse is a valid (non-collapsed) refinement boundary.
         assert _hierarchy_health_warning(7, 7, 0.30, 0.20) is None
+
+
+# ---------------------------------------------------------------------------
+# Folder-path signal
+# ---------------------------------------------------------------------------
+
+class TestPathSignal:
+    """Notes sharing a top-level folder get a uniform similarity bump."""
+
+    def test_same_folder_gets_bump_cross_folder_does_not(self, in_memory_db):
+        conn = in_memory_db
+        paths = ["work/a.md", "work/b.md", "home/c.md", "home/d.md"]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = np.eye(4, 16, dtype=np.float32)  # orthogonal -> semantic ~0
+
+        S = _build_similarity_matrix(conn, paths, embs)
+
+        # same top-level folder -> path weight (semantic floor is ~0 here)
+        assert S[0, 1] == pytest.approx(PATH_SIGNAL_WEIGHT, abs=1e-4)
+        assert S[2, 3] == pytest.approx(PATH_SIGNAL_WEIGHT, abs=1e-4)
+        # different folder -> no path edge
+        assert S[0, 2] == pytest.approx(0.0, abs=1e-4)
+
+    def test_root_level_file_forms_no_path_edge(self, in_memory_db):
+        conn = in_memory_db
+        paths = ["home/a.md", "home/b.md", "top.md"]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = np.eye(3, 16, dtype=np.float32)
+
+        S = _build_similarity_matrix(conn, paths, embs)
+
+        assert S[0, 1] == pytest.approx(PATH_SIGNAL_WEIGHT, abs=1e-4)  # home pair
+        assert S[0, 2] == pytest.approx(0.0, abs=1e-4)  # root file, no group
+        assert S[1, 2] == pytest.approx(0.0, abs=1e-4)
+
+    def test_weight_zero_disables(self, in_memory_db):
+        conn = in_memory_db
+        paths = ["work/a.md", "work/b.md", "work/c.md"]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = np.eye(3, 16, dtype=np.float32)
+
+        from neurostack import attractor
+        with patch.object(attractor, "PATH_SIGNAL_WEIGHT", 0.0):
+            S = _build_similarity_matrix(conn, paths, embs)
+        assert S[0, 1] == pytest.approx(0.0, abs=1e-4)  # same folder but off
