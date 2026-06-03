@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "neurostack",
   "display_name": "NeuroStack",
-  "version": "0.13.0",
+  "version": "0.15.0",
   "description": "Neuroscience-grounded knowledge management for your Markdown vault. Semantic search, knowledge graphs, AI memory, stale note detection, and 21 MCP tools.",
   "author": {
     "name": "Raphael Southall"
@@ -32,14 +32,14 @@
     "mode": {
       "type": "string",
       "title": "Mode",
-      "description": "lite = FTS5 search only (~130MB). full = adds embeddings + summaries via Ollama (~560MB). cloud = use NeuroStack Cloud for indexing.",
+      "description": "lite = FTS5 search only (~130MB). full = adds embeddings + summaries via Ollama (~560MB).",
       "default": "lite",
-      "enum": ["lite", "full", "cloud"]
+      "enum": ["lite", "full"]
     },
     "api_key": {
       "type": "string",
-      "title": "Cloud API Key",
-      "description": "NeuroStack Cloud API key (only needed for cloud mode). Get one at https://app.neurostack.sh",
+      "title": "API Key",
+      "description": "Optional API key required to authenticate to the local OpenAI-compatible HTTP API (NEUROSTACK_API_KEY).",
       "required": false,
       "sensitive": true
     },
@@ -185,8 +185,8 @@
     "type": "git",
     "url": "https://github.com/raphasouthall/neurostack"
   },
-  "homepage": "https://neurostack.sh",
-  "documentation": "https://neurostack.sh",
+  "homepage": "https://github.com/raphasouthall/neurostack",
+  "documentation": "https://github.com/raphasouthall/neurostack#readme",
   "license": "Apache-2.0",
   "keywords": [
     "knowledge-management",
@@ -203,7 +203,7 @@
   "privacy_policies": [
     {
       "name": "Privacy Policy",
-      "url": "https://neurostack.sh/privacy"
+      "url": "https://github.com/raphasouthall/neurostack/blob/main/PRIVACY.md"
     }
   ]
 }
