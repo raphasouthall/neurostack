@@ -80,6 +80,10 @@ MIN_SHARED = 2
 # Set to None to disable thresholding.
 SEMANTIC_THRESHOLD_K = 0.5
 
+# Minimum Newman modularity for a partition to count as non-trivial structure.
+# Below this a partition is barely distinguishable from random.
+MIN_HEALTHY_Q = 0.05
+
 
 def _build_similarity_matrix(
     conn: sqlite3.Connection,
@@ -451,6 +455,35 @@ def _store_level_stats(
     )
 
 
+def _hierarchy_health_warning(
+    n_coarse: int, n_fine: int, q_coarse: float, q_fine: float,
+) -> str | None:
+    """Return a warning string if the community hierarchy looks unhealthy.
+
+    A healthy fine level REFINES the coarse one: more, smaller communities,
+    both non-trivial fits. We deliberately do NOT require Q(fine) > Q(coarse):
+    Newman modularity is resolution-dependent and maximised at a single scale,
+    so a finer partition scores LOWER at the implicit γ=1 by construction
+    (verified empirically — the fine partition only overtakes coarse at
+    γ≈β_fine). The real failure mode (issue #33) is the fine level COLLAPSING
+    into fewer communities than coarse; that, plus a minimum-quality floor, is
+    what we check. Returns None when the hierarchy is healthy.
+    """
+    if n_fine < n_coarse:
+        return (
+            f"Community hierarchy inverted: n_fine={n_fine} < "
+            f"n_coarse={n_coarse}. The fine level collapsed into fewer basins "
+            f"than coarse (check β_fine / top_k_fine — see issue #33)."
+        )
+    if q_coarse <= MIN_HEALTHY_Q or q_fine <= MIN_HEALTHY_Q:
+        return (
+            f"Weak community structure: Q(coarse)={q_coarse:.4f}, "
+            f"Q(fine)={q_fine:.4f} (≤ {MIN_HEALTHY_Q:.2f} is barely better "
+            f"than random — the similarity matrix may be too dense or sparse)."
+        )
+    return None
+
+
 def detect_communities(
     conn: sqlite3.Connection | None = None,
     db_path=None,
@@ -550,13 +583,9 @@ def detect_communities(
     _store_level_stats(conn, 1, communities_fine, q_fine)
     n_fine = len(communities_fine)
 
-    if q_fine <= q_coarse:
-        log.warning(
-            "Community hierarchy sanity check failed:"
-            f" Q(fine)={q_fine:.4f} <= Q(coarse)={q_coarse:.4f}."
-            " The fine partition is not a tighter fit than coarse —"
-            " expect n_fine > n_coarse and Q(fine) > Q(coarse)."
-        )
+    warning = _hierarchy_health_warning(n_coarse, n_fine, q_coarse, q_fine)
+    if warning:
+        log.warning(warning)
 
     conn.commit()
     log.info(
