@@ -8,7 +8,7 @@ NeuroStack is a neuroscience-grounded knowledge management system. CLI + MCP ser
 
 ```bash
 npm install -g neurostack    # bootstraps CLI, Python, uv, deps
-neurostack init              # cloud/local → lite/full → vault setup → index
+neurostack init              # lite/full → vault setup → index
 ```
 
 ### MCP Server (recommended for Claude Code)
@@ -92,7 +92,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 ### Setup & Diagnostics
 | Command | Description |
 |---------|-------------|
-| `neurostack init [path]` | One-command setup: cloud/local, lite/full, deps, vault, index. `--mode lite\|full`, `--cloud`, `--profession`, `--pull-models` |
+| `neurostack init [path]` | One-command setup: lite/full, deps, vault, index. `--mode lite\|full`, `--profession`, `--pull-models` |
 | `neurostack scaffold [profession]` | Apply profession pack to existing vault. `--list` to see options |
 | `neurostack onboard /path/to/notes` | Onboard existing Markdown notes. `--dry-run`, `--no-index` |
 | `neurostack install` | **(Deprecated)** Use `neurostack init` instead |
