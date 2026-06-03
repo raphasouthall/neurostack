@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.15.0 — Remove NeuroStack Cloud (2026-06-03)
+
+### Breaking changes
+
+- **Removed NeuroStack Cloud.** The hosted service has been discontinued. All cloud client commands (`neurostack cloud *`), the `--cloud` flag, cloud sync, and the `neurostack.cloud` package have been removed. NeuroStack is now a purely local tool: it indexes a local Markdown vault into local SQLite, uses local Ollama for embeddings and summaries, and runs the MCP server and OpenAI-compatible API on your own machine. No data leaves your machine unless you configure a third-party LLM provider.
+
+  **Migration**: run `neurostack init` (or `--mode lite|full`) for local indexing. Connect AI clients to the local MCP server with `neurostack serve`. There is no hosted endpoint to connect to.
+
+### Removed
+
+- `neurostack cloud login/push/pull/sync/consent/install-hooks/auto-sync` CLI commands and the `--cloud` init flag
+- `cloud` mode from `manifest.json` and the hosted remote endpoint from `server.json`
+- `DPA.md` (Data Processing Agreement) and `docs/api-contract-v2.md` (hosted sync API contract)
+
 ## v0.13.0 — Remove vault_capture (2026-05-05)
 
 ### Breaking changes

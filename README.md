@@ -1,4 +1,4 @@
-<a href="https://neurostack.sh"><img src="docs/logo.svg" alt="NeuroStack" height="48"></a>
+<img src="docs/logo.svg" alt="NeuroStack" height="48">
 
 [![PyPI](https://img.shields.io/pypi/v/neurostack)](https://pypi.org/project/neurostack/)
 [![npm](https://img.shields.io/npm/v/neurostack)](https://www.npmjs.com/package/neurostack)
@@ -29,8 +29,7 @@ By default, NeuroStack is a read-only indexing layer:
 - Indexing, search, summaries, and graph analysis **never modify your Markdown files**
 - All index data lives in NeuroStack's own separate database
 - To remove it completely: `neurostack uninstall` — your notes are untouched
-- In local mode: nothing ever leaves your machine
-- In cloud mode: you review and approve exactly what gets sent, and can exclude any folder with a `.neurostackignore` file
+- Nothing ever leaves your machine, unless you configure a third-party LLM provider for summaries and embeddings
 
 If your vault is a git repo, four **opt-in MCP write tools** let an AI client author and edit notes for you: `vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`. Every write commits and pushes to your git remote with a descriptive message — so every change is visible in `git log`, revertable with `git revert`, and serialised under a per-vault lock. Writes hard-reject invalid frontmatter, paths outside the vault, and hidden directories (`.git`, `.obsidian`, …). Because the tools are exposed to any client talking to `neurostack serve`, gate them at the transport (auth, tunnel, LAN only) if you put the MCP endpoint on the public internet.
 
@@ -52,7 +51,7 @@ You do not need to be a developer. If you take notes in Markdown — or can expo
 
 ## Get started in three steps
 
-You will need [Node.js](https://nodejs.org) installed (most computers already have it). That is the only prerequisite for cloud mode — no GPU, no Python knowledge, nothing else.
+You will need [Node.js](https://nodejs.org) installed (most computers already have it). The npm package handles the Python setup for you.
 
 **Step 1 — Install**
 
@@ -66,7 +65,7 @@ npm install -g neurostack
 neurostack init
 ```
 
-The setup wizard asks: cloud or local, which vault folder, which profession pack. It does everything else automatically.
+The setup wizard asks which vault folder to index, which mode to run (Lite or Full), and which profession pack to apply. It does everything else automatically.
 
 **Step 3 — Connect to your AI**
 
@@ -85,36 +84,12 @@ For Cursor, Windsurf, Gemini CLI, or VS Code:
 neurostack setup-client cursor      # or: windsurf, gemini, vscode
 ```
 
-**Zero-install option** — connect Claude to your vault via NeuroStack Cloud with nothing installed locally:
-```
-claude mcp add neurostack --transport http https://mcp.neurostack.sh/mcp
-```
-
 Done. Open a new conversation and ask your AI about something from your notes.
 
-**Free tier:** 500 queries/month, 200 notes. No credit card required. [Start at app.neurostack.sh](https://app.neurostack.sh)
-
 <details>
-<summary><strong>Cloud vs Local — what's the difference?</strong></summary>
+<summary><strong>Lite and Full modes</strong></summary>
 
-| | Cloud (recommended) | Local |
-|--|--------------------|-|
-| **What you need** | Just Node.js | Node.js + Ollama (a local AI engine) |
-| **GPU required** | No | Recommended, but not required |
-| **Setup time** | About 2 minutes | 10-20 minutes |
-| **Works offline** | No | Yes |
-| **Syncs across devices** | Yes, automatically | Manual |
-| **Cost** | Free tier: 500 queries/month, 200 notes. [Pro plans](https://neurostack.sh) for more. | Free. Your hardware, your cost. |
-| **Your files** | Sent for indexing via encrypted connection, not stored after processing | Never leave your machine |
-
-**Privacy notice:** Cloud mode requires explicit consent before uploading. Your vault files are sent to Google's Gemini API for indexing (embeddings, summaries, connections between notes). Files are processed via HTTPS and not retained after indexing completes. Run `neurostack cloud consent` to review and grant consent. Exclude sensitive files with a `.neurostackignore` file (gitignore syntax).
-
-</details>
-
-<details>
-<summary><strong>Local mode (Lite and Full)</strong></summary>
-
-Run everything on your machine with Ollama. Choose a tier during `neurostack init`:
+Everything runs on your machine. Choose a tier during `neurostack init`:
 
 - **Lite** (~130 MB) — keyword search, link-based connections between notes, stale detection, MCP server. No GPU or Ollama required.
 - **Full** (~560 MB) — adds semantic search (finds notes by meaning, not just keywords), AI-generated summaries, connections between notes, and topic clustering via local [Ollama](https://ollama.ai). GPU or 6+ core CPU recommended.
@@ -122,8 +97,8 @@ Run everything on your machine with Ollama. Choose a tier during `neurostack ini
 Non-interactive setup:
 
 ```bash
-neurostack init --mode full ~/my-notes    # local full mode
-neurostack init --cloud ~/my-notes        # cloud mode
+neurostack init --mode lite ~/my-notes    # lite mode
+neurostack init --mode full ~/my-notes    # full mode
 ```
 
 </details>
@@ -265,12 +240,6 @@ Your vault changes. NeuroStack watches it.
 neurostack watch     # auto-index on vault changes
 ```
 
-Or sync on every git commit:
-
-```bash
-neurostack cloud install-hooks
-```
-
 The index updates as you write. Stale detection runs continuously. You don't maintain it — it maintains itself.
 
 ---
@@ -284,7 +253,6 @@ The index updates as you write. Stale detection runs continuously. You don't mai
 | No memory of yesterday's session | `session_brief` reconstructs working context |
 | Reading 10 notes to find one fact | Tiered retrieval: ~15 tokens for a structured fact |
 | Decisions lost after `/clear` | Typed memories persist indefinitely |
-| Cross-machine notes out of sync | Cloud sync: push once, pull anywhere |
 
 ---
 
@@ -363,7 +331,6 @@ NeuroStack reads your vault. By default, it writes nothing back — all index da
 # Setup
 neurostack init                          # one-command setup: deps, vault, index
 neurostack init --mode full ~/brain      # non-interactive full mode
-neurostack init --cloud ~/brain          # non-interactive cloud mode
 neurostack onboard ~/my-notes            # import existing Markdown notes
 neurostack scaffold researcher           # apply a profession pack
 neurostack scaffold --list               # see all packs
@@ -405,15 +372,6 @@ neurostack harvest --sessions 5          # extract session insights
 neurostack sessions search "query"       # search transcripts
 neurostack hooks install                 # hourly harvest timer
 
-# Cloud
-neurostack cloud login                   # browser OAuth login
-neurostack cloud push                    # upload + index vault
-neurostack cloud pull                    # download indexed DB
-neurostack cloud sync                    # push changes + fetch memories
-neurostack cloud install-hooks           # auto-sync on git commit/merge
-neurostack cloud auto-sync enable        # periodic sync via systemd timer
-neurostack cloud consent                 # review and grant privacy consent
-
 # Client setup
 neurostack setup-client cursor           # or: windsurf, gemini, vscode, claude-code
 neurostack setup-client --list
@@ -424,33 +382,6 @@ neurostack stats                         # index health
 neurostack doctor                        # validate all subsystems
 neurostack demo                          # interactive demo with sample vault
 ```
-
-</details>
-
-<details>
-<summary><strong>Cloud sync details</strong></summary>
-
-Keep your vault indexed across machines without manual steps.
-
-**Automatic sync triggers:**
-
-- **Git hooks** — sync on every commit or merge: `neurostack cloud install-hooks`
-- **systemd timer** — periodic background sync: `neurostack cloud auto-sync enable --interval 15min`
-- **Manual** — push changes and fetch memories in one command: `neurostack cloud sync`
-
-**Upload format:** Vault files are packed into a compressed tar.gz archive. Typical compression is 60-80%.
-
-**Concurrent push safety:** A server-side push lock prevents two devices from pushing simultaneously.
-
-**`.neurostackignore`:** Place in your vault root to exclude sensitive paths (gitignore syntax):
-
-```
-private/
-journal/*.md
-*-draft.md
-```
-
-**Upgrading from v0.10.x:** Cloud mode now requires explicit consent before uploading. Run `neurostack cloud consent` on first push after upgrading.
 
 </details>
 
@@ -479,19 +410,15 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 **Does it modify my vault files?** Not by default. Indexing, search, summaries, and every read tool leave your files untouched — all index data lives in NeuroStack's own SQLite databases. Four opt-in MCP write tools (`vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`) let an AI client author and edit notes; every write commits and pushes to your git remote, so changes are tracked and revertable. If your vault is not a git repo, the file is still written to disk but the commit step is skipped.
 
-**Do I need a GPU?** No. Cloud mode requires only Node.js. Local Lite mode has zero ML dependencies. Local Full mode runs on CPU but summarization is slow without a GPU.
+**Do I need a GPU?** No. Lite mode has zero ML dependencies. Full mode runs on CPU but summarization is slow without a GPU.
 
 **Do I need to know Python?** No. The npm package handles everything. You never touch a virtualenv.
 
-**What's the catch with the free tier?** 500 queries/month, 200 notes. No credit card required. Pro plans at [neurostack.sh](https://neurostack.sh) remove those limits.
-
-**How large a vault can it handle?** Tested with ~5,000 notes. FTS5 search stays fast at any size. Cloud indexing handles 500+ notes in minutes.
+**How large a vault can it handle?** Tested with ~5,000 notes. FTS5 search stays fast at any size.
 
 **Can I use it without an AI client?** Yes. The CLI works standalone and pipes into any LLM.
 
-**Is my vault private in local mode?** Yes. Nothing leaves your machine.
-
-**What if I want to exclude sensitive notes from cloud?** Add a `.neurostackignore` file to your vault root (gitignore syntax). Those files are never uploaded.
+**Is my vault private?** Yes. Nothing leaves your machine, unless you point Full mode at a third-party LLM provider instead of local Ollama. In that case the text you index goes to that provider under its own policy.
 
 **What AI clients does it work with?** Claude Code, Claude Desktop, Cursor, Windsurf, Gemini CLI, VS Code, and Codex — anything that supports MCP.
 
@@ -500,9 +427,8 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 ## Requirements
 
 - Linux or macOS
-- **Cloud mode:** Node.js only. No GPU, no Ollama, no Python setup.
-- **Local Lite mode:** Node.js + Python 3.11+. No GPU or Ollama required.
-- **Local Full mode:** [Ollama](https://ollama.ai) with `nomic-embed-text` and a summary model. GPU or 6+ core CPU recommended.
+- **Lite mode:** Node.js + Python 3.11+. No GPU or Ollama required.
+- **Full mode:** [Ollama](https://ollama.ai) with `nomic-embed-text` and a summary model. GPU or 6+ core CPU recommended.
 
 ---
 
@@ -515,12 +441,10 @@ neurostack init
 
 Two minutes. One wizard. Your AI stops forgetting.
 
-- **Website:** [neurostack.sh](https://neurostack.sh)
-- **Dashboard:** [app.neurostack.sh](https://app.neurostack.sh)
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Contact:** [hello@neurostack.sh](mailto:hello@neurostack.sh)
+- **GitHub:** [github.com/raphasouthall/neurostack](https://github.com/raphasouthall/neurostack)
 - **Sponsor:** [GitHub Sponsors](https://github.com/sponsors/raphasouthall) | [Buy me a coffee](https://buymeacoffee.com/raphasouthall)
 
 ---
 
-Apache-2.0 — see [LICENSE](LICENSE). No GPL dependencies. Built by [SolidPlus LTD](https://neurostack.sh).
+Apache-2.0 — see [LICENSE](LICENSE). No GPL dependencies.
