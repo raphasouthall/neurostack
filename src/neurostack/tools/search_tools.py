@@ -488,7 +488,12 @@ def vault_prediction_errors(
 
     Error types:
     - low_overlap: cosine distance > 0.62 — note is semantically distant from what retrieved it
-    - contextual_mismatch: note surfaced outside its expected domain context
+    - contextual_mismatch: note surfaced outside its expected domain context AND was only a
+      weak fit (sim < 0.45) — a strong hit outside the context boost set is not a mismatch
+
+    Only notes that have surprised >= 2 distinct retrieval events are surfaced: a single
+    ad-hoc flag reflects query difficulty, not note health. Single-occurrence rows still
+    accumulate in the log toward that threshold.
 
     Args:
         error_type: Filter by type — "low_overlap" or "contextual_mismatch". None = all.
@@ -498,7 +503,7 @@ def vault_prediction_errors(
             results (e.g. "work/acme-cloud")
     """
     from ..schema import DB_PATH, get_db
-    from ..search import _normalize_workspace
+    from ..search import PREDICTION_ERROR_MIN_OCCURRENCES, _normalize_workspace
 
     conn = get_db(DB_PATH)
 
@@ -534,10 +539,11 @@ def vault_prediction_errors(
         FROM prediction_errors
         {where}
         GROUP BY note_path, error_type
+        HAVING COUNT(*) >= ?
         ORDER BY occurrences DESC, avg_distance DESC
         LIMIT ?
         """,
-        params + [limit],
+        params + [PREDICTION_ERROR_MIN_OCCURRENCES, limit],
     ).fetchall()
 
     results = [
@@ -560,8 +566,14 @@ def vault_prediction_errors(
         total_params.append(ws + "/")
 
     total_unresolved = conn.execute(
-        f"SELECT COUNT(DISTINCT note_path) FROM prediction_errors {total_where}",
-        total_params,
+        f"""
+        SELECT COUNT(*) FROM (
+            SELECT note_path FROM prediction_errors {total_where}
+            GROUP BY note_path, error_type
+            HAVING COUNT(*) >= ?
+        )
+        """,
+        total_params + [PREDICTION_ERROR_MIN_OCCURRENCES],
     ).fetchone()[0]
 
     return {
