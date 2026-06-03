@@ -69,6 +69,17 @@ TOP_K_FINE = 20
 # Minimum shared entities for a note-note edge (co-occurrence signal)
 MIN_SHARED = 2
 
+# ── Adaptive semantic edge threshold ──
+# In a single-domain vault, most note pairs share a moderate baseline cosine
+# (~the off-diagonal mean), so the semantic signal is a dense floor that
+# connects nearly everything and collapses community modularity toward random
+# (Q≈0.06). We zero semantic edges below mean + k·std of the off-diagonal
+# distribution, keeping only meaningfully-similar pairs. Measured effect on a
+# ~490-note vault: Q 0.06 → ~0.30 at k=0.5, with stable community counts.
+# Adaptive (not a fixed cosine) so it self-tunes to each vault's spread.
+# Set to None to disable thresholding.
+SEMANTIC_THRESHOLD_K = 0.5
+
 
 def _build_similarity_matrix(
     conn: sqlite3.Connection,
@@ -91,6 +102,15 @@ def _build_similarity_matrix(
     S_semantic = normalised @ normalised.T
     # Clamp to [0, 1] — negative cosine means unrelated, treat as 0
     np.clip(S_semantic, 0.0, 1.0, out=S_semantic)
+
+    # Prune the dense low-similarity floor (see SEMANTIC_THRESHOLD_K). Compute
+    # the threshold on the off-diagonal only — the diagonal is self-similarity
+    # (1.0) and would skew mean/std. Edges below it are zeroed so only
+    # meaningfully-similar note pairs feed community detection.
+    if SEMANTIC_THRESHOLD_K is not None and n > 2:
+        off = S_semantic[~np.eye(n, dtype=bool)]
+        threshold = float(off.mean() + SEMANTIC_THRESHOLD_K * off.std())
+        S_semantic[S_semantic < threshold] = 0.0
 
     # 2. Co-occurrence signal (entity co-occurrence weights → note-note)
     S_cooc = np.zeros((n, n), dtype=np.float32)
