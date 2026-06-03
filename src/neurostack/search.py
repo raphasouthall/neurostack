@@ -31,6 +31,19 @@ from .schema import get_db
 # distance = 1 - cosine_sim; values above 0.62 (sim < 0.38) indicate high prediction error.
 PREDICTION_ERROR_SIM_THRESHOLD = 0.38
 
+# Upper bound on similarity for a contextual_mismatch flag. The mismatch branch only
+# fires when the top note is BOTH outside the query's context set AND a weak fit
+# (sim in [PREDICTION_ERROR_SIM_THRESHOLD, this]). Without this ceiling the branch
+# flagged correct retrievals — exact-title hits with strong cosine — purely because
+# they were absent from the recall-limited in_context_notes boost set.
+CONTEXTUAL_MISMATCH_MAX_SIM = 0.45
+
+# A single ad-hoc query surprising a note is query difficulty, not note health.
+# Surface (and demote on) a flag only once a note has surprised this many distinct
+# retrieval events — the recurrence is what distinguishes a defective note from a
+# weak/exploratory query that hit the least-bad target once.
+PREDICTION_ERROR_MIN_OCCURRENCES = 2
+
 
 def log_prediction_error(
     conn: sqlite3.Connection,
@@ -749,14 +762,17 @@ def hybrid_search(
     #
     # Demotion is bounded: score *= 1 / (1 + 0.1 * error_count)
     # 1 error → 0.91x, 3 errors → 0.77x, 10 errors → 0.50x
+    # Only notes that have surprised >= PREDICTION_ERROR_MIN_OCCURRENCES distinct
+    # retrieval events are demoted; a single ad-hoc flag is query noise and must
+    # not deprioritise an otherwise-correct note in future searches.
     if meta_paths:
         try:
             placeholders = ",".join("?" * len(meta_paths))
             error_rows = conn.execute(
                 f"SELECT note_path, COUNT(*) as cnt FROM prediction_errors "
                 f"WHERE note_path IN ({placeholders}) AND resolved_at IS NULL "
-                f"GROUP BY note_path",
-                meta_paths,
+                f"GROUP BY note_path HAVING COUNT(*) >= ?",
+                meta_paths + [PREDICTION_ERROR_MIN_OCCURRENCES],
             ).fetchall()
             error_counts = {r["note_path"]: r["cnt"] for r in error_rows}
             for r in valid_results:
@@ -873,7 +889,12 @@ def hybrid_search(
             log_prediction_error(
                 conn, top["note_path"], query, top_cosine, "low_overlap", context
             )
-        elif context and in_context_notes and top["note_path"] not in in_context_notes:
+        elif (
+            context
+            and in_context_notes
+            and top["note_path"] not in in_context_notes
+            and top_cosine < CONTEXTUAL_MISMATCH_MAX_SIM
+        ):
             log_prediction_error(
                 conn, top["note_path"], query, top_cosine, "contextual_mismatch", context
             )
