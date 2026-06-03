@@ -9,7 +9,6 @@ from pathlib import Path
 
 from .. import __version__
 from ..config import CONFIG_PATH, get_config
-from .cloud import _cmd_cloud_device_login, cmd_cloud_push
 from .utils import _get_vault_template_dir
 
 
@@ -166,7 +165,7 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
             label = d.split("/")[-1].replace("-", " ").title()
             idx.write_text(f"# {label}\n\n")
 
-    # Write config — preserve existing [cloud] section
+    # Write config
     try:
         import tomllib as _tomllib
     except ImportError:
@@ -406,11 +405,8 @@ def cmd_init(args):
     if args.path or args.profession or not sys.stdin.isatty():
         vault_root = Path(args.path) if args.path else cfg.vault_root
         mode = getattr(args, "mode", None) or "lite"
-        use_cloud = getattr(args, "cloud", False)
 
-        if use_cloud:
-            mode = "lite"
-        cfg.mode = "cloud" if use_cloud else "local"
+        cfg.mode = "local"
         if mode == "full":
             uv_bin = _find_uv()
             if uv_bin:
@@ -459,62 +455,47 @@ def cmd_init(args):
               " https://astral.sh/uv/install.sh | sh")
         sys.exit(1)
 
-    # ── Step 1: Cloud or Local? ──
-    print()
-    setup_choices = [
-        ("cloud", "Cloud — Gemini indexes your vault, no GPU needed"),
-        ("local", "Local — self-hosted with Ollama"),
-    ]
-    setup = _prompt(
-        "How do you want to run NeuroStack?",
-        default="cloud", choices=setup_choices,
-    )
-    use_cloud = setup == "cloud"
-
+    # ── Step 1: Lite or Full? ──
     mode = "lite"
     pull_models = False
     embed_model = cfg.embed_model
     llm_model = cfg.llm_model
 
-    if use_cloud:
-        mode = "lite"
-    else:
-        # ── Step 2: Lite or Full? ──
-        _print_hardware_recommendation()
-        print()
-        mode_choices = [
-            ("lite",
-             "Lite — FTS5 search + graph, no ML (~130 MB)"),
-            ("full",
-             "Full — + embeddings, summaries, communities (~560 MB)"),
-        ]
-        mode = _prompt(
-            "Installation mode",
-            default="full", choices=mode_choices,
-        )
+    _print_hardware_recommendation()
+    print()
+    mode_choices = [
+        ("lite",
+         "Lite — FTS5 search + graph, no ML (~130 MB)"),
+        ("full",
+         "Full — + embeddings, summaries, communities (~560 MB)"),
+    ]
+    mode = _prompt(
+        "Installation mode",
+        default="full", choices=mode_choices,
+    )
 
-        if mode == "full":
-            print("\n  \033[1mOllama Models\033[0m")
-            print("  Full mode uses Ollama for embeddings"
-                  " and summaries.")
-            pull_models = _confirm(
-                "Pull Ollama models now?", default=True,
+    if mode == "full":
+        print("\n  \033[1mOllama Models\033[0m")
+        print("  Full mode uses Ollama for embeddings"
+              " and summaries.")
+        pull_models = _confirm(
+            "Pull Ollama models now?", default=True,
+        )
+        if pull_models:
+            embed_model = _prompt(
+                "Embedding model", default=cfg.embed_model,
             )
-            if pull_models:
-                embed_model = _prompt(
-                    "Embedding model", default=cfg.embed_model,
-                )
-                model_choices = [
-                    ("phi3.5", "phi3.5 — MIT, fast, 3.8B"),
-                    ("qwen3:8b", "qwen3:8b — Apache 2.0, strong"),
-                    ("llama3.1:8b", "llama3.1:8b — Meta license"),
-                    ("mistral:7b", "mistral:7b — Apache 2.0"),
-                ]
-                llm_model = _prompt(
-                    "LLM model",
-                    default=cfg.llm_model,
-                    choices=model_choices,
-                )
+            model_choices = [
+                ("phi3.5", "phi3.5 — MIT, fast, 3.8B"),
+                ("qwen3:8b", "qwen3:8b — Apache 2.0, strong"),
+                ("llama3.1:8b", "llama3.1:8b — Meta license"),
+                ("mistral:7b", "mistral:7b — Apache 2.0"),
+            ]
+            llm_model = _prompt(
+                "LLM model",
+                default=cfg.llm_model,
+                choices=model_choices,
+            )
 
     # ── Step 3: Vault path ──
     print()
@@ -561,7 +542,7 @@ def cmd_init(args):
 
     # ── Summary ──
     print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
-    print(f"  Mode:       {'cloud' if use_cloud else mode}")
+    print(f"  Mode:       {mode}")
     print(f"  Vault:      {vault_root}")
     print(f"  Profession: {profession}")
     if mode == "full":
@@ -573,8 +554,6 @@ def cmd_init(args):
         auth_label = "yes" if (llm_api_key or embed_api_key) else "no"
         print(f"  API auth:   {auth_label}")
         print("  Index:      full (summaries + triples + communities)")
-    elif use_cloud:
-        print("  Index:      cloud (Gemini)")
     else:
         print("  Index:      lite (FTS5 only)")
 
@@ -597,7 +576,7 @@ def cmd_init(args):
         _setup_ollama(pull_models, embed_model, llm_model, cfg)
 
     # 3. Apply config + create vault structure
-    cfg.mode = "cloud" if use_cloud else "local"
+    cfg.mode = "local"
     cfg.vault_root = vault_root
     cfg.embed_url = embed_url
     cfg.llm_url = llm_url
@@ -610,43 +589,10 @@ def cmd_init(args):
         _do_init(vault_root, cfg, profession_name=profession, run_index=False)
         _full_index_pipeline(vault_root, cfg)
     else:
-        # Lite/cloud: create vault with FTS5-only index
+        # Lite: create vault with FTS5-only index
         _do_init(vault_root, cfg, profession_name=profession, run_index=True)
 
-    # 4. Cloud path: login + push
-    if use_cloud:
-        print("\n  \033[1m━━━ Cloud Login ━━━\033[0m\n")
-        _cmd_cloud_device_login()
-
-        from ..cloud.config import load_cloud_config
-        cloud_cfg = load_cloud_config()
-        if cloud_cfg.cloud_api_key:
-            print("\n  \033[32m✓\033[0m Logged in")
-            from ..cloud.client import CloudClient
-            tier = "Free"
-            try:
-                client = CloudClient(cloud_cfg)
-                info = client.status()
-                tier = (info.get("tier") or "free").capitalize()
-            except Exception:
-                pass
-            print(f"  Plan:     {tier}")
-
-            if sys.stdin.isatty() and _confirm(
-                "\n  Push vault to cloud now?", default=True,
-            ):
-                print()
-                cmd_cloud_push(args)
-                print()
-                print("  Check progress:"
-                      " https://app.neurostack.sh")
-            else:
-                print("\n  Run later: neurostack cloud push")
-        else:
-            print("\n  \033[33m!\033[0m Login skipped.")
-            print("  Run later: neurostack cloud login")
-
-    # 5. PATH check
+    # 4. PATH check
     local_bin = str(Path.home() / ".local" / "bin")
     if local_bin not in os.environ.get("PATH", ""):
         print("\n  \033[33m!\033[0m Add to PATH:"
@@ -1244,7 +1190,7 @@ def cmd_update(args):
 
 
 def cmd_install(args):
-    """Streamlined installation: local or cloud, deps, and setup.
+    """Streamlined installation: deps and setup.
 
     DEPRECATED: Use 'neurostack init' instead, which combines installation
     and vault setup into a single command.
@@ -1264,7 +1210,6 @@ def cmd_install(args):
         pull_models = args.pull_models
         embed_model = args.embed_model or cfg.embed_model
         llm_model = args.llm_model or cfg.llm_model
-        use_cloud = False
     else:
         # ── Interactive wizard ──
         print("\n  \033[1m━━━ NeuroStack Install ━━━\033[0m\n")
@@ -1304,87 +1249,69 @@ def cmd_install(args):
             )
             sys.exit(1)
 
-        # 2. Local or Cloud?
-        setup_choices = [
-            ("cloud", "Cloud — Gemini indexes your vault, no GPU needed"),
-            ("local", "Local — self-hosted with Ollama (requires GPU)"),
+        # 2. Lite or Full?
+        # Detect current mode
+        current_mode = "lite"
+        try:
+            import numpy  # noqa: F401
+            current_mode = "full"
+        except ImportError:
+            pass
+        print(f"  Current:  {current_mode} mode\n")
+
+        mode_choices = [
+            ("lite",
+             "Lite — FTS5 search + graph, no ML (~130 MB)"),
+            ("full",
+             "Full — + embeddings, summaries, communities (~560 MB)"),
         ]
-        setup = _prompt(
-            "How do you want to run NeuroStack?",
-            default="cloud", choices=setup_choices,
+        mode = _prompt(
+            "Installation mode",
+            default=current_mode, choices=mode_choices,
         )
-        use_cloud = setup == "cloud"
 
-        if use_cloud:
-            # ── Cloud path: lite deps, then login ──
-            mode = "lite"
-            pull_models = False
-            embed_model = cfg.embed_model
-            llm_model = cfg.llm_model
-        else:
-            # ── Local path: existing flow ──
-            # Detect current mode
-            current_mode = "lite"
-            try:
-                import numpy  # noqa: F401
-                current_mode = "full"
-            except ImportError:
-                pass
-            print(f"  Current:  {current_mode} mode\n")
-
-            mode_choices = [
-                ("lite",
-                 "Lite — FTS5 search + graph, no ML (~130 MB)"),
-                ("full",
-                 "Full — + embeddings, summaries, communities (~560 MB)"),
-            ]
-            mode = _prompt(
-                "Installation mode",
-                default=current_mode, choices=mode_choices,
+        pull_models = False
+        embed_model = cfg.embed_model
+        llm_model = cfg.llm_model
+        if mode == "full":
+            print("\n  \033[1mOllama Models\033[0m")
+            print(
+                "  Full mode uses Ollama for embeddings"
+                " and summaries."
             )
-
-            pull_models = False
-            embed_model = cfg.embed_model
-            llm_model = cfg.llm_model
-            if mode == "full":
-                print("\n  \033[1mOllama Models\033[0m")
-                print(
-                    "  Full mode uses Ollama for embeddings"
-                    " and summaries."
-                )
-                pull_models = _confirm(
-                    "Pull Ollama models now?", default=True,
-                )
-                if pull_models:
-                    embed_model = _prompt(
-                        "Embedding model", default=cfg.embed_model,
-                    )
-                    model_choices = [
-                        ("phi3.5",
-                         "phi3.5 — MIT, fast, 3.8B"),
-                        ("qwen3:8b",
-                         "qwen3:8b — Apache 2.0, strong"),
-                        ("llama3.1:8b",
-                         "llama3.1:8b — Meta license"),
-                        ("mistral:7b",
-                         "mistral:7b — Apache 2.0"),
-                    ]
-                    llm_model = _prompt(
-                        "LLM model",
-                        default=cfg.llm_model,
-                        choices=model_choices,
-                    )
-
-            print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
-            print(f"  Mode:     {mode}")
+            pull_models = _confirm(
+                "Pull Ollama models now?", default=True,
+            )
             if pull_models:
-                print(f"  Embed:    ollama pull {embed_model}")
-                print(f"  LLM:      ollama pull {llm_model}")
-            else:
-                print("  Models:   skip")
-            if not _confirm("\n  Proceed?", default=True):
-                print("\n  Cancelled.")
-                return
+                embed_model = _prompt(
+                    "Embedding model", default=cfg.embed_model,
+                )
+                model_choices = [
+                    ("phi3.5",
+                     "phi3.5 — MIT, fast, 3.8B"),
+                    ("qwen3:8b",
+                     "qwen3:8b — Apache 2.0, strong"),
+                    ("llama3.1:8b",
+                     "llama3.1:8b — Meta license"),
+                    ("mistral:7b",
+                     "mistral:7b — Apache 2.0"),
+                ]
+                llm_model = _prompt(
+                    "LLM model",
+                    default=cfg.llm_model,
+                    choices=model_choices,
+                )
+
+        print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
+        print(f"  Mode:     {mode}")
+        if pull_models:
+            print(f"  Embed:    ollama pull {embed_model}")
+            print(f"  LLM:      ollama pull {llm_model}")
+        else:
+            print("  Models:   skip")
+        if not _confirm("\n  Proceed?", default=True):
+            print("\n  Cancelled.")
+            return
 
     # ── Execute installation ──
     print()
@@ -1496,49 +1423,7 @@ def cmd_install(args):
         print("\n  \033[33m!\033[0m Add to PATH:"
               " export PATH=\"$HOME/.local/bin:$PATH\"")
 
-    # 5. Cloud setup (if cloud path was chosen)
-    if use_cloud:
-        print("\n  \033[32m✓\033[0m Dependencies installed (lite)")
-        print("\n  \033[1m━━━ Cloud Login ━━━\033[0m\n")
-        _cmd_cloud_device_login()
-
-        # Check if login succeeded
-        from ..cloud.config import load_cloud_config
-        cloud_cfg = load_cloud_config()
-        if cloud_cfg.cloud_api_key:
-            print("\n  \033[32m✓\033[0m Logged in")
-
-            # Fetch tier
-            from ..cloud.client import CloudClient
-            tier = "Free"
-            try:
-                client = CloudClient(cloud_cfg)
-                info = client.status()
-                tier = (info.get("tier") or "free").capitalize()
-            except Exception:
-                pass
-            print(f"  Plan:     {tier}")
-            print("  Dashboard:"
-                  " https://app.neurostack.sh")
-
-            # Auto-run init — set defaults for init args
-            print("\n  \033[1m━━━ Vault Setup ━━━\033[0m\n")
-            args.path = None
-            args.profession = None
-            args.index = True
-            cmd_init(args)
-        else:
-            print("\n  \033[33m!\033[0m Login skipped")
-            print("\n  \033[32mInstalled!\033[0m (lite)"
-                  " Run this next:")
-            print("    neurostack init"
-                  "              # Set up your vault")
-            print("    neurostack cloud login"
-                  "       # Sign in later")
-            print()
-        return
-
-    # Summary (local path)
+    # Summary
     print(f"\n  \033[32mInstalled!\033[0m ({mode} mode)")
     print()
     print("  Next steps:")
