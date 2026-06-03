@@ -9,13 +9,14 @@ from pathlib import Path
 def cmd_index(args):
     from ..schema import DB_PATH, get_db
     from ..watcher import full_index
-    full_index(
+    pruned = full_index(
         vault_root=Path(args.vault),
         embed_url=args.embed_url,
         summarize_url=args.summarize_url,
         skip_summary=args.skip_summary,
         skip_triples=args.skip_triples,
         workers=getattr(args, "workers", 2),
+        prune=not getattr(args, "no_prune", False),
     )
     db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", DB_PATH))
     conn = get_db(db_path)
@@ -23,6 +24,8 @@ def cmd_index(args):
     chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
     edges = conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
     print(f"Indexed {notes} notes, {chunks} chunks, {edges} graph edges.")
+    if pruned:
+        print(f"Pruned {pruned} orphaned notes (deleted from disk).")
     if notes == 0:
         print("\n  \033[33m!\033[0m No Markdown files found in the vault.")
         print("  Add .md files to your vault, then run: neurostack index")

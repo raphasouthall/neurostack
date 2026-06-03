@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`neurostack index` now prunes notes deleted from disk.** A full index was upsert-only: it added and updated notes but never removed DB rows for files that no longer existed. The only deletion path was the live watcher's per-event handler, so any file removed while the watcher was down orphaned its rows forever — inflating note counts, polluting co-occurrence and community detection with ghost nodes, and dragging modularity down. A full scan sees the whole vault, so it can now reconcile: anything in the DB but not on disk is pruned (FK cascades drop chunks/summaries/triples; sqlite-vec rows are cleared explicitly). An empty scan is treated as a misconfigured/unmounted vault and skips pruning rather than wiping the index.
+
+### Added
+
+- `reconcile_deletions(conn, vault_root, exclude_dirs)` in `watcher.py` — prune orphaned notes; returns the count pruned.
+- Startup reconcile in `neurostack watch`: the watcher sweeps offline deletions on boot, so it self-heals without a manual re-index.
+- `neurostack index --no-prune` to keep orphaned rows (opt out of the new default).
+
 ## v0.13.0 — Remove vault_capture (2026-05-05)
 
 ### Breaking changes
