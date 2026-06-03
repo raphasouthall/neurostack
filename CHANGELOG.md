@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Community modularity no longer collapses toward random.** In a single-domain vault most note pairs share a moderate baseline embedding cosine (off-diagonal mean ≈0.36 on a ~490-note vault), so the semantic signal was a dense floor connecting nearly everything — Newman modularity sat at Q≈0.06, barely better than a random partition. `_build_similarity_matrix` now prunes that floor with an adaptive threshold (`SEMANTIC_THRESHOLD_K`, default mean + 0.5·std of the off-diagonal distribution), zeroing weak semantic edges before community detection. Measured: Q 0.06 → ~0.30 (coarse) / ~0.28 (fine) with stable community counts. The threshold is adaptive, not a fixed cosine, so it self-tunes per vault; set `SEMANTIC_THRESHOLD_K = None` to disable. Diagnosis showed the co-occurrence graph was *not* the cause (entity document-frequency is healthy — 90% of entities appear in a single note), so co-occurrence pruning was a dead end.
+
 - **`neurostack index` now prunes notes deleted from disk.** A full index was upsert-only: it added and updated notes but never removed DB rows for files that no longer existed. The only deletion path was the live watcher's per-event handler, so any file removed while the watcher was down orphaned its rows forever — inflating note counts, polluting co-occurrence and community detection with ghost nodes, and dragging modularity down. A full scan sees the whole vault, so it can now reconcile: anything in the DB but not on disk is pruned (FK cascades drop chunks/summaries/triples; sqlite-vec rows are cleared explicitly). An empty scan is treated as a misconfigured/unmounted vault and skips pruning rather than wiping the index.
 
 ### Added

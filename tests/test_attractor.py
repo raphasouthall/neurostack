@@ -589,3 +589,70 @@ class TestSizeStats:
 
     def test_empty(self):
         assert _size_stats({}) == (0, 0, 0, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Adaptive semantic edge threshold
+# ---------------------------------------------------------------------------
+
+class TestSemanticThreshold:
+    """The adaptive mean+k*std threshold prunes the dense semantic floor."""
+
+    def _two_cluster_embeddings(self, dim=8):
+        # Cluster A along e0, cluster B at 60° (cosine 0.5) — within-cluster
+        # cosine 1.0, cross-cluster 0.5. Deterministic, no RNG.
+        u = np.zeros(dim, dtype=np.float32)
+        u[0] = 1.0
+        v = np.zeros(dim, dtype=np.float32)
+        v[0] = 0.5
+        v[1] = 0.75 ** 0.5
+        return np.stack([u, u, u, v, v, v])
+
+    def test_threshold_prunes_cross_cluster_edges(self, in_memory_db):
+        conn = in_memory_db
+        paths = [f"n{i}.md" for i in range(6)]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = self._two_cluster_embeddings()
+
+        from neurostack import attractor
+        with patch.object(attractor, "SEMANTIC_THRESHOLD_K", None):
+            S_full = _build_similarity_matrix(conn, paths, embs)
+        with patch.object(attractor, "SEMANTIC_THRESHOLD_K", 0.5):
+            S_thr = _build_similarity_matrix(conn, paths, embs)
+
+        # Thresholding removes edges overall...
+        assert np.count_nonzero(S_thr) < np.count_nonzero(S_full)
+        # ...specifically the weak cross-cluster ones (cosine 0.5)...
+        assert S_full[0, 3] > 0.0
+        assert S_thr[0, 3] == 0.0
+        # ...while strong within-cluster edges survive.
+        assert S_thr[0, 1] > 0.0
+        assert S_thr[3, 4] > 0.0
+
+    def test_disabled_keeps_floor(self, in_memory_db):
+        conn = in_memory_db
+        paths = [f"n{i}.md" for i in range(6)]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = self._two_cluster_embeddings()
+
+        from neurostack import attractor
+        with patch.object(attractor, "SEMANTIC_THRESHOLD_K", None):
+            S = _build_similarity_matrix(conn, paths, embs)
+        # With thresholding off, the cross-cluster edge is retained.
+        assert S[0, 3] > 0.0
+
+    def test_small_vault_not_thresholded(self, in_memory_db):
+        """n<=2 skips thresholding (can't estimate a distribution)."""
+        conn = in_memory_db
+        paths = ["a.md", "b.md"]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        # Identical embeddings -> cosine 1.0 -> full ALPHA_SEMANTIC retained.
+        emb = np.ones(8, dtype=np.float32)
+        S = _build_similarity_matrix(conn, paths, np.stack([emb, emb]))
+        assert S[0, 1] == pytest.approx(ALPHA_SEMANTIC, abs=1e-4)
