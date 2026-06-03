@@ -39,9 +39,22 @@ log = logging.getLogger("neurostack")
 # α: semantic similarity (embedding cosine) — structural/content overlap
 # β_cooc: co-occurrence weight — Hebbian "used together" signal
 # γ: wiki-link weight — explicit human connections
+# δ_path: folder-path weight — notes sharing a top-level folder (e.g. work/
+#   vs home/) get a similarity bump. Embeddings see "infrastructure" as one
+#   topic regardless of work-vs-personal context; the folder layout carries
+#   that organisational signal, which otherwise never reaches detection.
 ALPHA_SEMANTIC = 0.6
 BETA_COOCCURRENCE = 0.25
 GAMMA_WIKILINKS = 0.15
+PATH_SIGNAL_WEIGHT = 0.3
+
+# Folder depth the path signal groups on. 1 = top-level (work/, home/,
+# research/…), the grain that separates work from personal. Deeper grouping
+# (e.g. work/proj-a vs work/proj-b) measurably reduced cohesion. Notes with no
+# folder (root-level files) form no path edges; a flat single-folder vault
+# yields an all-zero signal, so this degrades gracefully. Set the weight to 0
+# to disable.
+PATH_PREFIX_DEPTH = 1
 
 # ── Inverse temperature for attractor convergence ──
 # Low β → broad themes (coarse), high β → narrow sub-themes (fine)
@@ -194,11 +207,28 @@ def _build_similarity_matrix(
                 S_links[src, tgt] = 1.0
                 S_links[tgt, src] = 1.0  # symmetric
 
-    # Blend all three signals
+    # 4. Folder-path signal: notes sharing a top-level folder prefix get a
+    # uniform similarity bump, carrying the vault's organisational structure
+    # (work/ vs home/ vs research/…) that embeddings alone don't capture.
+    S_path = np.zeros((n, n), dtype=np.float32)
+    if PATH_SIGNAL_WEIGHT > 0:
+        prefix_groups: dict[str, list[int]] = defaultdict(list)
+        for i, p in enumerate(note_paths):
+            prefix_groups["/".join(p.split("/")[:PATH_PREFIX_DEPTH])].append(i)
+        for members in prefix_groups.values():
+            # A root-level file (no folder) is its own singleton group and
+            # contributes no edges, which is what we want.
+            if len(members) < 2:
+                continue
+            mi = np.array(members)
+            S_path[np.ix_(mi, mi)] = 1.0
+
+    # Blend all four signals
     S = (
         ALPHA_SEMANTIC * S_semantic
         + BETA_COOCCURRENCE * S_cooc
         + GAMMA_WIKILINKS * S_links
+        + PATH_SIGNAL_WEIGHT * S_path
     )
 
     # Zero out self-similarity (diagonal) — a note shouldn't attract itself
