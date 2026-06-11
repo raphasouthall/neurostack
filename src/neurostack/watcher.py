@@ -7,7 +7,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock, Timer
 
@@ -20,7 +20,7 @@ from .embedder import HAS_NUMPY, build_chunk_context, embedding_to_blob, get_emb
 from .graph import build_graph, compute_pagerank
 from .schema import DB_PATH, get_db
 from .summarizer import summarize_note
-from .triples import extract_triples, triple_to_text
+from .triples import TripleExtractionError, extract_triples, triple_to_text
 from .vecindex import (
     delete_chunk_vecs,
     delete_triple_vecs,
@@ -257,6 +257,58 @@ def index_single_note(
     conn.commit()
 
 
+# Hours to wait before the Nth triple-extraction retry. After the list is
+# exhausted the final value (a week) repeats — a note that keeps failing is
+# retried weekly rather than abandoned (issue #28).
+_TRIPLE_RETRY_BACKOFF_HOURS = [1, 6, 24, 72, 168]
+
+
+def _record_triple_failure(conn, note_path: str, content_hash: str, error: str) -> None:
+    """Upsert a triple-extraction failure row with exponential backoff.
+
+    Non-blocking: never lets bookkeeping disrupt indexing.
+    """
+    try:
+        row = conn.execute(
+            "SELECT attempts FROM triple_extraction_failed WHERE note_path = ?",
+            (note_path,),
+        ).fetchone()
+        attempts = (row["attempts"] if row else 0) + 1
+        idx = min(attempts, len(_TRIPLE_RETRY_BACKOFF_HOURS)) - 1
+        hours = _TRIPLE_RETRY_BACKOFF_HOURS[idx]
+        now_dt = datetime.now(timezone.utc)
+        next_retry = (now_dt + timedelta(hours=hours)).isoformat()
+        conn.execute(
+            "INSERT INTO triple_extraction_failed"
+            " (note_path, content_hash, attempts, last_error,"
+            "  last_attempt_at, next_retry_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(note_path) DO UPDATE SET"
+            "  content_hash=excluded.content_hash, attempts=excluded.attempts,"
+            "  last_error=excluded.last_error,"
+            "  last_attempt_at=excluded.last_attempt_at,"
+            "  next_retry_at=excluded.next_retry_at",
+            (note_path, content_hash, attempts, error[:500],
+             now_dt.isoformat(), next_retry),
+        )
+        log.warning(
+            "Triple extraction failed for %s (attempt %d); retry after %s",
+            note_path, attempts, next_retry,
+        )
+    except Exception:
+        log.debug("Could not record triple failure for %s", note_path, exc_info=True)
+
+
+def _clear_triple_failure(conn, note_path: str) -> None:
+    """Drop a note's retry row once extraction succeeds. Non-blocking."""
+    try:
+        conn.execute(
+            "DELETE FROM triple_extraction_failed WHERE note_path = ?", (note_path,)
+        )
+    except Exception:
+        pass
+
+
 def _index_triples_for_note(
     note_path: str,
     title: str,
@@ -274,7 +326,15 @@ def _index_triples_for_note(
         delete_triple_vecs(conn, note_path)
     conn.execute("DELETE FROM triples WHERE note_path = ?", (note_path,))
 
-    triples = extract_triples(title, content, base_url=summarize_url)
+    try:
+        triples = extract_triples(title, content, base_url=summarize_url)
+    except TripleExtractionError as e:
+        # Hard parse failure — queue for retry instead of silently dropping (#28).
+        _record_triple_failure(conn, note_path, content_hash, str(e))
+        return
+
+    # Extraction succeeded (possibly with zero triples) — clear any retry row.
+    _clear_triple_failure(conn, note_path)
     if not triples:
         return
 
@@ -360,23 +420,28 @@ def _prepare_note(
             log.warning(f"Embedding failed for {parsed.path}: {e}")
             chunk_embeddings = [None] * len(texts)
 
-    # Extract triples (LLM call)
+    # Extract triples (LLM call). A hard parse failure is captured (not swallowed)
+    # so the main thread can queue the note for retry — see issue #28.
     triples = []
     triple_embeddings = []
-    if not skip_triples and full_content:
+    triple_error = None
+    triple_attempted = not skip_triples and bool(full_content)
+    if triple_attempted:
         try:
             triples = extract_triples(parsed.title, full_content, base_url=summarize_url)
-            if triples and HAS_NUMPY:
-                triple_texts = [triple_to_text(t) for t in triples]
-                try:
-                    triple_embeddings = get_embeddings_batch(triple_texts, base_url=embed_url)
-                except Exception as e:
-                    log.warning(f"Triple embedding failed for {parsed.path}: {e}")
-                    triple_embeddings = [None] * len(triples)
-            else:
-                triple_embeddings = [None] * len(triples)
+        except TripleExtractionError as e:
+            triple_error = str(e)
         except Exception as e:
             log.warning(f"Triple extraction failed for {parsed.path}: {e}")
+        if triples and HAS_NUMPY:
+            triple_texts = [triple_to_text(t) for t in triples]
+            try:
+                triple_embeddings = get_embeddings_batch(triple_texts, base_url=embed_url)
+            except Exception as e:
+                log.warning(f"Triple embedding failed for {parsed.path}: {e}")
+                triple_embeddings = [None] * len(triples)
+        else:
+            triple_embeddings = [None] * len(triples)
 
     return {
         "parsed": parsed,
@@ -386,6 +451,8 @@ def _prepare_note(
         "chunk_embeddings": chunk_embeddings,
         "triples": triples,
         "triple_embeddings": triple_embeddings,
+        "triple_error": triple_error,
+        "triple_attempted": triple_attempted,
     }
 
 
@@ -486,6 +553,16 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
                 upsert_triple_vec(conn, triple_id, emb_blob)
 
         upsert_cooccurrence_for_note(conn, parsed.path)
+
+    # Record or clear the triple-extraction retry row (#28). Only when extraction
+    # was actually attempted, so skip_triples runs don't erase a pending retry.
+    if result.get("triple_attempted"):
+        if result.get("triple_error"):
+            _record_triple_failure(
+                conn, parsed.path, parsed.content_hash, result["triple_error"]
+            )
+        else:
+            _clear_triple_failure(conn, parsed.path)
 
     conn.commit()
 
@@ -798,11 +875,18 @@ def backfill_triples(
     embed_url = embed_url or get_config().embed_url
     summarize_url = summarize_url or get_config().llm_url
     conn = get_db(DB_PATH)
-    # Find notes without triples
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # Notes without triples, excluding those still in retry backoff (#28): a note
+    # queued for a later retry is skipped until its next_retry_at comes due.
     rows = conn.execute(
         """SELECT n.path, n.title, n.content_hash FROM notes n
            LEFT JOIN (SELECT DISTINCT note_path FROM triples) t ON n.path = t.note_path
-           WHERE t.note_path IS NULL"""
+           LEFT JOIN triple_extraction_failed f ON n.path = f.note_path
+           WHERE t.note_path IS NULL
+             AND (f.note_path IS NULL
+                  OR f.next_retry_at IS NULL
+                  OR f.next_retry_at <= ?)""",
+        (now_iso,),
     ).fetchall()
 
     total = len(rows)
