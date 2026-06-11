@@ -59,6 +59,12 @@ def cmd_backfill(args):
         conn = get_db(DB_PATH)
         n = persist_cooccurrence(conn)
         print(f"Co-occurrence backfill: {n} entity pairs populated.")
+    if args.target in ("memories", "all"):
+        from ..memories import backfill_memory_embeddings
+        from ..schema import DB_PATH, get_db
+        conn = get_db(DB_PATH)
+        n = backfill_memory_embeddings(conn, embed_url=args.embed_url)
+        print(f"Memory embedding backfill: {n} memories (re-)embedded.")
 
 
 def cmd_watch(args):

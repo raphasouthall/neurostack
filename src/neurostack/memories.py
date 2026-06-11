@@ -166,8 +166,10 @@ def save_memory(
             datetime.now(timezone.utc) + timedelta(hours=ttl_hours)
         ).strftime("%Y-%m-%d %H:%M:%S")
 
-    # Try to embed
+    # Try to embed. On failure, flag the row for backfill instead of silently
+    # storing a NULL embedding that stays invisible to semantic search (issue #29).
     embedding_blob = None
+    embed_pending = 0
     try:
         from .config import get_config
         from .embedder import embedding_to_blob, get_embedding
@@ -176,7 +178,8 @@ def save_memory(
         emb = get_embedding(content, base_url=url)
         embedding_blob = embedding_to_blob(emb)
     except Exception as exc:
-        log.debug("Could not embed memory (non-fatal): %s", exc)
+        embed_pending = 1
+        log.warning("Could not embed memory; flagged for backfill: %s", exc)
 
     tags_json = json.dumps(tags or [])
     memory_uuid = str(uuid.uuid4())
@@ -186,12 +189,12 @@ def save_memory(
         INSERT INTO memories (content, tags, entity_type,
                               source_agent, workspace,
                               embedding, expires_at,
-                              session_id, uuid)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                              session_id, uuid, embed_pending)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (content, tags_json, entity_type, source_agent,
          workspace, embedding_blob, expires_at,
-         session_id, memory_uuid),
+         session_id, memory_uuid, embed_pending),
     )
     conn.commit()
 
@@ -281,7 +284,7 @@ def update_memory(
         set_clauses.append("content = ?")
         params.append(content)
 
-        # Re-embed synchronously
+        # Re-embed synchronously; flag for backfill on failure (#29).
         try:
             from .config import get_config
             from .embedder import embedding_to_blob, get_embedding
@@ -291,8 +294,10 @@ def update_memory(
             embedding_blob = embedding_to_blob(emb)
             set_clauses.append("embedding = ?")
             params.append(embedding_blob)
+            set_clauses.append("embed_pending = 0")
         except Exception as exc:
-            log.debug("Could not re-embed memory (non-fatal): %s", exc)
+            set_clauses.append("embed_pending = 1")
+            log.warning("Could not re-embed memory; flagged for backfill: %s", exc)
 
     # Tags: replace, add, remove (processed in order)
     existing_tags_raw = row.get("tags")
@@ -535,8 +540,9 @@ def merge_memories(
     s_merge = source.get("merge_count") or 0
     new_merge_count = t_merge + s_merge + 1
 
-    # Re-embed
+    # Re-embed the merged content; flag for backfill on failure (#29).
     embedding_blob = target.get("embedding")
+    embed_pending = 0
     try:
         from .config import get_config
         from .embedder import embedding_to_blob, get_embedding
@@ -545,20 +551,21 @@ def merge_memories(
         emb = get_embedding(merged_content, base_url=url)
         embedding_blob = embedding_to_blob(emb)
     except Exception as exc:
-        log.debug("Could not re-embed merged memory (non-fatal): %s", exc)
+        embed_pending = 1
+        log.warning("Could not re-embed merged memory; flagged for backfill: %s", exc)
 
     conn.execute(
         """
         UPDATE memories
         SET content = ?, tags = ?, entity_type = ?, embedding = ?,
-            merge_count = ?, merged_from = ?,
+            merge_count = ?, merged_from = ?, embed_pending = ?,
             updated_at = datetime('now'), revision_count = revision_count + 1
         WHERE memory_id = ?
         """,
         (
             merged_content, json.dumps(merged_tags), merged_type,
             embedding_blob, new_merge_count, json.dumps(existing_merged),
-            target_id,
+            embed_pending, target_id,
         ),
     )
 
@@ -1096,3 +1103,48 @@ def _row_to_memory(row: dict | sqlite3.Row, score: float = 0.0) -> Memory:
         file_path=row.get("file_path"),
         score=score,
     )
+
+
+def backfill_memory_embeddings(
+    conn: sqlite3.Connection,
+    embed_url: str | None = None,
+) -> int:
+    """Re-embed memories whose embedding is missing or flagged pending (issue #29).
+
+    Targets rows with ``embedding IS NULL`` or ``embed_pending = 1`` — including
+    those written during a past embedding-service outage. Returns the count
+    successfully (re-)embedded; rows that still fail keep ``embed_pending = 1``
+    and are retried on the next call.
+    """
+    from .config import get_config
+    from .embedder import embedding_to_blob, get_embedding
+
+    url = embed_url or get_config().embed_url
+    rows = conn.execute(
+        "SELECT memory_id, content FROM memories"
+        " WHERE embedding IS NULL OR embed_pending = 1"
+    ).fetchall()
+    if not rows:
+        return 0
+
+    healed = 0
+    failed = 0
+    for r in rows:
+        try:
+            blob = embedding_to_blob(get_embedding(r["content"], base_url=url))
+        except Exception as exc:
+            failed += 1
+            log.warning("Memory %s still cannot embed: %s", r["memory_id"], exc)
+            continue
+        conn.execute(
+            "UPDATE memories SET embedding = ?, embed_pending = 0 WHERE memory_id = ?",
+            (blob, r["memory_id"]),
+        )
+        healed += 1
+    conn.commit()
+    if healed or failed:
+        log.info(
+            "Memory embedding backfill: %d embedded, %d still failing.",
+            healed, failed,
+        )
+    return healed
