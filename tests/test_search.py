@@ -794,3 +794,145 @@ class TestReinforcementFromSearch:
             "SELECT COUNT(*) as c FROM entity_cooccurrence"
         ).fetchone()["c"]
         assert count == 0, "No reinforcement should occur when query matches no entities"
+
+
+class TestLinkSectionHelpers:
+    """Unit tests for the link-section detection helpers (issue #41)."""
+
+    def test_link_density_pure_links(self):
+        from neurostack.search import _link_density
+        content = "[[azure consolidation]] [[azure networking]] [[azure dr]]"
+        assert _link_density(content) > 0.8
+
+    def test_link_density_prose(self):
+        from neurostack.search import _link_density
+        content = "Azure consolidation moves prod and staging into one subscription."
+        assert _link_density(content) == 0.0
+
+    def test_link_density_empty(self):
+        from neurostack.search import _link_density
+        assert _link_density("") == 0.0
+
+    def test_is_link_section_by_heading_with_links(self):
+        from neurostack.search import _is_link_section
+        # A named link section below the density threshold still qualifies when it
+        # carries a non-trivial fraction of links (density ~0.36 here, < 0.5).
+        body = "Background: [[note-a]] and [[note-b]] both cover this topic well."
+        assert _is_link_section("## Architecture > ### See also", body, 0.5) is True
+
+    def test_is_link_section_heading_variants(self):
+        from neurostack.search import _is_link_section
+        # Prefix matching catches "Related Notes", "Backlinks", etc.
+        links = "[[a]] [[b]] [[c]] notes here"
+        assert _is_link_section("## Related Notes", links, 0.5) is True
+        assert _is_link_section("## Backlinks", links, 0.5) is True
+
+    def test_link_heading_prose_not_penalised(self):
+        from neurostack.search import _is_link_section
+        # A "Related Work" heading with no links is prose, not a link list.
+        prose = "Related work in this area focuses on hierarchical inference models."
+        assert _is_link_section("## Related Work", prose, 0.5) is False
+
+    def test_is_link_section_by_density(self):
+        from neurostack.search import _is_link_section
+        dense = "[[a]] [[b]] [[c]] [[d]]"
+        assert _is_link_section("## Notes", dense, 0.5) is True
+
+    def test_not_link_section_for_body(self):
+        from neurostack.search import _is_link_section
+        body = "Azure consolidation environments: prod, staging and dev."
+        assert _is_link_section("## Environments", body, 0.5) is False
+
+
+class TestLinkSectionDownweight:
+    """hybrid_search must not let a link-block match outrank a body match (#41)."""
+
+    def _setup(self, conn):
+        """Two notes matching the same query:
+
+        - canonical.md: a substantive '## Environments' body chunk (no links),
+          moderately similar to the query (cosine 0.7).
+        - linky.md: a '## Related' chunk that is a dense wiki-link block whose
+          link titles repeat the query terms, more similar to the query
+          (cosine 0.9). Without the penalty its higher cosine wins.
+
+        Embeddings are crafted so the two notes' mutual cosine is 0.63 (below the
+        0.65 lateral-inhibition threshold) and each note is single-chunk (so the
+        convergence stage is skipped) — isolating the link-section penalty.
+        """
+        import math
+        import struct
+
+        def blob(vec, dim=768):
+            full = list(vec) + [0.0] * (dim - len(vec))
+            return struct.pack(f"{dim}f", *full)
+
+        # query = e0; linky cos 0.9 (in e0/e1 plane); canonical cos 0.7 (e0/e2 plane)
+        linky_vec = [0.9, math.sqrt(1 - 0.81), 0.0]
+        canon_vec = [0.7, 0.0, math.sqrt(1 - 0.49)]
+
+        for path, title, heading, content, vec in [
+            ("canonical.md", "Canonical", "## Environments",
+             "azure consolidation environments", canon_vec),
+            ("linky.md", "Linky", "## Related",
+             "[[azure consolidation environments]]", linky_vec),
+        ]:
+            conn.execute(
+                "INSERT INTO notes (path, title, content_hash, updated_at) "
+                "VALUES (?, ?, ?, ?)",
+                (path, title, "h", "2026-01-01"),
+            )
+            conn.execute(
+                "INSERT INTO chunks (note_path, heading_path, content, "
+                "content_hash, position, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+                (path, heading, content, f"h_{path}", 0, blob(vec)),
+            )
+        conn.commit()
+
+    def _run(self, conn, monkeypatch, penalty):
+        import numpy as np
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+        query_emb = np.array([1.0, 0.0, 0.0] + [0.0] * 765, dtype=np.float32)
+        monkeypatch.setattr(
+            search_mod, "get_embedding", lambda q, base_url=None: query_emb
+        )
+
+        original = config_mod._config
+        try:
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.0
+            cfg.link_section_penalty = penalty
+            config_mod._config = cfg
+            return hybrid_search("azure consolidation environments",
+                                 top_k=5, embed_url="http://fake", explain=True)
+        finally:
+            config_mod._config = original
+
+    def test_penalty_off_reproduces_bug(self, in_memory_db, monkeypatch):
+        self._setup(in_memory_db)
+        results = self._run(in_memory_db, monkeypatch, penalty=1.0)
+        # Without the penalty the link block (higher cosine) wins — the #41 bug.
+        assert results[0].note_path == "linky.md"
+
+    def test_penalty_on_promotes_body_note(self, in_memory_db, monkeypatch):
+        self._setup(in_memory_db)
+        results = self._run(in_memory_db, monkeypatch, penalty=0.5)
+        # With the penalty the substantive body note ranks first.
+        assert results[0].note_path == "canonical.md"
+        scores = {r.note_path: r.score for r in results}
+        assert scores["canonical.md"] > scores["linky.md"]
+
+    def test_explain_breakdown_present(self, in_memory_db, monkeypatch):
+        self._setup(in_memory_db)
+        results = self._run(in_memory_db, monkeypatch, penalty=0.5)
+        linky = next(r for r in results if r.note_path == "linky.md")
+        assert linky.explain is not None
+        assert linky.explain["link_section"] is True
+        # The link block's score is penalised: post-penalty below the base.
+        assert linky.explain["after_link"] < linky.explain["base"]
+        canon = next(r for r in results if r.note_path == "canonical.md")
+        assert canon.explain["link_section"] is False
