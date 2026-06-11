@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -302,6 +302,21 @@ CREATE TABLE IF NOT EXISTS entity_cooccurrence (
 
 CREATE INDEX IF NOT EXISTS idx_cooccurrence_a ON entity_cooccurrence(entity_a);
 CREATE INDEX IF NOT EXISTS idx_cooccurrence_b ON entity_cooccurrence(entity_b);
+
+-- Notes whose triple extraction failed to parse (issue #28). A row here marks a
+-- note for retry with exponential backoff; the row is deleted once extraction
+-- succeeds. Distinct from a note that legitimately yields zero triples (no row).
+CREATE TABLE IF NOT EXISTS triple_extraction_failed (
+    note_path TEXT PRIMARY KEY REFERENCES notes(path) ON DELETE CASCADE,
+    content_hash TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    last_attempt_at TEXT,
+    next_retry_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_triple_failed_retry
+    ON triple_extraction_failed(next_retry_at);
 """
 
 # Migration from v1 to v2: add triples tables
@@ -555,6 +570,22 @@ CREATE TABLE IF NOT EXISTS community_level_stats (
 MIGRATION_V15 = """
 -- Columns dropped dynamically in _run_migrations so fresh installs
 -- (which never created them) don't error.
+"""
+
+
+# Migration from v15 to v16: triple-extraction failure / retry queue (issue #28)
+MIGRATION_V16 = """
+CREATE TABLE IF NOT EXISTS triple_extraction_failed (
+    note_path TEXT PRIMARY KEY REFERENCES notes(path) ON DELETE CASCADE,
+    content_hash TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    last_attempt_at TEXT,
+    next_retry_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_triple_failed_retry
+    ON triple_extraction_failed(next_retry_at);
 """
 
 
@@ -822,6 +853,19 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v15 complete.")
+
+    if current < 16:
+        log.info(
+            "Migrating schema v15 -> v16: "
+            "adding triple-extraction retry queue..."
+        )
+        conn.executescript(MIGRATION_V16)
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (16)"
+        )
+        conn.commit()
+        log.info("Migration to v16 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
