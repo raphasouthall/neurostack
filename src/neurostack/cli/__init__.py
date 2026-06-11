@@ -9,7 +9,6 @@ from pathlib import Path
 from .. import __version__
 from ..config import get_config
 from .api import cmd_api, cmd_bundle, cmd_serve
-from .cloud import cmd_cloud
 from .index import cmd_backfill, cmd_index, cmd_reembed_chunks, cmd_watch
 from .memories import cmd_memories
 from .search import (
@@ -74,10 +73,6 @@ def main():
         help="Installation mode (lite=FTS5 only, full=+ML+communities)",
     )
     p.add_argument(
-        "--cloud", action="store_true", default=False,
-        help="Use cloud mode (Gemini indexing)",
-    )
-    p.add_argument(
         "--index", action="store_true", default=True,
         help="Index vault after init (default: true)",
     )
@@ -134,71 +129,6 @@ def main():
     # status
     p = sub.add_parser("status", help="Show NeuroStack status")
     p.set_defaults(func=cmd_status)
-
-    # cloud
-    p = sub.add_parser("cloud", help="Manage NeuroStack Cloud authentication")
-    cloud_sub = p.add_subparsers(dest="cloud_command")
-
-    cp = cloud_sub.add_parser("login", help="Authenticate with an API key")
-    cp.add_argument("--key", "-k", help="API key (or prompted interactively)")
-
-    cloud_sub.add_parser("logout", help="Clear stored cloud credentials")
-
-    cp = cloud_sub.add_parser("status", help="Show cloud auth state and usage")
-    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
-
-    cloud_sub.add_parser("setup", help="Interactive cloud endpoint and key configuration")
-
-    cloud_sub.add_parser("consent", help="Grant privacy consent for cloud features")
-
-    cp = cloud_sub.add_parser("push", help="Upload vault files for cloud indexing")
-    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
-
-    cp = cloud_sub.add_parser("pull", help="Download indexed database from cloud")
-    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
-
-    cp = cloud_sub.add_parser("query", help="Search vault via cloud API")
-    cp.add_argument("query", help="Search text")
-    cp.add_argument("--top-k", type=int, default=10, help="Number of results")
-    cp.add_argument(
-        "--depth", default="auto",
-        choices=["triples", "summaries", "full", "auto"],
-        help="Result depth (default: auto)",
-    )
-    cp.add_argument(
-        "--mode", default="hybrid",
-        choices=["hybrid", "semantic", "keyword"],
-        help="Search mode (default: hybrid)",
-    )
-    cp.add_argument("--workspace", "-w", help="Scope to vault subdirectory")
-    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
-
-    cp = cloud_sub.add_parser("triples", help="Search knowledge graph triples via cloud")
-    cp.add_argument("query", help="Search text")
-    cp.add_argument("--top-k", type=int, default=10, help="Number of results")
-    cp.add_argument("--workspace", "-w", help="Scope to vault subdirectory")
-    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
-
-    cp = cloud_sub.add_parser("summary", help="Get note summary from cloud")
-    cp.add_argument("note_path", help="Note path (e.g. research/my-note.md)")
-    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
-
-    cp = cloud_sub.add_parser("sync", help="Push vault changes and fetch new memories")
-    cp.add_argument("--json", action="store_true", default=False, help="Output as JSON")
-    cp.add_argument("--quiet", "-q", action="store_true", default=False, help="Suppress output")
-
-    cloud_sub.add_parser("install-hooks", help="Install git hooks for automatic cloud sync")
-    cloud_sub.add_parser("uninstall-hooks", help="Remove git hooks for cloud sync")
-    cloud_sub.add_parser("hooks-status", help="Check git hook installation status")
-
-    cp = cloud_sub.add_parser("auto-sync", help="Manage automatic periodic sync")
-    auto_sub = cp.add_subparsers(dest="auto_sync_command")
-    ap = auto_sub.add_parser("enable", help="Enable periodic sync via systemd timer")
-    ap.add_argument("--interval", default="15min", help="Sync interval (default: 15min)")
-    auto_sub.add_parser("disable", help="Disable periodic sync")
-    auto_sub.add_parser("status", help="Show auto-sync status")
-
-    p.set_defaults(func=cmd_cloud)
 
     # memories
     p = sub.add_parser("memories", help="Manage agent-written memories")
@@ -700,10 +630,6 @@ def main():
 
     # watch
     p = sub.add_parser("watch", help="Watch vault for changes")
-    p.add_argument(
-        "--cloud", action="store_true", default=False,
-        help="Enable automatic cloud push after idle period (60s)",
-    )
     p.set_defaults(func=cmd_watch)
 
     args = parser.parse_args()
@@ -713,7 +639,7 @@ def main():
 
     # Preflight: nudge user to run init if vault doesn't exist yet
     _skip_preflight = {
-        "init", "install", "uninstall", "doctor", "status", "demo", "update", "cloud",
+        "init", "install", "uninstall", "doctor", "status", "demo", "update",
         "setup-desktop", "setup-client", "bundle",
     }
     vault_path = Path(args.vault)

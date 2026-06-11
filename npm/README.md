@@ -42,7 +42,6 @@ NEUROSTACK_MODE=lite npm install -g neurostack
 ## Links
 
 - [GitHub](https://github.com/raphasouthall/neurostack)
-- [Website](https://neurostack.sh)
 - [PyPI](https://pypi.org/project/neurostack/)
 
 ## License
