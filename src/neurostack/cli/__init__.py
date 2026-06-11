@@ -485,7 +485,8 @@ def main():
     # backfill
     p = sub.add_parser("backfill", help="Backfill missing summaries and/or triples")
     p.add_argument(
-        "target", choices=["summaries", "triples", "cooccurrence", "all"],
+        "target",
+        choices=["summaries", "triples", "cooccurrence", "memories", "all"],
         default="all", nargs="?",
     )
     p.set_defaults(func=cmd_backfill)

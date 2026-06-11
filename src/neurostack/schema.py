@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -230,7 +230,11 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT,
     uuid TEXT,
-    file_path TEXT
+    file_path TEXT,
+    -- Set to 1 when content embedding failed (e.g. embedding service down) so the
+    -- row can be re-embedded by `neurostack backfill memories` instead of being
+    -- silently invisible to semantic search forever — see issue #29.
+    embed_pending INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(entity_type);
@@ -241,6 +245,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_session
     ON memories(session_id) WHERE session_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_memories_embedded ON memories(memory_id)
     WHERE embedding IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_memories_embed_pending ON memories(memory_id)
+    WHERE embed_pending = 1;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_uuid ON memories(uuid);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -866,6 +872,35 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v16 complete.")
+
+    if current < 17:
+        log.info(
+            "Migrating schema v16 -> v17: "
+            "adding memories.embed_pending column..."
+        )
+        # ALTER TABLE doesn't support IF NOT EXISTS - check column existence.
+        cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()
+        }
+        if "embed_pending" not in cols:
+            conn.execute(
+                "ALTER TABLE memories ADD COLUMN"
+                " embed_pending INTEGER NOT NULL DEFAULT 0"
+            )
+        # Flag existing rows with no embedding so backfill picks them up (#29).
+        conn.execute(
+            "UPDATE memories SET embed_pending = 1 WHERE embedding IS NULL"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_embed_pending"
+            " ON memories(memory_id) WHERE embed_pending = 1"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (17)"
+        )
+        conn.commit()
+        log.info("Migration to v17 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
