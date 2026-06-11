@@ -382,7 +382,7 @@ def vault_stats() -> dict:
     from ..cooccurrence import get_cooccurrence_stats
     from ..memories import get_memory_stats
     from ..schema import DB_PATH, get_db
-    from ..search import get_dormancy_report, run_excitability_demotion
+    from ..search import get_dormancy_report
 
     conn = get_db(DB_PATH)
 
@@ -411,12 +411,6 @@ def vault_stats() -> dict:
     dormancy = get_dormancy_report(conn, threshold=0.05, limit=0)
     cooc_stats = get_cooccurrence_stats(conn)
     mem_stats = get_memory_stats(conn)
-
-    demotion_result = None
-    try:
-        demotion_result = run_excitability_demotion(conn)
-    except Exception as exc:
-        log.debug("Excitability demotion failed: %s", exc)
 
     result = {
         "notes": notes,
@@ -450,8 +444,6 @@ def vault_stats() -> dict:
         "cooccurrence_total_weight": cooc_stats["total_weight"],
         "memories": mem_stats,
     }
-    if demotion_result and demotion_result["demoted"] > 0:
-        result["demotion"] = demotion_result
     return result
 
 

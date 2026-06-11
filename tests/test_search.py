@@ -295,6 +295,35 @@ class TestExcitabilityDemotion:
         result = run_excitability_demotion(conn)
         assert "dormant.md" not in result["paths"]
 
+    def test_repromotes_renewed_dormant_notes(self, in_memory_db):
+        """A dormant note with fresh usage is promoted back to active (issue #31)."""
+        conn = in_memory_db
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at)"
+            " VALUES (?, ?, ?, ?)",
+            ("renewed.md", "Renewed", "h", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO note_metadata (note_path, status) VALUES (?, ?)",
+            ("renewed.md", "dormant"),
+        )
+        # Fresh usage pushes hotness back above threshold
+        conn.execute(
+            "INSERT INTO note_usage (note_path, used_at) VALUES (?, datetime('now'))",
+            ("renewed.md",),
+        )
+        conn.commit()
+
+        result = run_excitability_demotion(conn)
+        assert result["promoted"] >= 1
+        assert "renewed.md" in result["promoted_paths"]
+
+        status = conn.execute(
+            "SELECT status FROM note_metadata WHERE note_path = ?",
+            ("renewed.md",),
+        ).fetchone()["status"]
+        assert status == "active"
+
 
 class TestExcitabilityBoost:
     def test_active_notes_boost_fts_results(self, in_memory_db):

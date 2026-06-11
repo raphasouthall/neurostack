@@ -467,12 +467,16 @@ def run_excitability_demotion(
     threshold: float = 0.05,
     half_life_days: float = 30.0,
 ) -> dict:
-    """Demote notes with decayed hotness below threshold from active to dormant.
+    """Reconcile note_metadata.status with live hotness in both directions.
 
-    Updates note_metadata.status — vault files are NEVER modified.
-    Also demotes never-used notes older than 90 days.
+    Demotes active notes whose decayed hotness fell below threshold (and
+    never-used notes older than 90 days) to dormant, and re-promotes dormant
+    notes whose hotness has risen back above threshold to active. Keeps the
+    status cache — which drives the ×1.15 search boost — in sync with the
+    note_usage signal. Updates note_metadata.status only; vault files are
+    NEVER modified.
 
-    Returns {"demoted": N, "paths": [...]}.
+    Returns {"demoted": N, "paths": [...], "promoted": M, "promoted_paths": [...]}.
     """
     demoted_paths = []
 
@@ -513,10 +517,29 @@ def run_excitability_demotion(
             if changed:
                 demoted_paths.append(path)
 
-    if demoted_paths:
+    # Re-promote dormant notes whose hotness has risen back above threshold.
+    # Without this, dormant is a one-way trap: a renewed note keeps its dormant
+    # status (and loses the active search boost) despite fresh usage.
+    promoted_paths = []
+    for entry in report["active"]:
+        path = entry["path"]
+        changed = conn.execute(
+            "UPDATE note_metadata SET status = 'active'"
+            " WHERE note_path = ? AND status = 'dormant'",
+            (path,),
+        ).rowcount
+        if changed:
+            promoted_paths.append(path)
+
+    if demoted_paths or promoted_paths:
         conn.commit()
 
-    return {"demoted": len(demoted_paths), "paths": demoted_paths}
+    return {
+        "demoted": len(demoted_paths),
+        "paths": demoted_paths,
+        "promoted": len(promoted_paths),
+        "promoted_paths": promoted_paths,
+    }
 
 
 def hybrid_search(
