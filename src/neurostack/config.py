@@ -34,7 +34,7 @@ CONFIG_PATH = _config_dir() / "config.toml"
 class Config:
     """NeuroStack configuration with env var overrides."""
 
-    mode: str = "local"  # "local" | "cloud"
+    mode: str = "local"  # "local"
     vault_root: Path = field(default_factory=lambda: Path.home() / "brain")
     db_dir: Path = field(default_factory=_data_dir)
     embed_url: str = "http://localhost:11434"
@@ -51,10 +51,6 @@ class Config:
     api_port: int = 8000
     api_key: str = ""
     cooccurrence_boost_weight: float = 0.1
-
-    @property
-    def is_cloud(self) -> bool:
-        return self.mode == "cloud"
 
     @property
     def db_path(self) -> Path:

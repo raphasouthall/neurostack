@@ -1,6 +1,6 @@
 [project]
 name = "neurostack"
-version = "0.14.0"
+version = "0.15.0"
 description = "Build, maintain, and search your knowledge vault. CLI + MCP server with stale note detection, semantic search, and neuroscience-grounded memory."
 readme = "README.md"
 license = "Apache-2.0"
@@ -59,8 +59,8 @@ api = [
 neurostack = "neurostack.cli:main"
 
 [project.urls]
-Homepage = "https://neurostack.sh"
-Documentation = "https://neurostack.sh"
+Homepage = "https://github.com/raphasouthall/neurostack"
+Documentation = "https://github.com/raphasouthall/neurostack#readme"
 Repository = "https://github.com/raphasouthall/neurostack"
 Issues = "https://github.com/raphasouthall/neurostack/issues"
 

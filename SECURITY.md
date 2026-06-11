@@ -10,7 +10,7 @@
 
 **Do not open a public issue for security vulnerabilities.**
 
-Email: hello@neurostack.sh
+Report privately through GitHub Security Advisories: [github.com/raphasouthall/neurostack/security/advisories/new](https://github.com/raphasouthall/neurostack/security/advisories/new)
 
 Include:
 - Description of the vulnerability

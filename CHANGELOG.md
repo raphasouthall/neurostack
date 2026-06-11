@@ -1,10 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.15.0 — Remove NeuroStack Cloud (2026-06-03)
+
+### Breaking changes
+
+- **Removed NeuroStack Cloud.** The hosted service has been discontinued. All cloud client commands (`neurostack cloud *`), the `--cloud` flag, cloud sync, and the `neurostack.cloud` package have been removed. NeuroStack is now a purely local tool: it indexes a local Markdown vault into local SQLite, uses local Ollama for embeddings and summaries, and runs the MCP server and OpenAI-compatible API on your own machine. No data leaves your machine unless you configure a third-party LLM provider.
+
+  **Migration**: run `neurostack init` (or `--mode lite|full`) for local indexing. Connect AI clients to the local MCP server with `neurostack serve`. There is no hosted endpoint to connect to.
 
 ### Added
 
 - **Folder-path signal in community detection.** Embeddings treat "infrastructure" as one topic whether a note lives under `work/` or `home/`, so distinct organisational areas bled into one cluster. `_build_similarity_matrix` now blends a fourth channel — notes sharing a top-level folder prefix get a uniform similarity bump (`PATH_SIGNAL_WEIGHT`, default 0.3; `PATH_PREFIX_DEPTH`, default 1). Measured on a ~490-note vault: folder purity rose 0.68 → 0.85 (coarse) / 0.76 → 0.93 (fine) with modularity held or slightly improved. Degrades gracefully — root-level files form no path edges and a flat single-folder vault yields an all-zero signal; set the weight to 0 to disable.
+- `reconcile_deletions(conn, vault_root, exclude_dirs)` in `watcher.py` — prune orphaned notes; returns the count pruned.
+- Startup reconcile in `neurostack watch`: the watcher sweeps offline deletions on boot, so it self-heals without a manual re-index.
+- `neurostack index --no-prune` to keep orphaned rows (opt out of the new default).
 
 ### Fixed
 
@@ -14,11 +23,11 @@
 
 - **`neurostack index` now prunes notes deleted from disk.** A full index was upsert-only: it added and updated notes but never removed DB rows for files that no longer existed. The only deletion path was the live watcher's per-event handler, so any file removed while the watcher was down orphaned its rows forever — inflating note counts, polluting co-occurrence and community detection with ghost nodes, and dragging modularity down. A full scan sees the whole vault, so it can now reconcile: anything in the DB but not on disk is pruned (FK cascades drop chunks/summaries/triples; sqlite-vec rows are cleared explicitly). An empty scan is treated as a misconfigured/unmounted vault and skips pruning rather than wiping the index.
 
-### Added
+### Removed
 
-- `reconcile_deletions(conn, vault_root, exclude_dirs)` in `watcher.py` — prune orphaned notes; returns the count pruned.
-- Startup reconcile in `neurostack watch`: the watcher sweeps offline deletions on boot, so it self-heals without a manual re-index.
-- `neurostack index --no-prune` to keep orphaned rows (opt out of the new default).
+- `neurostack cloud login/push/pull/sync/consent/install-hooks/auto-sync` CLI commands and the `--cloud` init flag
+- `cloud` mode from `manifest.json` and the hosted remote endpoint from `server.json`
+- `DPA.md` (Data Processing Agreement) and `docs/api-contract-v2.md` (hosted sync API contract)
 
 ## v0.13.0 — Remove vault_capture (2026-05-05)
 

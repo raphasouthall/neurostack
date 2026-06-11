@@ -1,6 +1,6 @@
 {
   "name": "neurostack",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Build, maintain, and search your knowledge vault with AI",
   "bin": {
     "neurostack": "bin/neurostack.js",
@@ -23,14 +23,14 @@
     "neuroscience",
     "cli"
   ],
-  "author": "Raphael Southall <hello@neurostack.sh>",
+  "author": "Raphael Southall",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/raphasouthall/neurostack.git"
   },
   "mcpName": "io.github.raphasouthall/neurostack",
-  "homepage": "https://neurostack.sh",
+  "homepage": "https://github.com/raphasouthall/neurostack",
   "bugs": {
     "url": "https://github.com/raphasouthall/neurostack/issues"
   },
