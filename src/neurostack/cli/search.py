@@ -493,7 +493,7 @@ def cmd_stats(args):
 
 def cmd_prediction_errors(args):
     from ..schema import DB_PATH, get_db
-    from ..search import _normalize_workspace
+    from ..search import PREDICTION_ERROR_MIN_OCCURRENCES, _normalize_workspace
     conn = get_db(DB_PATH)
 
     if args.resolve:
@@ -534,10 +534,11 @@ def cmd_prediction_errors(args):
         FROM prediction_errors
         {where}
         GROUP BY note_path, error_type
+        HAVING COUNT(*) >= ?
         ORDER BY occurrences DESC, avg_distance DESC
         LIMIT ?
         """,
-        params + [args.limit],
+        params + [PREDICTION_ERROR_MIN_OCCURRENCES, args.limit],
     ).fetchall()
 
     total_where = "WHERE resolved_at IS NULL"
@@ -547,8 +548,14 @@ def cmd_prediction_errors(args):
         total_params.append(ws + "/")
 
     total = conn.execute(
-        f"SELECT COUNT(DISTINCT note_path) FROM prediction_errors {total_where}",
-        total_params,
+        f"""
+        SELECT COUNT(*) FROM (
+            SELECT note_path FROM prediction_errors {total_where}
+            GROUP BY note_path, error_type
+            HAVING COUNT(*) >= ?
+        )
+        """,
+        total_params + [PREDICTION_ERROR_MIN_OCCURRENCES],
     ).fetchone()[0]
 
     if args.json:
