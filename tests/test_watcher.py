@@ -113,3 +113,89 @@ class TestOnAnyEvent:
         handler.on_any_event(event)
 
         MockTimer.assert_not_called()
+
+
+def _raise_triple_error(*a, **k):
+    from neurostack.triples import TripleExtractionError
+    raise TripleExtractionError("unparseable")
+
+
+class TestTripleRetryQueue:
+    """Triple-extraction failure / retry-queue bookkeeping (issue #28)."""
+
+    def _note(self, conn, path="notes/a.md", content_hash="h1"):
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) VALUES (?,?,?,?)",
+            (path, "A", content_hash, "2026-01-01"),
+        )
+        conn.commit()
+
+    def test_record_then_clear(self, in_memory_db):
+        from neurostack.watcher import _clear_triple_failure, _record_triple_failure
+        conn = in_memory_db
+        self._note(conn)
+        _record_triple_failure(conn, "notes/a.md", "h1", "boom")
+        row = conn.execute(
+            "SELECT attempts, next_retry_at FROM triple_extraction_failed WHERE note_path=?",
+            ("notes/a.md",),
+        ).fetchone()
+        assert row["attempts"] == 1
+        assert row["next_retry_at"] is not None
+        _clear_triple_failure(conn, "notes/a.md")
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM triple_extraction_failed"
+        ).fetchone()["c"] == 0
+
+    def test_attempts_increment(self, in_memory_db):
+        from neurostack.watcher import _record_triple_failure
+        conn = in_memory_db
+        self._note(conn)
+        _record_triple_failure(conn, "notes/a.md", "h1", "e1")
+        _record_triple_failure(conn, "notes/a.md", "h1", "e2")
+        row = conn.execute(
+            "SELECT attempts FROM triple_extraction_failed WHERE note_path=?",
+            ("notes/a.md",),
+        ).fetchone()
+        assert row["attempts"] == 2
+
+    def test_index_records_failure_on_parse_error(self, in_memory_db, monkeypatch):
+        import neurostack.watcher as watcher_mod
+        conn = in_memory_db
+        self._note(conn)
+        monkeypatch.setattr(watcher_mod, "extract_triples", _raise_triple_error)
+        watcher_mod._index_triples_for_note(
+            "notes/a.md", "A", "content", "h1", "2026-01-01",
+            conn, "http://e", "http://l",
+        )
+        row = conn.execute(
+            "SELECT attempts FROM triple_extraction_failed WHERE note_path=?",
+            ("notes/a.md",),
+        ).fetchone()
+        assert row is not None and row["attempts"] == 1
+        # No triples written for a failed extraction.
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM triples WHERE note_path=?", ("notes/a.md",)
+        ).fetchone()["c"] == 0
+
+    def test_index_clears_failure_on_success(self, in_memory_db, monkeypatch):
+        import neurostack.watcher as watcher_mod
+        from neurostack.watcher import _record_triple_failure
+        conn = in_memory_db
+        self._note(conn)
+        _record_triple_failure(conn, "notes/a.md", "h1", "old failure")
+        monkeypatch.setattr(
+            watcher_mod, "extract_triples",
+            lambda *a, **k: [{"s": "A", "p": "b", "o": "C"}],
+        )
+        monkeypatch.setattr(watcher_mod, "HAS_NUMPY", False)
+        watcher_mod._index_triples_for_note(
+            "notes/a.md", "A", "content", "h1", "2026-01-01",
+            conn, "http://e", "http://l",
+        )
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM triple_extraction_failed WHERE note_path=?",
+            ("notes/a.md",),
+        ).fetchone()["c"] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM triples WHERE note_path=?", ("notes/a.md",)
+        ).fetchone()["c"] == 1

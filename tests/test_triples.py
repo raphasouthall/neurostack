@@ -3,7 +3,13 @@
 import json
 from unittest.mock import MagicMock, patch
 
-from neurostack.triples import extract_triples, triple_to_text
+import pytest
+
+from neurostack.triples import (
+    TripleExtractionError,
+    extract_triples,
+    triple_to_text,
+)
 
 
 def _mock_response(content: str) -> MagicMock:
@@ -88,20 +94,77 @@ class TestExtractTriplesMarkdownFences:
 
 class TestExtractTriplesJsonError:
     @patch("neurostack.triples.httpx.post")
-    def test_invalid_json_returns_empty(self, mock_post):
+    def test_invalid_json_raises_after_retry(self, mock_post):
+        # Unparseable on both the initial attempt and the retry -> hard failure
+        # (issue #28: no longer silently swallowed as an empty result).
         mock_post.return_value = _mock_response("this is not json at all")
 
-        result = extract_triples("Note", "content")
+        with pytest.raises(TripleExtractionError):
+            extract_triples("Note", "content")
 
-        assert result == []
+        assert mock_post.call_count == 2  # initial attempt + one retry
 
     @patch("neurostack.triples.httpx.post")
-    def test_partial_json_returns_empty(self, mock_post):
+    def test_partial_json_raises(self, mock_post):
         mock_post.return_value = _mock_response('[{"s": "A", "p": "b"')
+
+        with pytest.raises(TripleExtractionError):
+            extract_triples("Note", "content")
+
+
+class TestExtractTriplesRobustness:
+    @patch("neurostack.triples.httpx.post")
+    def test_object_form_parsed(self, mock_post):
+        raw = json.dumps({"triples": [{"s": "A", "p": "b", "o": "C"}]})
+        mock_post.return_value = _mock_response(raw)
+
+        result = extract_triples("Note", "content")
+
+        assert result == [{"s": "A", "p": "b", "o": "C"}]
+
+    @patch("neurostack.triples.httpx.post")
+    def test_salvages_json_embedded_in_prose(self, mock_post):
+        raw = 'Sure! Here are the triples:\n[{"s": "A", "p": "b", "o": "C"}]\nHope that helps.'
+        mock_post.return_value = _mock_response(raw)
+
+        result = extract_triples("Note", "content")
+
+        assert result == [{"s": "A", "p": "b", "o": "C"}]
+
+    @patch("neurostack.triples.httpx.post")
+    def test_retry_succeeds_after_first_failure(self, mock_post):
+        mock_post.side_effect = [
+            _mock_response("garbage, no json here"),
+            _mock_response('{"triples": [{"s": "A", "p": "b", "o": "C"}]}'),
+        ]
+
+        result = extract_triples("Note", "content")
+
+        assert result == [{"s": "A", "p": "b", "o": "C"}]
+        assert mock_post.call_count == 2
+
+    @patch("neurostack.triples.httpx.post")
+    def test_empty_result_is_not_a_failure(self, mock_post):
+        mock_post.return_value = _mock_response('{"triples": []}')
 
         result = extract_triples("Note", "content")
 
         assert result == []
+        assert mock_post.call_count == 1  # genuine-empty must not raise or retry
+
+    @patch("neurostack.triples.httpx.post")
+    def test_json_mode_first_attempt_only(self, mock_post):
+        mock_post.side_effect = [
+            _mock_response("garbage"),
+            _mock_response("[]"),
+        ]
+
+        extract_triples("Note", "content")
+
+        first = mock_post.call_args_list[0][1]["json"]
+        second = mock_post.call_args_list[1][1]["json"]
+        assert first.get("response_format") == {"type": "json_object"}
+        assert "response_format" not in second
 
 
 class TestExtractTriplesValidation:

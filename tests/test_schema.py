@@ -226,7 +226,7 @@ def test_migration_v11_to_v12(in_memory_db):
 
     # Version bumped
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
-    assert row["v"] == 15
+    assert row["v"] == SCHEMA_VERSION
 
 
 def test_migration_v12_idempotent(in_memory_db):
@@ -247,4 +247,4 @@ def test_migration_v12_idempotent(in_memory_db):
     _run_migrations(conn)
 
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
-    assert row["v"] == 15
+    assert row["v"] == SCHEMA_VERSION
