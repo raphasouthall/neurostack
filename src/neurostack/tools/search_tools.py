@@ -204,7 +204,7 @@ def vault_summary(path_or_query: str) -> dict:
     import json
 
     from ..schema import DB_PATH, get_db
-    from ..search import hybrid_search
+    from ..search import _record_note_usage, hybrid_search
 
     _, embed_url = _cfg()
     conn = get_db(DB_PATH)
@@ -229,6 +229,8 @@ def vault_summary(path_or_query: str) -> dict:
 
     if not row:
         return {"error": "Note not found"}
+
+    _record_note_usage(conn, [row["path"]])
 
     return {
         "path": row["path"],
