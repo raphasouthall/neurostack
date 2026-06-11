@@ -8,6 +8,7 @@ import pytest
 from neurostack.attractor import (
     ALPHA_SEMANTIC,
     GAMMA_WIKILINKS,
+    PATH_SIGNAL_WEIGHT,
     TOP_K_COARSE,
     TOP_K_FINE,
     TOP_K_NEIGHBORS,
@@ -15,6 +16,7 @@ from neurostack.attractor import (
     _assign_communities,
     _attractor_convergence,
     _build_similarity_matrix,
+    _hierarchy_health_warning,
     _modularity,
     _size_stats,
     _sparsify_top_k,
@@ -589,3 +591,144 @@ class TestSizeStats:
 
     def test_empty(self):
         assert _size_stats({}) == (0, 0, 0, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Adaptive semantic edge threshold
+# ---------------------------------------------------------------------------
+
+class TestSemanticThreshold:
+    """The adaptive mean+k*std threshold prunes the dense semantic floor."""
+
+    def _two_cluster_embeddings(self, dim=8):
+        # Cluster A along e0, cluster B at 60° (cosine 0.5) — within-cluster
+        # cosine 1.0, cross-cluster 0.5. Deterministic, no RNG.
+        u = np.zeros(dim, dtype=np.float32)
+        u[0] = 1.0
+        v = np.zeros(dim, dtype=np.float32)
+        v[0] = 0.5
+        v[1] = 0.75 ** 0.5
+        return np.stack([u, u, u, v, v, v])
+
+    def test_threshold_prunes_cross_cluster_edges(self, in_memory_db):
+        conn = in_memory_db
+        paths = [f"n{i}.md" for i in range(6)]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = self._two_cluster_embeddings()
+
+        from neurostack import attractor
+        with patch.object(attractor, "SEMANTIC_THRESHOLD_K", None):
+            S_full = _build_similarity_matrix(conn, paths, embs)
+        with patch.object(attractor, "SEMANTIC_THRESHOLD_K", 0.5):
+            S_thr = _build_similarity_matrix(conn, paths, embs)
+
+        # Thresholding removes edges overall...
+        assert np.count_nonzero(S_thr) < np.count_nonzero(S_full)
+        # ...specifically the weak cross-cluster ones (cosine 0.5)...
+        assert S_full[0, 3] > 0.0
+        assert S_thr[0, 3] == 0.0
+        # ...while strong within-cluster edges survive.
+        assert S_thr[0, 1] > 0.0
+        assert S_thr[3, 4] > 0.0
+
+    def test_disabled_keeps_floor(self, in_memory_db):
+        conn = in_memory_db
+        paths = [f"n{i}.md" for i in range(6)]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = self._two_cluster_embeddings()
+
+        from neurostack import attractor
+        with patch.object(attractor, "SEMANTIC_THRESHOLD_K", None):
+            S = _build_similarity_matrix(conn, paths, embs)
+        # With thresholding off, the cross-cluster edge is retained.
+        assert S[0, 3] > 0.0
+
+    def test_small_vault_not_thresholded(self, in_memory_db):
+        """n<=2 skips thresholding (can't estimate a distribution)."""
+        conn = in_memory_db
+        paths = ["a.md", "b.md"]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        # Identical embeddings -> cosine 1.0 -> full ALPHA_SEMANTIC retained.
+        emb = np.ones(8, dtype=np.float32)
+        S = _build_similarity_matrix(conn, paths, np.stack([emb, emb]))
+        assert S[0, 1] == pytest.approx(ALPHA_SEMANTIC, abs=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Hierarchy health check (issue #33)
+# ---------------------------------------------------------------------------
+
+class TestHierarchyHealthWarning:
+    def test_healthy_hierarchy_no_warning(self):
+        # Finer partition, both Q healthy. Q(fine) < Q(coarse) is EXPECTED at
+        # gamma=1 and must NOT warn (the old check fired on every good build).
+        assert _hierarchy_health_warning(7, 11, 0.339, 0.281) is None
+
+    def test_inverted_count_warns(self):
+        w = _hierarchy_health_warning(10, 6, 0.30, 0.25)
+        assert w is not None and "inverted" in w
+
+    def test_weak_structure_warns(self):
+        w = _hierarchy_health_warning(7, 11, 0.04, 0.03)
+        assert w is not None and "Weak" in w
+
+    def test_equal_counts_ok(self):
+        # n_fine == n_coarse is a valid (non-collapsed) refinement boundary.
+        assert _hierarchy_health_warning(7, 7, 0.30, 0.20) is None
+
+
+# ---------------------------------------------------------------------------
+# Folder-path signal
+# ---------------------------------------------------------------------------
+
+class TestPathSignal:
+    """Notes sharing a top-level folder get a uniform similarity bump."""
+
+    def test_same_folder_gets_bump_cross_folder_does_not(self, in_memory_db):
+        conn = in_memory_db
+        paths = ["work/a.md", "work/b.md", "home/c.md", "home/d.md"]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = np.eye(4, 16, dtype=np.float32)  # orthogonal -> semantic ~0
+
+        S = _build_similarity_matrix(conn, paths, embs)
+
+        # same top-level folder -> path weight (semantic floor is ~0 here)
+        assert S[0, 1] == pytest.approx(PATH_SIGNAL_WEIGHT, abs=1e-4)
+        assert S[2, 3] == pytest.approx(PATH_SIGNAL_WEIGHT, abs=1e-4)
+        # different folder -> no path edge
+        assert S[0, 2] == pytest.approx(0.0, abs=1e-4)
+
+    def test_root_level_file_forms_no_path_edge(self, in_memory_db):
+        conn = in_memory_db
+        paths = ["home/a.md", "home/b.md", "top.md"]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = np.eye(3, 16, dtype=np.float32)
+
+        S = _build_similarity_matrix(conn, paths, embs)
+
+        assert S[0, 1] == pytest.approx(PATH_SIGNAL_WEIGHT, abs=1e-4)  # home pair
+        assert S[0, 2] == pytest.approx(0.0, abs=1e-4)  # root file, no group
+        assert S[1, 2] == pytest.approx(0.0, abs=1e-4)
+
+    def test_weight_zero_disables(self, in_memory_db):
+        conn = in_memory_db
+        paths = ["work/a.md", "work/b.md", "work/c.md"]
+        for p in paths:
+            _insert_note(conn, p)
+        conn.commit()
+        embs = np.eye(3, 16, dtype=np.float32)
+
+        from neurostack import attractor
+        with patch.object(attractor, "PATH_SIGNAL_WEIGHT", 0.0):
+            S = _build_similarity_matrix(conn, paths, embs)
+        assert S[0, 1] == pytest.approx(0.0, abs=1e-4)  # same folder but off

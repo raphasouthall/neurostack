@@ -39,9 +39,22 @@ log = logging.getLogger("neurostack")
 # α: semantic similarity (embedding cosine) — structural/content overlap
 # β_cooc: co-occurrence weight — Hebbian "used together" signal
 # γ: wiki-link weight — explicit human connections
+# δ_path: folder-path weight — notes sharing a top-level folder (e.g. work/
+#   vs home/) get a similarity bump. Embeddings see "infrastructure" as one
+#   topic regardless of work-vs-personal context; the folder layout carries
+#   that organisational signal, which otherwise never reaches detection.
 ALPHA_SEMANTIC = 0.6
 BETA_COOCCURRENCE = 0.25
 GAMMA_WIKILINKS = 0.15
+PATH_SIGNAL_WEIGHT = 0.3
+
+# Folder depth the path signal groups on. 1 = top-level (work/, home/,
+# research/…), the grain that separates work from personal. Deeper grouping
+# (e.g. work/proj-a vs work/proj-b) measurably reduced cohesion. Notes with no
+# folder (root-level files) form no path edges; a flat single-folder vault
+# yields an all-zero signal, so this degrades gracefully. Set the weight to 0
+# to disable.
+PATH_PREFIX_DEPTH = 1
 
 # ── Inverse temperature for attractor convergence ──
 # Low β → broad themes (coarse), high β → narrow sub-themes (fine)
@@ -69,6 +82,21 @@ TOP_K_FINE = 20
 # Minimum shared entities for a note-note edge (co-occurrence signal)
 MIN_SHARED = 2
 
+# ── Adaptive semantic edge threshold ──
+# In a single-domain vault, most note pairs share a moderate baseline cosine
+# (~the off-diagonal mean), so the semantic signal is a dense floor that
+# connects nearly everything and collapses community modularity toward random
+# (Q≈0.06). We zero semantic edges below mean + k·std of the off-diagonal
+# distribution, keeping only meaningfully-similar pairs. Measured effect on a
+# ~490-note vault: Q 0.06 → ~0.30 at k=0.5, with stable community counts.
+# Adaptive (not a fixed cosine) so it self-tunes to each vault's spread.
+# Set to None to disable thresholding.
+SEMANTIC_THRESHOLD_K = 0.5
+
+# Minimum Newman modularity for a partition to count as non-trivial structure.
+# Below this a partition is barely distinguishable from random.
+MIN_HEALTHY_Q = 0.05
+
 
 def _build_similarity_matrix(
     conn: sqlite3.Connection,
@@ -91,6 +119,15 @@ def _build_similarity_matrix(
     S_semantic = normalised @ normalised.T
     # Clamp to [0, 1] — negative cosine means unrelated, treat as 0
     np.clip(S_semantic, 0.0, 1.0, out=S_semantic)
+
+    # Prune the dense low-similarity floor (see SEMANTIC_THRESHOLD_K). Compute
+    # the threshold on the off-diagonal only — the diagonal is self-similarity
+    # (1.0) and would skew mean/std. Edges below it are zeroed so only
+    # meaningfully-similar note pairs feed community detection.
+    if SEMANTIC_THRESHOLD_K is not None and n > 2:
+        off = S_semantic[~np.eye(n, dtype=bool)]
+        threshold = float(off.mean() + SEMANTIC_THRESHOLD_K * off.std())
+        S_semantic[S_semantic < threshold] = 0.0
 
     # 2. Co-occurrence signal (entity co-occurrence weights → note-note)
     S_cooc = np.zeros((n, n), dtype=np.float32)
@@ -170,11 +207,28 @@ def _build_similarity_matrix(
                 S_links[src, tgt] = 1.0
                 S_links[tgt, src] = 1.0  # symmetric
 
-    # Blend all three signals
+    # 4. Folder-path signal: notes sharing a top-level folder prefix get a
+    # uniform similarity bump, carrying the vault's organisational structure
+    # (work/ vs home/ vs research/…) that embeddings alone don't capture.
+    S_path = np.zeros((n, n), dtype=np.float32)
+    if PATH_SIGNAL_WEIGHT > 0:
+        prefix_groups: dict[str, list[int]] = defaultdict(list)
+        for i, p in enumerate(note_paths):
+            prefix_groups["/".join(p.split("/")[:PATH_PREFIX_DEPTH])].append(i)
+        for members in prefix_groups.values():
+            # A root-level file (no folder) is its own singleton group and
+            # contributes no edges, which is what we want.
+            if len(members) < 2:
+                continue
+            mi = np.array(members)
+            S_path[np.ix_(mi, mi)] = 1.0
+
+    # Blend all four signals
     S = (
         ALPHA_SEMANTIC * S_semantic
         + BETA_COOCCURRENCE * S_cooc
         + GAMMA_WIKILINKS * S_links
+        + PATH_SIGNAL_WEIGHT * S_path
     )
 
     # Zero out self-similarity (diagonal) — a note shouldn't attract itself
@@ -431,6 +485,35 @@ def _store_level_stats(
     )
 
 
+def _hierarchy_health_warning(
+    n_coarse: int, n_fine: int, q_coarse: float, q_fine: float,
+) -> str | None:
+    """Return a warning string if the community hierarchy looks unhealthy.
+
+    A healthy fine level REFINES the coarse one: more, smaller communities,
+    both non-trivial fits. We deliberately do NOT require Q(fine) > Q(coarse):
+    Newman modularity is resolution-dependent and maximised at a single scale,
+    so a finer partition scores LOWER at the implicit γ=1 by construction
+    (verified empirically — the fine partition only overtakes coarse at
+    γ≈β_fine). The real failure mode (issue #33) is the fine level COLLAPSING
+    into fewer communities than coarse; that, plus a minimum-quality floor, is
+    what we check. Returns None when the hierarchy is healthy.
+    """
+    if n_fine < n_coarse:
+        return (
+            f"Community hierarchy inverted: n_fine={n_fine} < "
+            f"n_coarse={n_coarse}. The fine level collapsed into fewer basins "
+            f"than coarse (check β_fine / top_k_fine — see issue #33)."
+        )
+    if q_coarse <= MIN_HEALTHY_Q or q_fine <= MIN_HEALTHY_Q:
+        return (
+            f"Weak community structure: Q(coarse)={q_coarse:.4f}, "
+            f"Q(fine)={q_fine:.4f} (≤ {MIN_HEALTHY_Q:.2f} is barely better "
+            f"than random — the similarity matrix may be too dense or sparse)."
+        )
+    return None
+
+
 def detect_communities(
     conn: sqlite3.Connection | None = None,
     db_path=None,
@@ -530,13 +613,9 @@ def detect_communities(
     _store_level_stats(conn, 1, communities_fine, q_fine)
     n_fine = len(communities_fine)
 
-    if q_fine <= q_coarse:
-        log.warning(
-            "Community hierarchy sanity check failed:"
-            f" Q(fine)={q_fine:.4f} <= Q(coarse)={q_coarse:.4f}."
-            " The fine partition is not a tighter fit than coarse —"
-            " expect n_fine > n_coarse and Q(fine) > Q(coarse)."
-        )
+    warning = _hierarchy_health_warning(n_coarse, n_fine, q_coarse, q_fine)
+    if warning:
+        log.warning(warning)
 
     conn.commit()
     log.info(
