@@ -567,13 +567,17 @@ def main():
     p.set_defaults(func=cmd_record_usage)
 
     # hooks
-    p = sub.add_parser("hooks", help="Manage automation hooks (harvest timer)")
+    p = sub.add_parser("hooks", help="Manage automation hooks (harvest + decay timers)")
     hooks_sub = p.add_subparsers(dest="hooks_command")
     hp = hooks_sub.add_parser("install", help="Install automation hooks")
     hp.add_argument("--type", default="harvest-timer",
+                    choices=["harvest-timer", "decay-timer"],
                     help="Hook type (default: harvest-timer)")
     hooks_sub.add_parser("status", help="Show hook status")
-    hooks_sub.add_parser("remove", help="Remove automation hooks")
+    rp = hooks_sub.add_parser("remove", help="Remove automation hooks")
+    rp.add_argument("--type", default="harvest-timer",
+                    choices=["harvest-timer", "decay-timer"],
+                    help="Hook type to remove (default: harvest-timer)")
     p.set_defaults(func=cmd_hooks)
 
     # context
