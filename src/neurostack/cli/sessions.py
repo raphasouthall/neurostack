@@ -210,6 +210,73 @@ def cmd_harvest(args):
     print(f"\n  Total: {n_saved} saved, {n_skip} skipped ({total} found)")
 
 
+_DECAY_TIMER = {
+    "unit": "neurostack-decay",
+    "service_desc": "NeuroStack excitability decay - sync note hotness status",
+    "exec": "%h/.local/bin/neurostack decay --demote",
+    "timer_desc": "Run neurostack excitability decay daily",
+    "on_calendar": "*-*-* 03:00:00",
+}
+
+
+def _install_user_timer(spec):
+    """Write and enable a systemd --user timer/service pair; return the timer path."""
+    import subprocess
+
+    timer_dir = Path.home() / ".config" / "systemd" / "user"
+    timer_dir.mkdir(parents=True, exist_ok=True)
+    (timer_dir / f"{spec['unit']}.service").write_text(
+        f"""[Unit]
+Description={spec['service_desc']}
+
+[Service]
+Type=oneshot
+ExecStart={spec['exec']}
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+"""
+    )
+    (timer_dir / f"{spec['unit']}.timer").write_text(
+        f"""[Unit]
+Description={spec['timer_desc']}
+
+[Timer]
+OnCalendar={spec['on_calendar']}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+    )
+    subprocess.run(
+        ["systemctl", "--user", "daemon-reload"],
+        check=False, capture_output=True,
+    )
+    subprocess.run(
+        ["systemctl", "--user", "enable", "--now", f"{spec['unit']}.timer"],
+        check=False, capture_output=True,
+    )
+    return timer_dir / f"{spec['unit']}.timer"
+
+
+def _remove_user_timer(unit):
+    """Disable and delete a systemd --user timer/service pair."""
+    import subprocess
+
+    subprocess.run(
+        ["systemctl", "--user", "disable", "--now", f"{unit}.timer"],
+        check=False, capture_output=True,
+    )
+    timer_dir = Path.home() / ".config" / "systemd" / "user"
+    for fname in (f"{unit}.service", f"{unit}.timer"):
+        p = timer_dir / fname
+        if p.exists():
+            p.unlink()
+    subprocess.run(
+        ["systemctl", "--user", "daemon-reload"],
+        check=False, capture_output=True,
+    )
+
+
 def cmd_hooks(args):
     """Manage neurostack automation hooks."""
     subcmd = getattr(args, "hooks_command", None)
@@ -260,6 +327,14 @@ def cmd_hooks(args):
                 print(f"  \033[32m\u2713\033[0m Installed {hook_type}")
                 print(f"    Timer: {timer_dir / 'neurostack-harvest.timer'}")
                 print("    Check: systemctl --user status neurostack-harvest.timer")
+        elif hook_type == "decay-timer":
+            timer_path = _install_user_timer(_DECAY_TIMER)
+            if args.json:
+                print(json.dumps({"installed": True, "type": hook_type}))
+            else:
+                print(f"  \033[32m✓\033[0m Installed {hook_type}")
+                print(f"    Timer: {timer_path}")
+                print("    Check: systemctl --user status neurostack-decay.timer")
         else:
             print(f"  Unknown hook type: {hook_type}")
 
@@ -271,14 +346,33 @@ def cmd_hooks(args):
             capture_output=True, text=True,
         )
         active = result.stdout.strip() == "active"
+        decay = subprocess.run(
+            ["systemctl", "--user", "is-active", "neurostack-decay.timer"],
+            capture_output=True, text=True,
+        )
+        decay_active = decay.stdout.strip() == "active"
         if args.json:
-            print(json.dumps({"harvest_timer": "active" if active else "inactive"}))
+            print(json.dumps({
+                "harvest_timer": "active" if active else "inactive",
+                "decay_timer": "active" if decay_active else "inactive",
+            }))
         else:
             status = "\033[32mactive\033[0m" if active else "\033[31minactive\033[0m"
+            d_status = "\033[32mactive\033[0m" if decay_active else "\033[31minactive\033[0m"
             print(f"  harvest-timer: {status}")
+            print(f"  decay-timer: {d_status}")
 
     elif subcmd == "remove":
         import subprocess
+
+        hook_type = getattr(args, "type", None) or "harvest-timer"
+        if hook_type == "decay-timer":
+            _remove_user_timer("neurostack-decay")
+            if args.json:
+                print(json.dumps({"removed": True, "type": hook_type}))
+            else:
+                print(f"  \033[32m✓\033[0m Removed {hook_type}")
+            return
 
         subprocess.run(
             ["systemctl", "--user", "disable", "--now", "neurostack-harvest.timer"],
