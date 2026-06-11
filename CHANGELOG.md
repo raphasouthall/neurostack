@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.16.0 — Retrieval & extraction fixes (2026-06-11)
+
+### Added
+
+- **`neurostack search --explain` / `hybrid_search(explain=True)`** — per-result score breakdown (base, link-section penalty, convergence, context, hotness, co-occurrence, excitability, prediction-error, lateral inhibition) for diagnosing ranking. Zero behaviour change when off.
+- **`neurostack backfill memories`** (and `backfill all`) — re-embeds memories whose embedding is missing or previously failed; rows that still fail stay flagged for the next run.
+- **Triple-extraction retry queue** — notes whose extraction fails to parse are recorded with exponential backoff (1h/6h/24h/72h/weekly) and retried by `neurostack backfill triples`, instead of being dropped silently.
+- Config knobs `link_section_penalty` / `link_density_threshold` (`NEUROSTACK_LINK_SECTION_PENALTY`, `NEUROSTACK_LINK_DENSITY_THRESHOLD`), default 0.5 / 0.5.
+
+### Fixed
+
+- **#41 — `vault_search` ranked link-list chunks above on-topic notes.** A `## Related` / index block repeats a note's topic terms through link titles, inflating its score. `hybrid_search` now down-weights matched chunks that are navigational link lists (named-heading or high wiki-link density), applied before the per-note dedup so a note's substantive body chunk wins instead.
+- **#40 — `vault_ask` answered "no source" when the answer was in the chunk.** Synthesis only saw the 300-char display snippet of the top chunk per note. It now uses the note summary plus the full matched chunk (cap 2000 chars), returns the excerpt in `sources[]`, and the prompt distinguishes "not in the retrieved notes" from asserting the fact is false.
+- **#28 — silent JSON-parse failures dropped triples permanently.** `extract_triples` now requests a JSON object, salvages JSON from noisy output, retries once, and raises `TripleExtractionError` on hard failure instead of returning an empty list indistinguishable from a genuinely empty note.
+- **#29 — memory embeddings were silently dropped on failure.** Failures now set an `embed_pending` flag and log at WARNING; `backfill_memory_embeddings` heals them and `full_index` self-heals pending rows when embeddings are reachable.
+
+### Schema
+
+- v15 → v16: `triple_extraction_failed` retry-queue table (#28).
+- v16 → v17: `memories.embed_pending` column; existing NULL-embedding rows flagged for backfill (#29).
+
 ## v0.15.0 — Remove NeuroStack Cloud (2026-06-03)
 
 ### Breaking changes
