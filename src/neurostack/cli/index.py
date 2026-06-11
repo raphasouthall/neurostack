@@ -67,5 +67,4 @@ def cmd_watch(args):
         vault_root=Path(args.vault),
         embed_url=args.embed_url,
         summarize_url=args.summarize_url,
-        cloud=getattr(args, "cloud", False),
     )
