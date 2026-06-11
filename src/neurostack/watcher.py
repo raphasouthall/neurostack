@@ -642,6 +642,7 @@ def full_index(
     summarize_url = summarize_url or get_config().llm_url
 
     # Pre-flight: check Ollama before starting a long indexing run
+    embeddings_ok = True
     if not skip_summary or not skip_triples:
         from .preflight import check_ollama, preflight_report
         result = check_ollama(
@@ -650,6 +651,7 @@ def full_index(
             llm_url=summarize_url,
             llm_model=get_config().llm_model,
         )
+        embeddings_ok = result.embed_ok
         report = preflight_report(result)
         if report:
             print(report)
@@ -741,6 +743,15 @@ def full_index(
         n_chunks = populate_vec_chunks(conn)
         n_triples = populate_vec_triples(conn)
         log.info(f"Vector index: {n_chunks} chunks, {n_triples} triples.")
+
+    # Self-heal memory embeddings flagged during a past embedding-service
+    # outage (#29). Only when embeddings are reachable this run; non-blocking.
+    if embeddings_ok:
+        try:
+            from .memories import backfill_memory_embeddings
+            backfill_memory_embeddings(conn, embed_url=embed_url)
+        except Exception as e:
+            log.warning(f"Memory embedding backfill skipped: {e}")
 
     log.info("Index complete.")
     return pruned

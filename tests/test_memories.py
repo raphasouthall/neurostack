@@ -457,3 +457,72 @@ class TestMemorySchemaIntegration:
             ("updated_token_abc",),
         ).fetchall()
         assert len(new) == 1
+
+
+def _embed_down(*a, **k):
+    raise ConnectionError("embedding service unavailable")
+
+
+def _fake_embed(*a, **k):
+    import numpy as np
+    return np.array([0.1] * 768, dtype=np.float32)
+
+
+class TestMemoryEmbeddingBackfill:
+    """Memory embeddings flag + backfill path (issue #29)."""
+
+    def test_save_flags_pending_on_embed_failure(self, in_memory_db, monkeypatch):
+        import neurostack.embedder as embedder_mod
+        monkeypatch.setattr(embedder_mod, "get_embedding", _embed_down)
+        m = save_memory(in_memory_db, content="no embed available", dedup=False)
+        row = in_memory_db.execute(
+            "SELECT embedding, embed_pending FROM memories WHERE memory_id=?",
+            (m.memory_id,),
+        ).fetchone()
+        assert row["embedding"] is None
+        assert row["embed_pending"] == 1
+
+    def test_save_not_pending_on_success(self, in_memory_db, monkeypatch):
+        import neurostack.embedder as embedder_mod
+        monkeypatch.setattr(embedder_mod, "get_embedding", _fake_embed)
+        m = save_memory(in_memory_db, content="embed ok", dedup=False)
+        row = in_memory_db.execute(
+            "SELECT embedding, embed_pending FROM memories WHERE memory_id=?",
+            (m.memory_id,),
+        ).fetchone()
+        assert row["embedding"] is not None
+        assert row["embed_pending"] == 0
+
+    def test_backfill_heals_pending(self, in_memory_db, monkeypatch):
+        import neurostack.embedder as embedder_mod
+        from neurostack.memories import backfill_memory_embeddings
+        # Saved during an outage -> pending
+        monkeypatch.setattr(embedder_mod, "get_embedding", _embed_down)
+        m = save_memory(in_memory_db, content="heal me later", dedup=False)
+        # Service recovers
+        monkeypatch.setattr(embedder_mod, "get_embedding", _fake_embed)
+        healed = backfill_memory_embeddings(in_memory_db)
+        assert healed == 1
+        row = in_memory_db.execute(
+            "SELECT embedding, embed_pending FROM memories WHERE memory_id=?",
+            (m.memory_id,),
+        ).fetchone()
+        assert row["embedding"] is not None
+        assert row["embed_pending"] == 0
+
+    def test_backfill_noop_when_all_embedded(self, in_memory_db, monkeypatch):
+        import neurostack.embedder as embedder_mod
+        from neurostack.memories import backfill_memory_embeddings
+        monkeypatch.setattr(embedder_mod, "get_embedding", _fake_embed)
+        save_memory(in_memory_db, content="already embedded", dedup=False)
+        assert backfill_memory_embeddings(in_memory_db) == 0
+
+    def test_backfill_leaves_pending_on_repeat_failure(self, in_memory_db, monkeypatch):
+        import neurostack.embedder as embedder_mod
+        from neurostack.memories import backfill_memory_embeddings
+        monkeypatch.setattr(embedder_mod, "get_embedding", _embed_down)
+        m = save_memory(in_memory_db, content="still down", dedup=False)
+        assert backfill_memory_embeddings(in_memory_db) == 0
+        assert in_memory_db.execute(
+            "SELECT embed_pending FROM memories WHERE memory_id=?", (m.memory_id,)
+        ).fetchone()["embed_pending"] == 1
