@@ -694,6 +694,9 @@ def cmd_decay(args):
             print(f"\n  Demoted {result['demoted']} notes to dormant status")
             for p in result["paths"]:
                 print(f"    {p}")
+            print(f"  Promoted {result['promoted']} notes back to active status")
+            for p in result["promoted_paths"]:
+                print(f"    {p}")
         return
 
     report = get_dormancy_report(
