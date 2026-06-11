@@ -389,6 +389,12 @@ def main():
         help="Project/domain context for result boosting",
     )
     p.add_argument(
+        "--explain", action="store_true",
+        help="Show the per-component score breakdown for each result "
+        "(base, link-section penalty, convergence, context, hotness, "
+        "co-occurrence, excitability, prediction-error, inhibition)",
+    )
+    p.add_argument(
         "--workspace", "-w", default=None,
         help="Restrict results to vault subdirectory "
         "(e.g. 'work/acme-cloud'). "

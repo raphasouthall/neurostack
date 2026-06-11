@@ -11,6 +11,7 @@ from .utils import _get_workspace
 
 def cmd_search(args):
     from ..search import hybrid_search
+    explain = getattr(args, "explain", False)
     results = hybrid_search(
         query=args.query,
         top_k=args.top_k,
@@ -18,6 +19,7 @@ def cmd_search(args):
         embed_url=args.embed_url,
         context=args.context,
         workspace=_get_workspace(args),
+        explain=explain,
     )
     if args.json:
         output = []
@@ -31,6 +33,8 @@ def cmd_search(args):
             }
             if r.summary:
                 entry["summary"] = r.summary
+            if explain and r.explain is not None:
+                entry["explain"] = r.explain
             output.append(entry)
         print(json.dumps(output, indent=2, default=str))
         return
@@ -55,6 +59,9 @@ def cmd_search(args):
         print(f"\U0001f4c4 {r.title} ({r.note_path})")
         print(f"   Section: {r.heading_path}")
         print(f"   Score: {r.score:.4f}")
+        if explain and r.explain is not None:
+            parts = ", ".join(f"{k}={v}" for k, v in r.explain.items())
+            print(f"   Explain: {parts}")
         if r.summary:
             print(f"   Summary: {r.summary}")
         print(f"   Snippet: {r.snippet[:200]}")
