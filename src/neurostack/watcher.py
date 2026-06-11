@@ -490,6 +490,52 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
     conn.commit()
 
 
+def reconcile_deletions(
+    conn,
+    vault_root: Path,
+    exclude_dirs: list[str] | None = None,
+) -> int:
+    """Prune index rows for notes whose files no longer exist on disk.
+
+    A full disk scan is the source of truth: any note in the DB but not on
+    disk was deleted while nothing was watching. FK cascades drop the note's
+    chunks/summaries/triples; the sqlite-vec virtual tables aren't cascaded,
+    so they're cleared explicitly first.
+
+    Returns the number of orphaned notes pruned. If the scan finds zero files
+    the prune is skipped — an empty scan almost always means a misconfigured
+    or unmounted ``vault_root``, not a genuinely emptied vault, and we refuse
+    to wipe the whole index on that basis.
+    """
+    skip_parts = {".git", ".obsidian", ".trash"}
+    skip_parts.update(exclude_dirs or [])
+    disk_paths = {
+        str(f.relative_to(vault_root))
+        for f in vault_root.rglob("*.md")
+        if not skip_parts.intersection(f.parts)
+    }
+    db_paths = [r["path"] for r in conn.execute("SELECT path FROM notes").fetchall()]
+    orphans = [p for p in db_paths if p not in disk_paths]
+    if not orphans:
+        return 0
+    if not disk_paths:
+        log.warning(
+            "Skipping orphan prune: vault scan found 0 files "
+            "(likely a misconfigured or unmounted vault_root)."
+        )
+        return 0
+
+    log.info(f"Pruning {len(orphans)} orphaned notes (deleted from disk)...")
+    _has_vec = has_vec_index(conn)
+    for rel_path in orphans:
+        if _has_vec:
+            delete_chunk_vecs(conn, rel_path)
+            delete_triple_vecs(conn, rel_path)
+        conn.execute("DELETE FROM notes WHERE path = ?", (rel_path,))
+    conn.commit()
+    return len(orphans)
+
+
 def full_index(
     vault_root: Path | None = None,
     embed_url: str = None,
@@ -498,12 +544,19 @@ def full_index(
     skip_triples: bool = False,
     exclude_dirs: list[str] | None = None,
     workers: int = 2,
+    prune: bool = True,
 ):
     """Full re-index of the entire vault.
 
     Uses ThreadPoolExecutor to parallelize LLM-bound work (summaries, triples,
     embeddings) across multiple notes. SQLite writes remain single-threaded.
     Set workers=1 for sequential processing (original behavior).
+
+    When ``prune`` is True (default), reconciles the index against disk:
+    notes whose files no longer exist are deleted. A full scan sees the
+    whole vault, so anything in the DB but not on disk was removed offline
+    (the live watcher only catches deletions while it is running). Returns
+    the number of orphaned notes pruned.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -591,6 +644,9 @@ def full_index(
                 if done % 50 == 0 or done == total:
                     log.info(f"  Progress: {done}/{total}")
 
+    # Reconcile against disk: prune notes whose files no longer exist.
+    pruned = reconcile_deletions(conn, vault_root, exclude_dirs) if prune else 0
+
     # Build graph
     log.info("Building wiki-link graph...")
     build_graph(conn, vault_root)
@@ -610,6 +666,7 @@ def full_index(
         log.info(f"Vector index: {n_chunks} chunks, {n_triples} triples.")
 
     log.info("Index complete.")
+    return pruned
 
 
 def backfill_summaries(
@@ -878,6 +935,16 @@ def run_watcher(
     summarize_url = summarize_url or get_config().llm_url
 
     log.info(f"Watching {vault_root} for changes...")
+
+    # Startup reconcile: the observer only catches deletions that happen
+    # while it is running, so files removed while the watcher was down would
+    # orphan their rows forever. Sweep them on boot.
+    try:
+        pruned = reconcile_deletions(get_db(DB_PATH), vault_root, exclude_dirs)
+        if pruned:
+            log.info("Startup reconcile pruned %d orphaned notes.", pruned)
+    except Exception as e:
+        log.warning("Startup reconcile failed: %s", e)
 
     handler = DebouncedHandler(
         vault_root, embed_url, summarize_url,
