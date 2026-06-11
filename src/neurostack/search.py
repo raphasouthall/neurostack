@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 
@@ -110,6 +111,8 @@ class SearchResult:
     score: float
     summary: str = ""
     title: str = ""
+    # Per-component score breakdown, populated only when hybrid_search(explain=True).
+    explain: dict | None = None
 
 
 @dataclass
@@ -128,6 +131,51 @@ def _normalize_workspace(workspace: str | None) -> str | None:
         return None
     workspace = workspace.strip("/")
     return workspace if workspace else None
+
+
+# Wiki-link markup, e.g. [[note-title]] or [[note-title|alias]].
+_WIKI_LINK_RE = re.compile(r"\[\[[^\]]+\]\]")
+
+# Leaf-heading prefixes that mark a chunk as a navigational link list rather than
+# substantive prose. Matched case-insensitively against the start of the deepest
+# heading, so "Related Notes" / "See also (2026)" / "Backlinks" all qualify.
+_LINK_SECTION_PREFIXES = (
+    "related", "see also", "see-also", "backlinks", "links",
+    "references", "index", "contents", "table of contents", "moc",
+)
+
+# A heading-named link section is only penalised when it actually carries links.
+# Real "## Related" blocks in the vault sit around 0.15–0.40 link density, while a
+# prose "## Related Work" section is ~0.0 — this floor keeps the latter untouched.
+_LINK_SECTION_HEADING_MIN_DENSITY = 0.1
+
+
+def _link_density(content: str) -> float:
+    """Fraction of a chunk's characters that are wiki-link markup (0.0–1.0)."""
+    if not content:
+        return 0.0
+    link_chars = sum(len(m.group(0)) for m in _WIKI_LINK_RE.finditer(content))
+    return link_chars / len(content)
+
+
+def _is_link_section(heading_path: str, content: str, density_threshold: float) -> bool:
+    """Return True if a chunk is a navigational link list / index section.
+
+    A chunk qualifies when EITHER wiki-link markup makes up at least
+    ``density_threshold`` of its characters (a dense link dump under any heading),
+    OR its leaf heading names a link section (## Related, ## See also, ## Backlinks,
+    …) AND the chunk carries a non-trivial fraction of links. Such chunks repeat a
+    note's topic terms via link titles, inflating keyword/semantic scores without
+    the body actually covering the query — see issue #41.
+    """
+    density = _link_density(content)
+    if density >= density_threshold:
+        return True
+    if heading_path and density >= _LINK_SECTION_HEADING_MIN_DENSITY:
+        leaf = heading_path.split(">")[-1].lstrip("# ").strip().lower()
+        if any(leaf.startswith(prefix) for prefix in _LINK_SECTION_PREFIXES):
+            return True
+    return False
 
 
 def fts_search(
@@ -550,6 +598,7 @@ def hybrid_search(
     db_path=None,
     context: str = None,
     workspace: str | None = None,
+    explain: bool = False,
 ) -> list[SearchResult]:
     """
     Hybrid search combining FTS5 and semantic similarity.
@@ -558,11 +607,24 @@ def hybrid_search(
     - "hybrid": FTS5 pre-filters top 50, then cosine-reranks
     - "semantic": Pure embedding search
     - "keyword": Pure FTS5 search
+
+    When ``explain`` is True, each returned SearchResult carries an ``explain``
+    dict recording the per-stage score breakdown (base, link-section penalty,
+    convergence, context, hotness, co-occurrence, excitability, prediction-error,
+    lateral inhibition) — used to diagnose ranking (issue #41).
     """
     from .schema import DB_PATH
 
-    embed_url = embed_url or get_config().embed_url
+    cfg = get_config()
+    embed_url = embed_url or cfg.embed_url
     conn = get_db(db_path or DB_PATH)
+    link_section_penalty = cfg.link_section_penalty
+    link_density_threshold = cfg.link_density_threshold
+
+    def _rec(r: dict, **fields) -> None:
+        """Record a per-stage score breakdown onto a result when explain is on."""
+        if explain and "_explain" in r:
+            r["_explain"].update(fields)
 
     workspace = _normalize_workspace(workspace)
 
@@ -614,6 +676,30 @@ def hybrid_search(
         raw_cosine = float(scores[i])
         r["cosine_sim"] = raw_cosine
         r["score"] = 0.3 * fts_score + 0.7 * raw_cosine
+        if explain:
+            r["_explain"] = {
+                "fts": round(fts_score, 4),
+                "cosine": round(raw_cosine, 4),
+                "base": round(r["score"], 4),
+                "heading": r.get("heading_path", ""),
+            }
+
+        # ── Link-section down-weight (issue #41) ──
+        # A matched chunk that is mostly wiki-link markup (## Related blocks,
+        # index/MOC notes) is navigational: its link titles repeat the note's
+        # topic terms and inflate keyword + semantic scores even when the note's
+        # body does not cover the query. Penalize the chunk score *before* the
+        # per-note dedup so a note's substantive body chunk, if any, wins instead.
+        density = _link_density(r.get("content", "") or "")
+        is_link_section = _is_link_section(
+            r.get("heading_path", ""), r.get("content", "") or "", link_density_threshold
+        )
+        if is_link_section:
+            r["score"] *= link_section_penalty
+        if explain:
+            r["_explain"]["link_density"] = round(density, 3)
+            r["_explain"]["link_section"] = is_link_section
+            r["_explain"]["after_link"] = round(r["score"], 4)
 
     # ── Energy landscape convergence confidence ──
     # Measures how representative the matched chunk is of its note's overall
@@ -660,6 +746,7 @@ def hybrid_search(
             convergence = centroid_sim / (1.0 + sigma)
             # Blend: keep 70% of existing score, add 30% convergence influence
             r["score"] = 0.7 * r["score"] + 0.3 * convergence
+            _rec(r, convergence=round(convergence, 4), after_convergence=round(r["score"], 4))
 
     # Apply context boost; track which notes are in-context for mismatch detection
     in_context_notes: set[str] = set()
@@ -670,8 +757,10 @@ def hybrid_search(
             note_path = r["note_path"]
             if note_path in direct_ctx:
                 r["score"] *= 1.4
+                _rec(r, context_boost=1.4, after_context=round(r["score"], 4))
             elif note_path in neighbor_ctx:
                 r["score"] *= 1.2
+                _rec(r, context_boost=1.2, after_context=round(r["score"], 4))
 
     # Apply hotness blend: final_score = 0.8 * semantic + 0.2 * hotness
     hotness_map = batch_hotness_scores(conn, [r["note_path"] for r in valid_results])
@@ -679,9 +768,9 @@ def hybrid_search(
         h = hotness_map.get(r["note_path"], 0.0)
         if h > 0.0:
             r["score"] = 0.8 * r["score"] + 0.2 * h
+            _rec(r, hotness=round(h, 4), after_hotness=round(r["score"], 4))
 
     # Extract query-matched entities (used for co-occurrence boost AND reinforcement)
-    cfg = get_config()
     query_words = [w.lower() for w in query.split() if len(w) > 2]
     query_entities: set[str] = set()
     if query_words:
@@ -742,6 +831,8 @@ def hybrid_search(
                                 normalized = raw_boost / (raw_boost + max_cooc_weight)
                                 boost = 1.0 + (cooc_weight * normalized)
                                 r["score"] *= boost
+                                _rec(r, cooccurrence_boost=round(boost, 4),
+                                     after_cooccurrence=round(r["score"], 4))
 
     # Excitability boost: notes with status=active get a 1.15x boost
     # Mirrors CREB-mediated excitability windows where recently active
@@ -775,6 +866,7 @@ def hybrid_search(
                     pass
         if status == "active":
             r["score"] *= 1.15
+            _rec(r, excitability_boost=1.15, after_excitability=round(r["score"], 4))
 
     # ── Prediction error demotion ──
     # Notes with unresolved prediction errors have previously "surprised" on
@@ -802,6 +894,8 @@ def hybrid_search(
                 ec = error_counts.get(r["note_path"], 0)
                 if ec > 0:
                     r["score"] *= 1.0 / (1.0 + 0.1 * ec)
+                    _rec(r, prediction_error_count=ec,
+                         after_prediction_error=round(r["score"], 4))
         except Exception:
             pass  # Never let error demotion disrupt search
 
@@ -864,6 +958,8 @@ def hybrid_search(
             if max_sim > INHIBITION_THRESHOLD:
                 penalty = 1.0 - INHIBITION_STRENGTH * max_sim
                 deduped[i]["score"] *= penalty
+                _rec(deduped[i], inhibition=round(penalty, 4),
+                     after_inhibition=round(deduped[i]["score"], 4))
 
         # Re-sort after inhibition — suppressed results may drop below
         # previously lower-ranked diverse results
@@ -948,6 +1044,9 @@ def _to_search_results(conn: sqlite3.Connection, results: list[dict]) -> list[Se
         if len(r["content"]) > 300:
             snippet += "..."
 
+        explain = r.get("_explain")
+        if explain is not None:
+            explain = {**explain, "final": round(r.get("score", 0.0), 4)}
         search_results.append(SearchResult(
             note_path=note_path,
             heading_path=r.get("heading_path", ""),
@@ -955,6 +1054,7 @@ def _to_search_results(conn: sqlite3.Connection, results: list[dict]) -> list[Se
             score=r.get("score", 0.0),
             summary=summary,
             title=title,
+            explain=explain,
         ))
 
     return search_results

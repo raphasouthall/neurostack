@@ -51,6 +51,13 @@ class Config:
     api_port: int = 8000
     api_key: str = ""
     cooccurrence_boost_weight: float = 0.1
+    # Link-section down-weighting (issue #41): a chunk that is mostly wiki-link
+    # markup — ## Related blocks, index / map-of-content notes — is navigational,
+    # not substantive. Matches there are penalized so a tangential note whose only
+    # hit is a dense link block can't outrank a note whose body covers the query.
+    link_section_penalty: float = 0.5     # score multiplier for link-list chunk matches
+    link_density_threshold: float = 0.5   # chunk is a "link section" when this fraction
+                                          # or more of its characters are wiki-link markup
 
     @property
     def db_path(self) -> Path:
@@ -85,6 +92,10 @@ def load_config() -> Config:
             cfg.api_port = int(data["api_port"])
         if "cooccurrence_boost_weight" in data:
             cfg.cooccurrence_boost_weight = float(data["cooccurrence_boost_weight"])
+        if "link_section_penalty" in data:
+            cfg.link_section_penalty = float(data["link_section_penalty"])
+        if "link_density_threshold" in data:
+            cfg.link_density_threshold = float(data["link_density_threshold"])
 
     # Env var overrides (NEUROSTACK_ prefix)
     env_map = {
@@ -103,6 +114,8 @@ def load_config() -> Config:
         "NEUROSTACK_API_PORT": ("api_port", int),
         "NEUROSTACK_API_KEY": ("api_key", str),
         "NEUROSTACK_COOCCURRENCE_BOOST": ("cooccurrence_boost_weight", float),
+        "NEUROSTACK_LINK_SECTION_PENALTY": ("link_section_penalty", float),
+        "NEUROSTACK_LINK_DENSITY_THRESHOLD": ("link_density_threshold", float),
     }
 
     for env_key, (attr, typ) in env_map.items():
