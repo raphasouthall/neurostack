@@ -595,10 +595,16 @@ def _llm_classify(
             "genuinely useful insight worth remembering long-term. "
             "Insights include: architectural decisions, bug root causes, "
             "tool configurations, user corrections/preferences, "
-            "discovered facts about infrastructure.\n\n"
+            "discovered facts about infrastructure, and ephemeral "
+            "session-scoped facts (credentials, endpoints, URLs, "
+            "current-state notes that go stale quickly).\n\n"
             "Skip boilerplate, status updates, and routine tool output.\n\n"
+            "Type guide: bug=root cause/fix, decision=choice made, "
+            "convention=rule to always follow, learning=discovered fact, "
+            "observation=durable infrastructure fact, "
+            "context=ephemeral/short-lived fact kept only short-term.\n\n"
             "For each message, respond with EXACTLY one line:\n"
-            "[N] KEEP type=<bug|decision|convention|learning|observation> "
+            "[N] KEEP type=<bug|decision|convention|learning|observation|context> "
             "summary=<one sentence summary>\n"
             "OR:\n"
             "[N] SKIP\n\n"
@@ -644,7 +650,7 @@ def _llm_classify(
             if 0 <= idx < len(batch):
                 c = batch[idx].copy()
                 etype = m.group(2).strip()
-                valid = {"bug", "decision", "convention", "learning", "observation"}
+                valid = {"bug", "decision", "convention", "learning", "observation", "context"}
                 if etype in valid:
                     c["entity_type"] = etype
                 else:
