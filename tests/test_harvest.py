@@ -1,6 +1,7 @@
 """Tests for neurostack.harvest — session transcript insight extraction."""
 
 import json
+from types import SimpleNamespace
 
 from neurostack.harvest import (
     AiderProvider,
@@ -10,6 +11,7 @@ from neurostack.harvest import (
     _extract_gemini_content,
     _extract_tags,
     _extract_text_claude,
+    _llm_classify,
     _load_harvest_state,
     _make_summary,
     _parse_jsonl,
@@ -485,3 +487,54 @@ class TestHarvestState:
         _save_harvest_state({"second": 2.0})
         loaded = _load_harvest_state()
         assert loaded == {"second": 2.0}
+
+
+# ---------------------------------------------------------------------------
+# _llm_classify — type validation (regression for #30)
+# ---------------------------------------------------------------------------
+
+class TestLlmClassify:
+    """The LLM classifier's valid-type set gates which entity types harvest emits."""
+
+    @staticmethod
+    def _stub_llm(monkeypatch, content):
+        """Make _llm_classify see a fixed LLM response, with no real config/network."""
+        import httpx
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"choices": [{"message": {"content": content}}]}
+
+        monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+        cfg = SimpleNamespace(llm_api_key=None)
+        monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+        monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
+
+    def test_context_type_accepted(self, monkeypatch):
+        # context is a real memory type (TTL-168h branch) but was missing from the
+        # classifier's valid set, so harvest could never emit it — see issue #30.
+        self._stub_llm(
+            monkeypatch,
+            "[1] KEEP type=context summary=Vault LXC token expires Friday, rotate before then",
+        )
+        candidates = [{
+            "text": "The vault LXC token expires Friday — rotate it before then.",
+            "role": "assistant",
+            "prefilter_type": "observation",
+        }]
+        out = _llm_classify(candidates, "http://llm.test", "model")
+        assert len(out) == 1
+        assert out[0]["entity_type"] == "context"
+
+    def test_unknown_type_falls_back_to_prefilter(self, monkeypatch):
+        self._stub_llm(monkeypatch, "[1] KEEP type=banana summary=nonsense label")
+        candidates = [{
+            "text": "Some candidate insight text long enough to be considered.",
+            "role": "assistant",
+            "prefilter_type": "observation",
+        }]
+        out = _llm_classify(candidates, "http://llm.test", "model")
+        assert out[0]["entity_type"] == "observation"
