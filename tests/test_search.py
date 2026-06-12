@@ -4,12 +4,16 @@ import struct
 
 from neurostack.config import Config
 from neurostack.search import (
+    DECAY_STALE_HOURS,
     PREDICTION_ERROR_SIM_THRESHOLD,
     _record_note_usage,
+    decay_hours_since,
     fts_search,
+    get_decay_last_run,
     hotness_score,
     hybrid_search,
     log_prediction_error,
+    record_decay_run,
     run_excitability_demotion,
 )
 
@@ -323,6 +327,65 @@ class TestExcitabilityDemotion:
             ("renewed.md",),
         ).fetchone()["status"]
         assert status == "active"
+
+
+class TestDecayRunTracking:
+    """Last-run stamp that lets `neurostack doctor` flag a stalled decay timer (issue #31 p4)."""
+
+    def _patch_db_dir(self, monkeypatch, tmp_path):
+        from types import SimpleNamespace
+        monkeypatch.setattr(
+            "neurostack.search.get_config",
+            lambda: SimpleNamespace(db_dir=tmp_path),
+        )
+
+    def test_no_state_returns_none(self, monkeypatch, tmp_path):
+        self._patch_db_dir(monkeypatch, tmp_path)
+        assert get_decay_last_run() is None
+        assert decay_hours_since() is None
+
+    def test_record_and_read_roundtrip(self, monkeypatch, tmp_path):
+        self._patch_db_dir(monkeypatch, tmp_path)
+        from datetime import datetime, timezone
+        when = datetime(2026, 6, 12, 3, 0, tzinfo=timezone.utc).isoformat()
+        record_decay_run(demoted=2, promoted=1, when=when)
+        assert (tmp_path / "decay_state.json").exists()
+        last = get_decay_last_run()
+        assert last is not None and last.isoformat() == when
+
+    def test_zero_run_still_records(self, monkeypatch, tmp_path):
+        # A run that demotes/promotes nothing still proves the timer fired.
+        self._patch_db_dir(monkeypatch, tmp_path)
+        record_decay_run(0, 0)
+        assert get_decay_last_run() is not None
+
+    def test_hours_since_fresh(self, monkeypatch, tmp_path):
+        self._patch_db_dir(monkeypatch, tmp_path)
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 6, 12, 12, 0, tzinfo=timezone.utc)
+        record_decay_run(0, 0, when=(now - timedelta(hours=1)).isoformat())
+        assert 0.9 < decay_hours_since(now=now) < 1.1
+
+    def test_hours_since_stale(self, monkeypatch, tmp_path):
+        self._patch_db_dir(monkeypatch, tmp_path)
+        from datetime import datetime, timedelta, timezone
+        now = datetime(2026, 6, 12, 12, 0, tzinfo=timezone.utc)
+        record_decay_run(0, 0, when=(now - timedelta(hours=72)).isoformat())
+        assert decay_hours_since(now=now) > DECAY_STALE_HOURS
+
+    def test_naive_timestamp_treated_as_utc(self, monkeypatch, tmp_path):
+        # A stored naive ISO string must not raise on the tz-aware subtraction.
+        self._patch_db_dir(monkeypatch, tmp_path)
+        record_decay_run(0, 0, when="2026-06-12T03:00:00")
+        from datetime import datetime, timezone
+        now = datetime(2026, 6, 12, 12, 0, tzinfo=timezone.utc)
+        assert decay_hours_since(now=now) == 9.0
+
+    def test_corrupt_state_returns_none(self, monkeypatch, tmp_path):
+        self._patch_db_dir(monkeypatch, tmp_path)
+        (tmp_path / "decay_state.json").write_text("{not valid json")
+        assert get_decay_last_run() is None
+        assert decay_hours_since() is None
 
 
 class TestExcitabilityBoost:
