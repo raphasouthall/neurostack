@@ -1637,6 +1637,28 @@ def cmd_doctor(args):
             " pip install neurostack[full])",
         ))
 
+    # Check excitability decay liveness — a stalled scheduled timer means
+    # dormancy reconciliation silently stops. Only meaningful with an index.
+    if cfg.db_path.exists():
+        from ..search import DECAY_STALE_HOURS, decay_hours_since
+        hours = decay_hours_since()
+        if hours is None:
+            checks.append((
+                "Decay", "WARN",
+                "never run. Install the scheduled timer to keep dormancy"
+                " in sync (neurostack-decay.timer running"
+                " 'neurostack decay --demote')",
+            ))
+        elif hours > DECAY_STALE_HOURS:
+            checks.append((
+                "Decay", "WARN",
+                f"last run {hours:.0f}h ago (> {DECAY_STALE_HOURS:.0f}h stale)."
+                " The decay timer may have stopped"
+                " — check neurostack-decay.timer",
+            ))
+        else:
+            checks.append(("Decay", "OK", f"last run {hours:.1f}h ago"))
+
     # Print results
     if args.json:
         output = {
