@@ -36,9 +36,18 @@ jobs:
           cd npm
           npm version "$VERSION" --no-git-tag-version --allow-same-version
       - name: Publish to npm
-        run: npm publish || echo "Version already published — skipping"
+        # Skip only when this version is genuinely already on the registry
+        # (idempotent re-runs). Any other failure — bad token, network — must
+        # fail the job loudly instead of being swallowed by `|| echo`.
+        run: |
+          if npm view "neurostack@${TAG#v}" version >/dev/null 2>&1; then
+            echo "neurostack@${TAG#v} already published — skipping"
+          else
+            npm publish
+          fi
         working-directory: npm
         env:
+          TAG: ${{ github.ref_name }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   build-mcpb:
