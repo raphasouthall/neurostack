@@ -114,9 +114,10 @@ class TestPrefilterClassify:
         text = "I discovered that the API rate limit resets every 60 seconds not 30."
         assert _prefilter_classify(text, "assistant") == "learning"
 
-    def test_observation_pattern(self):
+    def test_context_pattern(self):
+        # Credentials/endpoints/URLs default to ephemeral 'context' (issue #30 p3).
         text = "The API key is stored at /etc/myapp/credentials and rotated weekly."
-        assert _prefilter_classify(text, "assistant") == "observation"
+        assert _prefilter_classify(text, "assistant") == "context"
 
     def test_short_text_rejected(self):
         assert _prefilter_classify("root cause", "assistant") is None

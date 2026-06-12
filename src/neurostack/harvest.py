@@ -485,7 +485,10 @@ _PREFILTER: dict[str, list[re.Pattern]] = {
         r"|the reason is|key finding|it.s actually|didn.t know"
         r"|wasn.t aware|interesting)\b", re.I,
     )],
-    "observation": [re.compile(
+    # Credentials, endpoints, URLs and current-state facts go stale quickly —
+    # default them to ephemeral 'context' (168h TTL). The LLM still overrides
+    # per-item to 'observation' when a match is genuinely durable (issue #30).
+    "context": [re.compile(
         r"\b(credential|api.?key|endpoint|connection.?string"
         r"|host(name)?:|port:|url:|stored at|located at"
         r"|config\.toml|\.env\b)\b", re.I,
