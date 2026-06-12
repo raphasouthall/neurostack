@@ -58,6 +58,11 @@ class Config:
     link_section_penalty: float = 0.5     # score multiplier for link-list chunk matches
     link_density_threshold: float = 0.5   # chunk is a "link section" when this fraction
                                           # or more of its characters are wiki-link markup
+    # Auto-router merge (issue #58): depth="auto" merges the triple ranking with
+    # an independent summary search instead of returning triple order with summary
+    # text attached. This is the weight given to the (normalized) summary score in
+    # the blended note ranking; the triple score gets (1 - auto_summary_weight).
+    auto_summary_weight: float = 0.5      # 0.0 = triples only, 1.0 = summaries only
 
     @property
     def db_path(self) -> Path:
@@ -96,6 +101,8 @@ def load_config() -> Config:
             cfg.link_section_penalty = float(data["link_section_penalty"])
         if "link_density_threshold" in data:
             cfg.link_density_threshold = float(data["link_density_threshold"])
+        if "auto_summary_weight" in data:
+            cfg.auto_summary_weight = float(data["auto_summary_weight"])
 
     # Env var overrides (NEUROSTACK_ prefix)
     env_map = {
@@ -116,6 +123,7 @@ def load_config() -> Config:
         "NEUROSTACK_COOCCURRENCE_BOOST": ("cooccurrence_boost_weight", float),
         "NEUROSTACK_LINK_SECTION_PENALTY": ("link_section_penalty", float),
         "NEUROSTACK_LINK_DENSITY_THRESHOLD": ("link_density_threshold", float),
+        "NEUROSTACK_AUTO_SUMMARY_WEIGHT": ("auto_summary_weight", float),
     }
 
     for env_key, (attr, typ) in env_map.items():
