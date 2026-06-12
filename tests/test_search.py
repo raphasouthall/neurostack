@@ -6,6 +6,9 @@ from neurostack.config import Config
 from neurostack.search import (
     DECAY_STALE_HOURS,
     PREDICTION_ERROR_SIM_THRESHOLD,
+    SearchResult,
+    TripleResult,
+    _normalize_scores,
     _record_note_usage,
     decay_hours_since,
     fts_search,
@@ -15,6 +18,7 @@ from neurostack.search import (
     log_prediction_error,
     record_decay_run,
     run_excitability_demotion,
+    tiered_search,
 )
 
 
@@ -999,3 +1003,176 @@ class TestLinkSectionDownweight:
         assert linky.explain["after_link"] < linky.explain["base"]
         canon = next(r for r in results if r.note_path == "canonical.md")
         assert canon.explain["link_section"] is False
+
+
+class TestNormalizeScores:
+    """Tests for the _normalize_scores helper (max-normalization) used by the merge."""
+
+    def test_empty(self):
+        assert _normalize_scores({}) == {}
+
+    def test_equal_values_all_one(self):
+        # No spread -> everything is equally "the best".
+        assert _normalize_scores({"a": 0.5, "b": 0.5}) == {"a": 1.0, "b": 1.0}
+
+    def test_divides_by_max(self):
+        out = _normalize_scores({"a": 1.0, "b": 0.5, "c": 0.0})
+        assert out["a"] == 1.0
+        assert abs(out["b"] - 0.5) < 1e-9
+        assert out["c"] == 0.0
+
+    def test_preserves_magnitude_unlike_minmax(self):
+        # The defining difference from min-max: the lower note keeps its real
+        # fraction of the max (0.4/0.8 = 0.5) instead of collapsing to 0.0.
+        out = _normalize_scores({"a": 0.8, "b": 0.4})
+        assert out["a"] == 1.0
+        assert abs(out["b"] - 0.5) < 1e-9
+
+    def test_nonpositive_max_yields_zeros(self):
+        # No usable signal -> all 0.0, no division by zero.
+        assert _normalize_scores({"a": 0.0, "b": 0.0}) == {"a": 0.0, "b": 0.0}
+
+    def test_negatives_clamped(self):
+        out = _normalize_scores({"a": 1.0, "b": -0.5})
+        assert out["a"] == 1.0
+        assert out["b"] == 0.0
+
+
+class TestTieredAutoMerge:
+    """Tests for tiered_search(depth='auto') — the real triple+summary merge (issue #58).
+
+    The merge logic is isolated from embeddings/DB by patching search_triples and
+    hybrid_search at the module level; get_db returns the in-memory fixture so the
+    summary-fetch fallback for triple-only notes can hit a real table.
+    """
+
+    def _run_auto(self, monkeypatch, conn, triples, summary_hits, top_k=3):
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "search_triples", lambda *a, **k: triples)
+        monkeypatch.setattr(search_mod, "hybrid_search", lambda *a, **k: summary_hits)
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        original = config_mod._config
+        try:
+            config_mod._config = Config()  # auto_summary_weight defaults to 0.5
+            return tiered_search(
+                "q", top_k=top_k, depth="auto", embed_url="http://fake"
+            )
+        finally:
+            config_mod._config = original
+
+    def test_summary_signal_reorders_triple_ranking(self, in_memory_db, monkeypatch):
+        """A note that triples rank low but summaries rank top must rise in auto.
+
+        Pre-fix this returned pure triple order; the regression is that the
+        summary search never influenced the ranking.
+        """
+        triples = [
+            TripleResult("a.md", "A", "x", "y", 0.90, "A"),
+            TripleResult("b.md", "B", "x", "y", 0.70, "B"),
+            TripleResult("c.md", "C", "x", "y", 0.50, "C"),
+        ]
+        # c is the strongest summary hit, a the weakest — the inverse of triples.
+        summary_hits = [
+            SearchResult("c.md", "h", "snip", 0.95, summary="C sum", title="C"),
+            SearchResult("b.md", "h", "snip", 0.50, summary="B sum", title="B"),
+            SearchResult("a.md", "h", "snip", 0.10, summary="A sum", title="A"),
+        ]
+        result = self._run_auto(monkeypatch, in_memory_db, triples, summary_hits)
+
+        assert result["depth_used"] == "auto:triples+summaries"
+        order = [s["note"] for s in result["summaries"]]
+        # Triples alone put b (0.70) above c (0.50); the summary signal flips it.
+        assert order.index("c.md") < order.index("b.md")
+        # merged_ranking is the canonical order and matches the summaries list.
+        assert [m["note"] for m in result["merged_ranking"]] == order
+        # Every surfaced summary carries a numeric merged score.
+        assert all(isinstance(s["score"], float) for s in result["summaries"])
+
+    def test_auto_order_differs_from_triples_only(self, in_memory_db, monkeypatch):
+        """depth='auto' must not be a byte-for-byte alias of depth='triples'."""
+        triples = [
+            TripleResult("a.md", "A", "x", "y", 0.90, "A"),
+            TripleResult("b.md", "B", "x", "y", 0.70, "B"),
+            TripleResult("c.md", "C", "x", "y", 0.50, "C"),
+        ]
+        summary_hits = [
+            SearchResult("c.md", "h", "snip", 0.95, summary="C sum", title="C"),
+            SearchResult("b.md", "h", "snip", 0.50, summary="B sum", title="B"),
+            SearchResult("a.md", "h", "snip", 0.10, summary="A sum", title="A"),
+        ]
+        auto = self._run_auto(monkeypatch, in_memory_db, triples, summary_hits)
+        auto_order = [s["note"] for s in auto["summaries"]]
+        triple_only_order = ["a.md", "b.md", "c.md"]  # pure descending triple score
+        assert auto_order != triple_only_order
+
+    def test_triple_only_note_gets_summary_from_db(self, in_memory_db, monkeypatch):
+        """A note that surfaces only via triples (no chunk hit) still gets its
+        summary fetched from the DB and appears in the merged output."""
+        conn = in_memory_db
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("x.md", "Note X", "hx", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO summaries (note_path, summary_text, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("x.md", "Summary of X from the DB", "hx", "2026-01-01"),
+        )
+        conn.commit()
+
+        triples = [
+            TripleResult("x.md", "X", "p", "o", 0.85, "Note X"),
+            TripleResult("y.md", "Y", "p", "o", 0.60, "Note Y"),
+        ]
+        # hybrid_search returns y only — x never appears as a chunk hit.
+        summary_hits = [
+            SearchResult("y.md", "h", "snip", 0.70, summary="Y sum", title="Note Y"),
+        ]
+        result = self._run_auto(monkeypatch, conn, triples, summary_hits)
+
+        surfaced = {s["note"]: s for s in result["summaries"]}
+        assert "x.md" in surfaced
+        assert surfaced["x.md"]["summary"] == "Summary of X from the DB"
+        assert "x.md" in {m["note"] for m in result["merged_ranking"]}
+
+    def test_empty_summary_search_labels_triples_only(self, in_memory_db, monkeypatch):
+        """Gate fires but the summary search returns nothing -> the ranking is
+        triple-only, and depth_used must say so rather than claim a merge."""
+        triples = [
+            TripleResult("a.md", "A", "p", "o", 0.90, "A"),
+            TripleResult("b.md", "B", "p", "o", 0.70, "B"),
+        ]
+        result = self._run_auto(monkeypatch, in_memory_db, triples, [])
+        assert result["depth_used"] == "auto:triples"
+        # Still produces a ranking (triple order), just honestly labeled.
+        assert [m["note"] for m in result["merged_ranking"]] == ["a.md", "b.md"]
+
+    def test_low_coverage_falls_back_to_chunks(self, in_memory_db, monkeypatch):
+        """Fewer than two triple notes -> gate not fired -> full chunk fallback."""
+        triples = [TripleResult("only.md", "O", "p", "o", 0.90, "Only")]
+        chunk_hits = [
+            SearchResult("z.md", "## H", "a snippet", 0.80, summary="Z", title="Z"),
+        ]
+        result = self._run_auto(monkeypatch, in_memory_db, triples, chunk_hits)
+
+        assert result["depth_used"] == "auto:full"
+        assert result["summaries"] == []
+        assert [c["note"] for c in result["chunks"]] == ["z.md"]
+
+    def test_low_confidence_falls_back_to_chunks(self, in_memory_db, monkeypatch):
+        """Two notes but max triple score <= 0.4 -> gate not fired -> chunk fallback."""
+        triples = [
+            TripleResult("a.md", "A", "p", "o", 0.30, "A"),
+            TripleResult("b.md", "B", "p", "o", 0.20, "B"),
+        ]
+        chunk_hits = [
+            SearchResult("z.md", "## H", "a snippet", 0.80, summary="Z", title="Z"),
+        ]
+        result = self._run_auto(monkeypatch, in_memory_db, triples, chunk_hits)
+
+        assert result["depth_used"] == "auto:full"
+        assert result["chunks"]
