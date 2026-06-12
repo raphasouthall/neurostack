@@ -689,12 +689,14 @@ def cmd_decay(args):
     conn = get_db(DB_PATH)
 
     if getattr(args, "demote", False):
-        from ..search import run_excitability_demotion
+        from ..search import record_decay_run, run_excitability_demotion
         result = run_excitability_demotion(
             conn,
             threshold=args.threshold,
             half_life_days=args.half_life,
         )
+        # Stamp the run so `neurostack doctor` can flag a stalled decay timer.
+        record_decay_run(result["demoted"], result["promoted"])
         if args.json:
             print(json.dumps(result, indent=2))
         else:
