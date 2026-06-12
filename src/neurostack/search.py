@@ -1356,6 +1356,25 @@ def _to_triple_results(conn: sqlite3.Connection, results: list[dict]) -> list[Tr
 # ---------------------------------------------------------------------------
 
 
+def _normalize_scores(scores: dict[str, float]) -> dict[str, float]:
+    """Scale a {key: score} map into [0, 1] by dividing by the max.
+
+    Used to put triple scores and summary/chunk scores on a common scale before
+    merging them in the auto-router. Unlike min-max, this preserves relative
+    magnitude: the second-best note keeps its real fraction of the best rather than
+    collapsing to 0.0. That matters because the gate fires at the minimum of two
+    triple notes, where min-max would always zero out the lower note regardless of
+    how relevant it was. An empty map yields an empty map; a non-positive max (no
+    usable signal) yields all 0.0; negatives are clamped to 0.0.
+    """
+    if not scores:
+        return {}
+    hi = max(scores.values())
+    if hi <= 0:
+        return {k: 0.0 for k in scores}
+    return {k: max(0.0, v / hi) for k, v in scores.items()}
+
+
 def tiered_search(
     query: str,
     top_k: int = 5,
@@ -1372,8 +1391,11 @@ def tiered_search(
     - "triples": Return only triples (~10-20 tokens per fact). Cheapest.
     - "summaries": Return note summaries (~50-100 tokens per note). Medium.
     - "full": Return full chunk snippets + summaries (~200-500 tokens). Current behavior.
-    - "auto": Start with triples, include summaries for top matches,
-              full chunks only if triple coverage is low.
+    - "auto": Start with triples; when coverage is good, blend the triple
+              ranking with an independent summary search (normalized + merged
+              per note, weighted by config.auto_summary_weight) and return the
+              merged note ranking. Falls back to full chunks if triple coverage
+              is low.
 
     Returns dict with keys: triples, summaries, chunks (each may be empty
     depending on depth).
@@ -1448,22 +1470,85 @@ def tiered_search(
     triple_notes = {t.note_path for t in triples}
     triple_confidence = max((t.score for t in triples), default=0.0)
 
-    # If triples have good coverage and high scores, just add summaries for top notes
+    # If triples have good coverage and high scores, merge the triple ranking with
+    # an independent summary search. (Issue #58: the old code returned triple order
+    # with summary text attached — no rescore, no merge — so depth="auto" was a
+    # byte-for-byte alias of depth="triples" whenever this gate fired.)
     if len(triple_notes) >= 2 and triple_confidence > 0.4:
-        # Add summaries for the top-scoring note paths
-        top_notes = list(dict.fromkeys(t.note_path for t in triples))[:top_k]
-        for np_ in top_notes:
-            summary_row = conn.execute(
-                "SELECT s.summary_text, n.title FROM summaries s "
-                "JOIN notes n ON n.path = s.note_path WHERE s.note_path = ?",
-                (np_,),
-            ).fetchone()
-            if summary_row:
-                result["summaries"].append({
-                    "note": np_, "title": summary_row["title"],
-                    "summary": summary_row["summary_text"],
-                })
-        result["depth_used"] = "auto:triples+summaries"
+        # Independent summary ranking for the same query (best chunk per note).
+        summary_results = hybrid_search(
+            query, top_k=top_k * 3, mode=mode,
+            embed_url=embed_url, db_path=db_path,
+            context=context, workspace=workspace,
+        )
+        summary_scores: dict[str, float] = {}
+        summary_meta: dict[str, tuple[str, str]] = {}
+        for r in summary_results:
+            if r.note_path not in summary_scores:
+                summary_scores[r.note_path] = r.score
+                summary_meta[r.note_path] = (r.title, r.summary or "")
+
+        # Best triple score per note, plus a title fallback.
+        triple_scores: dict[str, float] = {}
+        triple_titles: dict[str, str] = {}
+        for t in triples:
+            if t.score > triple_scores.get(t.note_path, float("-inf")):
+                triple_scores[t.note_path] = t.score
+            triple_titles.setdefault(t.note_path, t.title)
+
+        # Normalize both sets to [0, 1] and blend per note.
+        norm_triple = _normalize_scores(triple_scores)
+        norm_summary = _normalize_scores(summary_scores)
+        summary_weight = get_config().auto_summary_weight
+        triple_weight = 1.0 - summary_weight
+        merged_scores: dict[str, float] = {}
+        for np_ in set(norm_triple) | set(norm_summary):
+            merged_scores[np_] = (
+                triple_weight * norm_triple.get(np_, 0.0)
+                + summary_weight * norm_summary.get(np_, 0.0)
+            )
+        # Score descending, note_path ascending as a deterministic tie-break
+        # (merged_scores was built by iterating a set, whose order isn't stable).
+        ranked_notes = sorted(
+            merged_scores, key=lambda n: (-merged_scores[n], n)
+        )[:top_k]
+
+        # Summaries in merged order (fetch text for notes the summary search missed,
+        # e.g. a zero-chunk note that only surfaced via triples).
+        for np_ in ranked_notes:
+            if np_ in summary_meta:
+                title, summary_text = summary_meta[np_]
+            else:
+                row = conn.execute(
+                    "SELECT s.summary_text, n.title FROM summaries s "
+                    "JOIN notes n ON n.path = s.note_path WHERE s.note_path = ?",
+                    (np_,),
+                ).fetchone()
+                title = row["title"] if row else triple_titles.get(np_, np_)
+                summary_text = row["summary_text"] if row else ""
+            result["summaries"].append({
+                "note": np_, "title": title,
+                "summary": summary_text or "",
+                "score": round(merged_scores[np_], 4),
+            })
+
+        # Re-order the raw triple facts to follow the merged note ranking (stable
+        # sort keeps every fact; notes outside the top_k keep their relative order).
+        rank_index = {np_: i for i, np_ in enumerate(ranked_notes)}
+        result["triples"].sort(
+            key=lambda tr: rank_index.get(tr["note"], len(ranked_notes))
+        )
+
+        result["merged_ranking"] = [
+            {"note": np_, "score": round(merged_scores[np_], 4)}
+            for np_ in ranked_notes
+        ]
+        # Be honest about which signals actually contributed: if the summary
+        # search returned nothing (e.g. embedding backend down, or no chunk hit),
+        # the ranking is triple-only — don't label it a merge.
+        result["depth_used"] = (
+            "auto:triples+summaries" if summary_scores else "auto:triples"
+        )
         return result
 
     # Low triple coverage — fall back to full chunk search
