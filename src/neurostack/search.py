@@ -594,6 +594,76 @@ def run_excitability_demotion(
     }
 
 
+# ---------------------------------------------------------------------------
+# Decay run tracking — last-run timestamp so `neurostack doctor` can warn
+# when the scheduled decay timer has stopped firing (excitability would
+# silently stop reconciling). State lives beside the DB, like harvest_state.
+# ---------------------------------------------------------------------------
+
+DECAY_STALE_HOURS = 48.0
+
+
+def _decay_state_path():
+    """Path to the JSON file recording the last excitability-decay run."""
+    return get_config().db_dir / "decay_state.json"
+
+
+def record_decay_run(demoted: int, promoted: int, when: str | None = None) -> None:
+    """Record that an excitability-decay pass just ran.
+
+    Written on every ``neurostack decay --demote`` (the scheduled-timer entry
+    point). A run that demotes nothing still counts — the signal is liveness,
+    not churn. Persisted atomically (temp file + os.replace), like harvest.
+    """
+    import os
+    import tempfile
+    from datetime import datetime, timezone
+
+    ts = when or datetime.now(timezone.utc).isoformat()
+    path = _decay_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps({"last_run": ts, "demoted": demoted, "promoted": promoted})
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def get_decay_last_run():
+    """Return the last decay run as a tz-aware datetime, or None if unrecorded."""
+    from datetime import datetime, timezone
+
+    path = _decay_state_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        last = datetime.fromisoformat(data["last_run"])
+    except (json.JSONDecodeError, OSError, KeyError, ValueError, TypeError):
+        return None
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return last
+
+
+def decay_hours_since(now=None) -> float | None:
+    """Hours since the last decay run, or None if never recorded."""
+    from datetime import datetime, timezone
+
+    last = get_decay_last_run()
+    if last is None:
+        return None
+    current = now or datetime.now(timezone.utc)
+    return (current - last).total_seconds() / 3600.0
+
+
 def hybrid_search(
     query: str,
     top_k: int = 5,
