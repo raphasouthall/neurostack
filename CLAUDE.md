@@ -88,6 +88,8 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack record-usage "path1" "path2"` | Record note usage for hotness scoring |
 | `neurostack decay` | Report note excitability and dormancy |
 | `neurostack prediction-errors` | Show notes flagged as poor retrieval fit |
+| `neurostack migrate write-back` | Export qualifying memories to markdown files (issue #20). `--dry-run` to preview |
+| `neurostack sync` | Reconcile write-back files against the DB (DB wins on conflict) |
 
 ### Setup & Diagnostics
 | Command | Description |
@@ -178,6 +180,18 @@ File: `~/.config/neurostack/config.toml`
 | `api_host` | `127.0.0.1` | `NEUROSTACK_API_HOST` |
 | `api_port` | `8000` | `NEUROSTACK_API_PORT` |
 | `api_key` | (none) | `NEUROSTACK_API_KEY` |
+
+### Memory write-back (issue #20, opt-in)
+
+Persist qualifying memories as markdown files under a quarantined dir. Configured under a `[writeback]` table:
+
+| Key | Default | Env Override |
+|-----|---------|-------------|
+| `writeback.enabled` | `false` | `NEUROSTACK_WRITEBACK_ENABLED` |
+| `writeback.path` | `.neurostack` | `NEUROSTACK_WRITEBACK_PATH` |
+| `writeback.include_observations` | `false` | `NEUROSTACK_WRITEBACK_INCLUDE_OBSERVATIONS` |
+
+Writes only inside `{vault_root}/<path>/memories/<type>/<YYYY-MM>/<uuid>.md`. Only persistent (no-TTL) `decision`/`convention`/`learning`/`bug` are written by default; `observation`/`context` need `include_observations`. The DB stays source of truth; `vault_writer.py` owns all file IO (it deliberately does **not** reuse `vault_write_file`, which commits to git). The dir self-ignores via its own `.gitignore`; NeuroStack never commits.
 
 ## Architecture
 
