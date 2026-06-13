@@ -314,6 +314,22 @@ def test_migrate_dry_run_writes_nothing(wb_vault, in_memory_db):
     assert not list((wb_vault / ".neurostack").rglob("*.md"))
 
 
+def test_migrate_isolates_bad_rows(wb_vault, in_memory_db):
+    good = _insert(in_memory_db, "good", "decision")
+    # A qualifying row with a corrupt uuid: should_write passes (uuid truthy)
+    # but relpath() rejects it — the batch must survive and report the error.
+    _insert(in_memory_db, "bad", "decision", uuid="not-a-real-uuid")
+
+    w = get_vault_writer()
+    report = migrate_writeback(in_memory_db, w, dry_run=False)
+    assert len(report["written"]) == 1
+    assert len(report["errors"]) == 1
+    row = in_memory_db.execute(
+        "SELECT file_path FROM memories WHERE memory_id = ?", (good,)
+    ).fetchone()
+    assert row["file_path"] is not None
+
+
 def test_migrate_real_writes_qualifying_only(wb_vault, in_memory_db):
     d = _insert(in_memory_db, "d1", "decision")
     _insert(in_memory_db, "ttl", "bug", expires_at="2026-12-01 00:00:00")
