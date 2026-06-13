@@ -226,7 +226,7 @@ def save_memory(
         except Exception as exc:
             log.debug("Dedup check failed (non-fatal): %s", exc)
 
-    return Memory(
+    memory = Memory(
         memory_id=memory_id,
         content=content,
         tags=tags or [],
@@ -243,14 +243,28 @@ def save_memory(
         ),
     )
 
+    # Vault write-back (issue #20): persist as a markdown file when enabled.
+    # No-op (and zero IO) when write-back is off — the default.
+    from .vault_writer import apply_writeback_create
+    apply_writeback_create(conn, memory)
+
+    return memory
+
 
 def forget_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
     """Delete a specific memory. Returns True if deleted."""
+    row = conn.execute(
+        "SELECT file_path FROM memories WHERE memory_id = ?", (memory_id,)
+    ).fetchone()
     cursor = conn.execute(
         "DELETE FROM memories WHERE memory_id = ?", (memory_id,)
     )
     conn.commit()
-    return cursor.rowcount > 0
+    deleted = cursor.rowcount > 0
+    if deleted and row is not None:
+        from .vault_writer import apply_writeback_delete
+        apply_writeback_delete(row["file_path"])
+    return deleted
 
 
 def update_memory(
@@ -375,7 +389,15 @@ def update_memory(
     updated_row = conn.execute(
         "SELECT * FROM memories WHERE memory_id = ?", (memory_id,)
     ).fetchone()
-    return _row_to_memory(updated_row)
+    updated = _row_to_memory(updated_row)
+
+    # Vault write-back (issue #20): rewrite/move/remove the file as needed. The
+    # pre-update file_path is captured from `row` so a type or TTL change can
+    # relocate or drop the stale file.
+    from .vault_writer import apply_writeback_update
+    apply_writeback_update(conn, updated, row.get("file_path"))
+
+    return updated
 
 
 def find_similar_memories(
@@ -576,7 +598,14 @@ def merge_memories(
     updated = conn.execute(
         "SELECT * FROM memories WHERE memory_id = ?", (target_id,)
     ).fetchone()
-    return _row_to_memory(updated)
+    merged = _row_to_memory(updated)
+
+    # Vault write-back (issue #20): drop the source's file, reconcile target's.
+    from .vault_writer import apply_writeback_delete, apply_writeback_update
+    apply_writeback_delete(source.get("file_path"))
+    apply_writeback_update(conn, merged, target.get("file_path"))
+
+    return merged
 
 
 def search_memories(

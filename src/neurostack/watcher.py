@@ -46,6 +46,19 @@ def _vault_root():
     return get_config().vault_root
 
 
+def _base_skip_parts() -> set[str]:
+    """Path segments excluded from indexing.
+
+    Includes the write-back quarantine dir (issue #20): its memory exports are
+    derived data, and indexing them would trigger reindex-on-write loops.
+    """
+    parts = {".git", ".obsidian", ".trash"}
+    rel = get_config().writeback_path.strip("/")
+    if rel:
+        parts.add(rel.split("/")[0])
+    return parts
+
+
 class DebouncedHandler(FileSystemEventHandler):
     """Debounces file changes and triggers indexing."""
 
@@ -72,7 +85,7 @@ class DebouncedHandler(FileSystemEventHandler):
         p = Path(path)
         if not p.suffix == ".md":
             return False
-        skip = {".git", ".obsidian", ".trash"}
+        skip = _base_skip_parts()
         skip.update(self._exclude_dirs)
         if skip.intersection(p.parts):
             return False
@@ -584,7 +597,7 @@ def reconcile_deletions(
     or unmounted ``vault_root``, not a genuinely emptied vault, and we refuse
     to wipe the whole index on that basis.
     """
-    skip_parts = {".git", ".obsidian", ".trash"}
+    skip_parts = _base_skip_parts()
     skip_parts.update(exclude_dirs or [])
     disk_paths = {
         str(f.relative_to(vault_root))
@@ -666,8 +679,8 @@ def full_index(
 
     conn = get_db(DB_PATH)
     md_files = sorted(vault_root.rglob("*.md"))
-    # Filter out .git, .obsidian, .trash, and any extra exclude dirs
-    skip_parts = {".git", ".obsidian", ".trash"}
+    # Filter out .git, .obsidian, .trash, the write-back dir, and extra excludes
+    skip_parts = _base_skip_parts()
     skip_parts.update(exclude_dirs or [])
     md_files = [
         f for f in md_files

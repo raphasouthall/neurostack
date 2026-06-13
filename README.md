@@ -268,6 +268,23 @@ The index updates as you write. Stale detection runs continuously. You don't mai
 
 NeuroStack reads your vault. By default, it writes nothing back — all index data lives in its own SQLite databases. The opt-in MCP write tools (`vault_write_file` / `vault_delete_file`) are the one exception: they create or edit `.md` files in the vault and commit + push the change to your git remote on the spot.
 
+### Memory write-back (opt-in)
+
+Memories live in SQLite by default, so they're invisible in Obsidian and vanish if the database is lost. Turn on write-back to persist qualifying memories as markdown files you own:
+
+```toml
+[writeback]
+enabled = true                 # opt-in; default false
+path = ".neurostack"           # quarantine dir, relative to vault_root
+include_observations = false   # also write the noisier observation/context types
+```
+
+- Files land under `{vault_root}/.neurostack/memories/<type>/<YYYY-MM>/<uuid>.md`. NeuroStack only ever writes inside that one directory — your notes are never touched.
+- Only persistent (no-TTL) `decision` / `convention` / `learning` / `bug` memories are written; ephemeral (TTL) memories never are.
+- The database stays the source of truth; files are readable exports. `vault_remember` / `vault_update_memory` / `vault_forget` / `vault_merge` keep the files in step automatically.
+- The directory self-ignores via its own `.gitignore` so memories stay out of git until you opt in (delete that file to version them). NeuroStack never commits on your behalf.
+- `neurostack migrate write-back [--dry-run]` exports existing memories; `neurostack sync` reconciles files against the DB (the DB wins on conflict).
+
 ---
 
 <details>
@@ -408,7 +425,7 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 ## FAQ
 
-**Does it modify my vault files?** Not by default. Indexing, search, summaries, and every read tool leave your files untouched — all index data lives in NeuroStack's own SQLite databases. Four opt-in MCP write tools (`vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`) let an AI client author and edit notes; every write commits and pushes to your git remote, so changes are tracked and revertable. If your vault is not a git repo, the file is still written to disk but the commit step is skipped.
+**Does it modify my vault files?** Not by default. Indexing, search, summaries, and every read tool leave your files untouched — all index data lives in NeuroStack's own SQLite databases. Four opt-in MCP write tools (`vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`) let an AI client author and edit notes; every write commits and pushes to your git remote, so changes are tracked and revertable. If your vault is not a git repo, the file is still written to disk but the commit step is skipped. Separately, opt-in [memory write-back](#memory-write-back-opt-in) persists memories as markdown, but only ever inside the quarantined `.neurostack/` directory — never alongside your own notes.
 
 **Do I need a GPU?** No. Lite mode has zero ML dependencies. Full mode runs on CPU but summarization is slow without a GPU.
 
