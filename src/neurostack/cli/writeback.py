@@ -70,6 +70,11 @@ def _cmd_migrate_writeback(args):
         msg += f", {skipped['no_uuid']} without uuid"
     print(msg + ".")
 
+    if report.get("errors"):
+        print(f"\n{len(report['errors'])} memory file(s) failed to write:")
+        for e in report["errors"]:
+            print(f"  - memory {e['memory_id']}: {e['error']}")
+
     if dry:
         print("\nDry run — no files written. Re-run without --dry-run to apply.")
     else:
@@ -96,6 +101,10 @@ def cmd_sync(args):
     print(f"  updated:   {len(report['updated'])}")
     print(f"  in sync:   {report['in_sync']}")
     print(f"  removed:   {len(report['removed'])} orphan file(s)")
+    if report.get("errors"):
+        print(f"  errors:    {len(report['errors'])} memory(ies) failed:")
+        for e in report["errors"]:
+            print(f"    - memory {e['memory_id']}: {e['error']}")
     if report["conflicts"]:
         print(
             f"  conflicts: {len(report['conflicts'])} user-edited file(s) "

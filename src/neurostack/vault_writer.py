@@ -337,40 +337,48 @@ def migrate_writeback(conn, writer: VaultWriter, dry_run: bool = False) -> dict:
 
     rows = conn.execute("SELECT * FROM memories ORDER BY memory_id").fetchall()
     written: list[dict] = []
+    errors: list[dict] = []
     skipped = {"ttl": 0, "type": 0, "no_uuid": 0}
     for row in rows:
-        mem = _row_to_memory(row)
-        if not writer.should_write(mem):
-            if getattr(mem, "expires_at", None):
-                skipped["ttl"] += 1
-            elif not mem.uuid:
-                skipped["no_uuid"] += 1
-            else:
-                skipped["type"] += 1
-            continue
-        relpath = writer.relpath(mem)
-        if dry_run:
+        # Isolate each row: one malformed memory must not abort the batch.
+        try:
+            mem = _row_to_memory(row)
+            if not writer.should_write(mem):
+                if getattr(mem, "expires_at", None):
+                    skipped["ttl"] += 1
+                elif not mem.uuid:
+                    skipped["no_uuid"] += 1
+                else:
+                    skipped["type"] += 1
+                continue
+            relpath = writer.relpath(mem)
+            if dry_run:
+                written.append({
+                    "memory_id": mem.memory_id,
+                    "entity_type": mem.entity_type,
+                    "path": relpath,
+                    "exists": (writer.vault_root / relpath).exists(),
+                })
+                continue
+            relpath = writer.write(mem)
+            conn.execute(
+                "UPDATE memories SET file_path = ? WHERE memory_id = ?",
+                (relpath, mem.memory_id),
+            )
             written.append({
                 "memory_id": mem.memory_id,
                 "entity_type": mem.entity_type,
                 "path": relpath,
-                "exists": (writer.vault_root / relpath).exists(),
             })
-            continue
-        relpath = writer.write(mem)
-        conn.execute(
-            "UPDATE memories SET file_path = ? WHERE memory_id = ?",
-            (relpath, mem.memory_id),
-        )
-        written.append({
-            "memory_id": mem.memory_id,
-            "entity_type": mem.entity_type,
-            "path": relpath,
-        })
+        except Exception as exc:
+            errors.append({"memory_id": row["memory_id"], "error": str(exc)})
+            log.warning("write-back migrate failed for memory %s: %s",
+                        row["memory_id"], exc)
     if not dry_run:
         conn.commit()
         writer.ensure_gitignore()
-    return {"written": written, "skipped": skipped, "dry_run": dry_run}
+    return {"written": written, "skipped": skipped, "errors": errors,
+            "dry_run": dry_run}
 
 
 def sync_writeback(conn, writer: VaultWriter) -> dict:
@@ -395,40 +403,46 @@ def sync_writeback(conn, writer: VaultWriter) -> dict:
     updated: list[str] = []
     conflicts: list[str] = []
     removed: list[str] = []
+    errors: list[dict] = []
     in_sync = 0
 
     for row in rows:
-        mem = _row_to_memory(row)
-        if not writer.should_write(mem):
-            continue
-        relpath = writer.relpath(mem)
-        desired[relpath] = mem
-        abs_path = writer.vault_root / relpath
+        try:
+            mem = _row_to_memory(row)
+            if not writer.should_write(mem):
+                continue
+            relpath = writer.relpath(mem)
+            desired[relpath] = mem
+            abs_path = writer.vault_root / relpath
 
-        if not abs_path.exists():
+            if not abs_path.exists():
+                writer.write(mem)
+                _set_path(mem.memory_id, relpath)
+                created.append(relpath)
+                continue
+
+            parsed = writer.parse_file(abs_path)
+            stored_hash = (parsed["frontmatter"] or {}).get("neurostack_hash")
+            file_body_hash = _body_hash(parsed["body"])
+            db_hash = _body_hash(mem.content)
+
+            if db_hash == file_body_hash:
+                if mem.file_path != relpath:
+                    _set_path(mem.memory_id, relpath)
+                in_sync += 1
+                continue
+
+            # Divergence — DB wins, overwrite the file.
             writer.write(mem)
             _set_path(mem.memory_id, relpath)
-            created.append(relpath)
-            continue
-
-        parsed = writer.parse_file(abs_path)
-        stored_hash = (parsed["frontmatter"] or {}).get("neurostack_hash")
-        file_body_hash = _body_hash(parsed["body"])
-        db_hash = _body_hash(mem.content)
-
-        if db_hash == file_body_hash:
-            if mem.file_path != relpath:
-                _set_path(mem.memory_id, relpath)
-            in_sync += 1
-            continue
-
-        # Divergence — DB wins, overwrite the file.
-        writer.write(mem)
-        _set_path(mem.memory_id, relpath)
-        if stored_hash and stored_hash != file_body_hash:
-            conflicts.append(relpath)  # user had edited the file on disk
-        else:
-            updated.append(relpath)
+            if stored_hash and stored_hash != file_body_hash:
+                conflicts.append(relpath)  # user had edited the file on disk
+            else:
+                updated.append(relpath)
+        except Exception as exc:
+            errors.append({"memory_id": row["memory_id"], "error": str(exc)})
+            log.warning("write-back sync failed for memory %s: %s",
+                        row["memory_id"], exc)
 
     # Orphans: files on disk with no qualifying memory backing them.
     for abs_path in writer.iter_existing_files():
@@ -444,5 +458,6 @@ def sync_writeback(conn, writer: VaultWriter) -> dict:
         "updated": updated,
         "conflicts": conflicts,
         "removed": removed,
+        "errors": errors,
         "in_sync": in_sync,
     }
