@@ -63,6 +63,15 @@ class Config:
     # text attached. This is the weight given to the (normalized) summary score in
     # the blended note ranking; the triple score gets (1 - auto_summary_weight).
     auto_summary_weight: float = 0.5      # 0.0 = triples only, 1.0 = summaries only
+    # Vault write-back (issue #20): opt-in persistence of qualifying memories as
+    # markdown files under a quarantined directory (default ``.neurostack/``).
+    # Off by default — the DB stays the source of truth; files are exports. Only
+    # persistent (no-TTL) decision/convention/learning/bug memories are written;
+    # observation/context are written only when include_observations is set.
+    writeback_enabled: bool = False
+    writeback_path: str = ".neurostack"   # relative to vault_root; NeuroStack only
+                                          # ever writes inside this directory
+    writeback_include_observations: bool = False
 
     @property
     def db_path(self) -> Path:
@@ -104,6 +113,16 @@ def load_config() -> Config:
         if "auto_summary_weight" in data:
             cfg.auto_summary_weight = float(data["auto_summary_weight"])
 
+        # Write-back is configured under a [writeback] table.
+        wb = data.get("writeback")
+        if isinstance(wb, dict):
+            if "enabled" in wb:
+                cfg.writeback_enabled = bool(wb["enabled"])
+            if "path" in wb:
+                cfg.writeback_path = str(wb["path"])
+            if "include_observations" in wb:
+                cfg.writeback_include_observations = bool(wb["include_observations"])
+
     # Env var overrides (NEUROSTACK_ prefix)
     env_map = {
         "NEUROSTACK_MODE": ("mode", str),
@@ -124,6 +143,11 @@ def load_config() -> Config:
         "NEUROSTACK_LINK_SECTION_PENALTY": ("link_section_penalty", float),
         "NEUROSTACK_LINK_DENSITY_THRESHOLD": ("link_density_threshold", float),
         "NEUROSTACK_AUTO_SUMMARY_WEIGHT": ("auto_summary_weight", float),
+        "NEUROSTACK_WRITEBACK_ENABLED": ("writeback_enabled", bool),
+        "NEUROSTACK_WRITEBACK_PATH": ("writeback_path", str),
+        "NEUROSTACK_WRITEBACK_INCLUDE_OBSERVATIONS": (
+            "writeback_include_observations", bool,
+        ),
     }
 
     for env_key, (attr, typ) in env_map.items():

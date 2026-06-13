@@ -45,6 +45,7 @@ from .setup import (
     cmd_update,
 )
 from .utils import _handle_error
+from .writeback import cmd_migrate, cmd_sync
 
 
 def main():
@@ -642,6 +643,26 @@ def main():
     # watch
     p = sub.add_parser("watch", help="Watch vault for changes")
     p.set_defaults(func=cmd_watch)
+
+    # migrate (issue #20: vault write-back)
+    p = sub.add_parser("migrate", help="One-off data migrations")
+    migrate_sub = p.add_subparsers(dest="migrate_command")
+    mwb = migrate_sub.add_parser(
+        "write-back",
+        help="Export all qualifying memories to markdown files",
+    )
+    mwb.add_argument(
+        "--dry-run", "-n", action="store_true",
+        help="Preview what would be written without writing",
+    )
+    p.set_defaults(func=cmd_migrate)
+
+    # sync (issue #20: reconcile write-back files against the DB)
+    p = sub.add_parser(
+        "sync",
+        help="Reconcile write-back files against the database (DB wins on conflict)",
+    )
+    p.set_defaults(func=cmd_sync)
 
     args = parser.parse_args()
     if not args.command:
