@@ -2,7 +2,7 @@
 
 NeuroStack's ranking and clustering features draw on memory neuroscience. This appendix maps each feature to its scientific basis and, more importantly, to what the code actually does. Where the biology is an inspiration rather than a faithful mechanism, it says so.
 
-Verified against the implementation at commit `63e16d2`.
+Verified against the implementation on `main` (the excitability boost was retired in issue #64 — see below).
 
 **Status tags** used below:
 
@@ -21,19 +21,18 @@ Every hybrid search applies these signals in order, in `search.py:hybrid_search`
 4. Context boost (`×1.4` direct, `×1.2` graph-neighbour)
 5. Hotness (blended `0.8 · score + 0.2 · hotness`)
 6. Co-occurrence boost (bounded `×(1 + w·norm)`)
-7. Excitability boost (`×1.15` for `status: active`)
-8. Prediction-error demotion (`×1/(1 + 0.1·n)`)
-9. Lateral inhibition (winner-take-all diversity penalty)
+7. Prediction-error demotion (`×1/(1 + 0.1·n)`)
+8. Lateral inhibition (winner-take-all diversity penalty)
 
 ## Hotness and Excitability (Recency Decay + CREB Windows)
 
-**Feature**: Recently and frequently retrieved notes rank higher; notes marked `status: active` receive a small boost.
+**Feature**: Recently and frequently retrieved notes rank higher.
 
 **Implementation**:
-- Hotness (`search.py:hotness_score`, `[implemented]`): `sigmoid(log1p(usage_count)) · exp(-ln2/half_life · age_days)` with a **30-day half-life**, blended at 0.2. Usage is auto-recorded for every returned result, so the signal is continuously updated.
-- Excitability boost (`search.py`, `[timer-gated]`): a flat `×1.15` when `note_metadata.status == 'active'`. Note that `status` defaults to `active` and is only ever demoted by `run_excitability_demotion`, which runs solely from `neurostack decay --demote` — an opt-in, systemd-based timer. Without that timer every note stays `active`, so the boost applies uniformly and does not differentiate results. Install the decay timer for it to have any effect.
+- Hotness (`search.py:hotness_score`, `[implemented]`): `sigmoid(log1p(usage_count)) · exp(-ln2/half_life · age_days)` with a **30-day half-life**, blended at 0.2. Usage is auto-recorded for every returned result, so the signal is continuously updated. This is the sole recency signal in ranking.
+- Excitability boost (`[retired]`, issue #64): a flat `×1.15` when `note_metadata.status == 'active'` used to sit here. Because `status` defaults to `active` and was demoted only by the opt-in `neurostack decay --demote` timer, on a default install every note stayed `active`, the boost applied uniformly, and it changed no ranking. The per-signal ablation harness (issue #63) confirmed a near-zero delta. It was removed rather than propped up with a mandatory timer, since it only duplicated the recency already carried by the continuous hotness blend. `note_metadata.status` is still maintained — it now serves the agent-linking convention (link preferentially to `active` notes) and the `neurostack decay` report, not search ranking.
 
-**Science**: CREB-mediated intrinsic excitability biases which neurons are recruited into an engram. Neurons with elevated CREB at encoding are preferentially allocated, creating a transient window (on the order of hours in the biology) during which a memory attracts new associations. NeuroStack's hotness decay is a much slower software analogue (days, not hours) tuned for how often notes are actually re-read; the ~6-hour biological window is the inspiration, not the parameter.
+**Science**: CREB-mediated intrinsic excitability biases which neurons are recruited into an engram. Neurons with elevated CREB at encoding are preferentially allocated, creating a transient window (on the order of hours in the biology) during which a memory attracts new associations. NeuroStack's hotness decay is a much slower software analogue (days, not hours) tuned for how often notes are actually re-read; the ~6-hour biological window is the inspiration, not the parameter. The retired excitability boost was a second, coarser take on the same recency idea; folding it into hotness leaves one continuous signal instead of two overlapping ones.
 
 **References**:
 - Han, J.-H. et al. (2007). Neuronal competition and selection during memory formation. *Science*, 316(5823), 457-460.
