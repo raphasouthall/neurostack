@@ -63,6 +63,13 @@ class Config:
     # text attached. This is the weight given to the (normalized) summary score in
     # the blended note ranking; the triple score gets (1 - auto_summary_weight).
     auto_summary_weight: float = 0.5      # 0.0 = triples only, 1.0 = summaries only
+    # Community-detection staleness (issue #65): detect_communities runs only on
+    # `communities build` / `init`, never in the index pipeline, so the partition
+    # and its LLM summaries drift as notes are added or edited. These thresholds
+    # decide when vault_stats / vault_communities flag the partition stale and
+    # when `communities build --if-stale` triggers a rebuild.
+    community_stale_age_days: float = 14.0   # flag/rebuild if last build older than this
+    community_stale_drift: float = 0.10      # ...or if this fraction of notes changed since
     # Vault write-back (issue #20): opt-in persistence of qualifying memories as
     # markdown files under a quarantined directory (default ``.neurostack/``).
     # Off by default — the DB stays the source of truth; files are exports. Only
@@ -112,6 +119,10 @@ def load_config() -> Config:
             cfg.link_density_threshold = float(data["link_density_threshold"])
         if "auto_summary_weight" in data:
             cfg.auto_summary_weight = float(data["auto_summary_weight"])
+        if "community_stale_age_days" in data:
+            cfg.community_stale_age_days = float(data["community_stale_age_days"])
+        if "community_stale_drift" in data:
+            cfg.community_stale_drift = float(data["community_stale_drift"])
 
         # Write-back is configured under a [writeback] table.
         wb = data.get("writeback")
@@ -143,6 +154,8 @@ def load_config() -> Config:
         "NEUROSTACK_LINK_SECTION_PENALTY": ("link_section_penalty", float),
         "NEUROSTACK_LINK_DENSITY_THRESHOLD": ("link_density_threshold", float),
         "NEUROSTACK_AUTO_SUMMARY_WEIGHT": ("auto_summary_weight", float),
+        "NEUROSTACK_COMMUNITY_STALE_AGE_DAYS": ("community_stale_age_days", float),
+        "NEUROSTACK_COMMUNITY_STALE_DRIFT": ("community_stale_drift", float),
         "NEUROSTACK_WRITEBACK_ENABLED": ("writeback_enabled", bool),
         "NEUROSTACK_WRITEBACK_PATH": ("writeback_path", str),
         "NEUROSTACK_WRITEBACK_INCLUDE_OBSERVATIONS": (
