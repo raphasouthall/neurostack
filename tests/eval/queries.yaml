@@ -1,0 +1,132 @@
+# Labelled retrieval-eval query set for `neurostack eval` (issue #63).
+#
+# Each query maps to the note(s) that should surface in the top-k. `target` is
+# a note-path prefix (the `.md` and any section anchor are matched loosely — see
+# neurostack.eval.matches). Use `targets: [...]` when more than one note is
+# co-canonical. `category` groups queries by retrieval difficulty; `context`
+# passes a --context domain through to hybrid_search.
+#
+# Seeded from the 2026-04-16 retrieval benchmark (17 queries) and expanded to
+# span pinpoint / thematic / crossref / adversarial across home, work,
+# literature and research. Paths verified against the live vault on 2026-07-02;
+# re-verify with `vault_list_files` if the vault has been reorganised since, and
+# tune labels after the first real run (they are a starting point, not gospel).
+
+queries:
+  # ── pinpoint: one obvious canonical note ──
+  - query: "NeuroStack LXC migration"
+    category: pinpoint
+    target: home/projects/neurostack/lxc-migration-2026-04-16
+  - query: "Home lab network topology"
+    category: pinpoint
+    target: home/resources/infrastructure
+  - query: "HashiCorp Vault SSH CA"
+    category: pinpoint
+    target: home/resources/hashicorp-vault
+  - query: "grocery system Ocado weekly order"
+    category: pinpoint
+    target: home/resources/grocery-system
+  - query: "Reddit engagement daemon"
+    category: pinpoint
+    target: home/resources/reddit-engagement-daemon
+  - query: "Sunshine game streaming setup"
+    category: pinpoint
+    target: home/projects/sunshine-streaming
+  - query: "IBM licensing ILMT ILS"
+    category: pinpoint
+    target: literature/ibm-licensing-ilmt-ils-research
+  - query: "Azure Front Door migration AFD"
+    category: pinpoint
+    target: work/nyk-europe-azure/projects/afd-migration
+  - query: "SSH config aliases for home lab hosts"
+    category: pinpoint
+    target: home/resources/ssh-config-setup
+  - query: "morning briefing timer Gmail draft"
+    category: pinpoint
+    target: home/resources/morning-briefing
+  - query: "Proxmox backup and disaster recovery"
+    category: pinpoint
+    target: home/resources/proxmox-backup-dr
+  - query: "Pi-hole DNS blocking configuration"
+    category: pinpoint
+    target: home/resources/pihole-dns-blocking
+  - query: "NBSE certificate rotation ACM to Azure Key Vault"
+    category: pinpoint
+    target: work/nyk-europe-azure/projects/nbse-cert-rotation
+  - query: "EAS AKS Kubernetes 1.33 end of life upgrade"
+    category: pinpoint
+    target: work/nyk-europe-azure/resources/eas-aks-k8s-1.33-eol-2026-06
+  - query: "Rapid7 InsightVM May 2026 sprint"
+    category: pinpoint
+    target: work/nyk-europe-azure/resources/rapid7-r7-may-2026-sprint
+  - query: "Azure Bastion DMZ deploy failure"
+    category: pinpoint
+    target: work/nyk-europe-azure/resources/az-bst-dmz-prod-deploy-failure-2026-05-14
+  - query: "iSeries KPN hosts and clients"
+    category: pinpoint
+    target: work/nyk-europe-azure/resources/iseries-hosts-and-clients
+
+  # ── thematic: concept spanning a note (or a few) ──
+  - query: "What are my main home projects"
+    category: thematic
+    target: home/projects/index
+  - query: "infrastructure-as-code Terraform layered architecture NYK"
+    category: thematic
+    target: work/nyk-europe-azure/projects/infra-terraform
+  - query: "Hopfield networks associative memory"
+    category: thematic
+    target: literature/hopfield-networks-memory-research
+  - query: "canine ultrasonography gestational age estimation"
+    category: thematic
+    target: literature/canine-fetal-ultrasonography-gestational-age-research
+  - query: "predictive coding as a knowledge architecture"
+    category: thematic
+    target: research/predictive-coding-knowledge-architecture
+  - query: "Tolman-Eichenbaum Machine grid cells structural abstraction"
+    category: thematic
+    target: research/tolman-eichenbaum-machine
+  - query: "memory engrams and neuronal allocation"
+    category: thematic
+    targets:
+      - literature/memory-engrams-research
+      - research/engram-allocation-competition
+
+  # ── crossref: answer lives in a note about something broader ──
+  - query: "Obsidian LiveSync CouchDB self-hosted"
+    category: crossref
+    target: home/projects/obsidian-livesync
+  - query: "Plex media server LXC container"
+    category: crossref
+    target: home/resources/infrastructure
+  - query: "Bassnet SQL health check"
+    category: crossref
+    target: work/nyk-europe-azure/projects/bassnet-sql-health
+  - query: "Azure VWAN routing intent and firewall"
+    category: crossref
+    target: work/nyk-europe-azure/resources/azure-networking
+  - query: "Citrix CVAD 2402 IMDS workaround"
+    category: crossref
+    target: work/nyk-europe-azure/resources/citrix-cvad-2402-imds-workaround
+  - query: "M365 Copilot MCP bridge on the work laptop"
+    category: crossref
+    target: work/nyk-europe-azure/resources/m365-copilot-mcp
+
+  # ── adversarial: phrased away from the note's own wording ──
+  - query: "dual boot Pop OS and Windows"
+    category: adversarial
+    target: home/projects/dual-boot-setup
+  - query: "Azure consolidation proposal"
+    category: adversarial
+    target: work/nyk-europe-azure/resources/azure-consolidation-proposal
+  - query: "how do I root my Samsung tablet"
+    category: adversarial
+    target: home/resources/tab-s4-root-guide
+  - query: "WinRM hop to reach the work laptop"
+    category: adversarial
+    target: work/nyk-europe-azure/resources/winrm-hop1
+  - query: "lateral inhibition and engram sparsity"
+    category: adversarial
+    target: research/engram-allocation-competition
+  - query: "reconcile deleted notes ghost communities"
+    category: adversarial
+    target: home/projects/neurostack/community-modularity-fix-2026-06-03
