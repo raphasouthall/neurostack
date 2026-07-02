@@ -127,12 +127,19 @@ def mrr(ranked: list[str], targets: list[str]) -> float:
 
 
 def ndcg_at_k(ranked: list[str], targets: list[str], k: int) -> float:
-    """Binary-relevance NDCG@k. Ideal DCG assumes as many relevant docs as
-    there are labelled targets (capped at k), each ranked first."""
+    """Binary-relevance NDCG@k. Each labelled target counts as one relevant
+    document scored at the rank where it is *first* found — so a target that
+    matches several result paths (e.g. a directory prefix hitting sibling notes)
+    cannot inflate DCG past IDCG. Ideal DCG places every target at the top."""
     if not targets:
         return 0.0
-    rels = _hits(ranked[:k], targets)
-    dcg = sum(1.0 / math.log2(i + 2) for i, rel in enumerate(rels) if rel)
+    topk = ranked[:k]
+    dcg = 0.0
+    for t in targets:
+        for i, p in enumerate(topk):
+            if matches(p, t):
+                dcg += 1.0 / math.log2(i + 2)
+                break
     n_ideal = min(len(targets), k)
     idcg = sum(1.0 / math.log2(i + 2) for i in range(n_ideal))
     return dcg / idcg if idcg > 0 else 0.0
