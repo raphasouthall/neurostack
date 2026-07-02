@@ -273,6 +273,25 @@ def cmd_tiered(args):
 
 def cmd_communities(args):
     if args.communities_cmd == "build":
+        # --if-stale: only rebuild when the partition has drifted past the
+        # staleness thresholds — cheap enough for a cron/timer to call (#65).
+        if getattr(args, "if_stale", False):
+            from ..community import maybe_rebuild_communities
+            outcome = maybe_rebuild_communities(
+                summarize_url=args.summarize_url,
+                embed_url=args.embed_url,
+            )
+            if args.json:
+                print(json.dumps(outcome, indent=2, default=str))
+                return
+            if outcome["rebuilt"]:
+                print(
+                    f"Rebuilt: {outcome['coarse']} coarse, {outcome['fine']} fine"
+                    f" communities (trigger: {outcome['trigger']})."
+                )
+            else:
+                print(f"Partition fresh, skipped rebuild ({outcome['reason']}).")
+            return
         from ..attractor import detect_communities
         from ..community import summarize_all_communities
         n_coarse, n_fine = detect_communities()
@@ -304,9 +323,15 @@ def cmd_communities(args):
             summarize_url=args.summarize_url,
             workspace=_get_workspace(args),
         )
+        from ..community import community_build_status
+        result["community_build"] = community_build_status()
         if args.json:
             print(json.dumps(result, indent=2, default=str))
             return
+        cb = result["community_build"]
+        if cb.get("stale"):
+            print(f"\n\033[33m! Community partition stale:\033[0m {cb['reason']}")
+            print("  Rebuild for a current answer: neurostack communities build --if-stale")
         print(f"\nCommunities used: {result['communities_used']}")
         print("\nTop communities:")
         for hit in result["community_hits"][:5]:
@@ -448,8 +473,10 @@ def cmd_stats(args):
         "SELECT COUNT(DISTINCT note_path) as c FROM triples"
     ).fetchone()["c"]
 
+    from ..community import community_build_status
     from ..cooccurrence import get_cooccurrence_stats
     cooc = get_cooccurrence_stats(conn)
+    community = community_build_status(conn)
 
     if args.json:
         embed_pct = embedded * 100 // max(chunks, 1)
@@ -468,6 +495,7 @@ def cmd_stats(args):
             "triple_coverage": f"{triple_pct}%",
             "cooccurrence_pairs": cooc["pairs"],
             "cooccurrence_total_weight": cooc["total_weight"],
+            "community_build": community,
         }
         print(json.dumps(output, indent=2, default=str))
         return
@@ -496,6 +524,13 @@ def cmd_stats(args):
         f"Co-occurrence: {cooc['pairs']} pairs"
         f" ({cooc['total_weight']:.1f} total weight)"
     )
+    if community["built"]:
+        flag = " \033[33m[STALE]\033[0m" if community["stale"] else ""
+        print(f"Communities: {community['reason']}{flag}")
+        if community["stale"]:
+            print("  \033[33m!\033[0m Rebuild: neurostack communities build --if-stale")
+    else:
+        print("Communities: \033[33mnot built\033[0m — run: neurostack communities build")
 
 
 def cmd_prediction_errors(args):

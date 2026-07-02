@@ -497,8 +497,13 @@ def main():
     comm_sub = p.add_subparsers(dest="communities_cmd")
 
     # communities build
-    comm_sub.add_parser(
+    p_b = comm_sub.add_parser(
         "build", help="Run attractor basin detection + LLM summaries",
+    )
+    p_b.add_argument(
+        "--if-stale", action="store_true",
+        help="Only rebuild when the partition has drifted past the staleness "
+        "thresholds (age/drift). No-ops when fresh — safe for a cron/timer.",
     )
 
     # communities query
