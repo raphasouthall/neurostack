@@ -37,6 +37,128 @@ EMBED_URL = _cfg.embed_url
 SUMMARIZE_MODEL = _cfg.llm_model
 _LLM_HEADERS = _auth_headers(_cfg.llm_api_key)
 
+def community_build_status(conn=None) -> dict:
+    """Report how fresh the community partition is (issue #65).
+
+    ``detect_communities`` runs only from ``communities build`` / ``init``,
+    never in the index pipeline, so after notes are added or edited the
+    partition and its LLM summaries drift while ``vault_communities`` keeps
+    answering from the stale partition with no signal to the caller. This
+    surfaces the drift: when the partition was last built, how old that is, and
+    how many notes have changed since — plus a ``stale`` verdict against the
+    configured thresholds.
+
+    Returns a dict with: built, last_built, age_days, notes_total,
+    notes_changed_since, drift, stale, reason.
+    """
+    cfg = get_config()
+    if conn is None:
+        conn = get_db(DB_PATH)
+
+    n_communities = conn.execute("SELECT COUNT(*) FROM communities").fetchone()[0]
+    total_notes = conn.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
+    # community_level_stats.updated_at is written once per build; fall back to
+    # the communities table if the level-stats row is somehow absent.
+    last_built = conn.execute(
+        "SELECT MAX(updated_at) FROM community_level_stats"
+    ).fetchone()[0]
+    if last_built is None:
+        last_built = conn.execute(
+            "SELECT MAX(updated_at) FROM communities"
+        ).fetchone()[0]
+
+    if not n_communities or not last_built:
+        return {
+            "built": False,
+            "last_built": None,
+            "age_days": None,
+            "notes_total": total_notes,
+            "notes_changed_since": None,
+            "drift": None,
+            "stale": True,
+            "reason": "communities never built — run `neurostack communities build`",
+        }
+
+    changed = conn.execute(
+        "SELECT COUNT(*) FROM notes WHERE updated_at > ?", (last_built,)
+    ).fetchone()[0]
+    drift = changed / total_notes if total_notes else 0.0
+
+    age_days = None
+    try:
+        built_dt = datetime.fromisoformat(last_built)
+        if built_dt.tzinfo is None:
+            built_dt = built_dt.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - built_dt).total_seconds() / 86400.0
+    except (ValueError, TypeError):
+        pass
+
+    stale_age = age_days is not None and age_days > cfg.community_stale_age_days
+    stale_drift = drift > cfg.community_stale_drift
+    stale = stale_age or stale_drift
+
+    parts = []
+    if age_days is not None:
+        parts.append(f"built {age_days:.1f}d ago")
+    parts.append(f"{changed}/{total_notes} notes changed since ({drift * 100:.0f}%)")
+    reason = ", ".join(parts)
+    if stale:
+        drivers = []
+        if stale_age:
+            drivers.append(f">{cfg.community_stale_age_days:g}d old")
+        if stale_drift:
+            drivers.append(f">{cfg.community_stale_drift * 100:g}% drift")
+        reason = f"STALE ({', '.join(drivers)}): {reason}"
+
+    return {
+        "built": True,
+        "last_built": last_built,
+        "age_days": round(age_days, 2) if age_days is not None else None,
+        "notes_total": total_notes,
+        "notes_changed_since": changed,
+        "drift": round(drift, 4),
+        "stale": stale,
+        "reason": reason,
+    }
+
+
+def maybe_rebuild_communities(
+    conn=None,
+    *,
+    force: bool = False,
+    summarize_url: str | None = None,
+    embed_url: str | None = None,
+) -> dict:
+    """Rebuild the community partition when it has drifted past the staleness
+    thresholds (issue #65), or when ``force`` is set.
+
+    Cheap to call on a timer: it no-ops when the partition is fresh, so a cron
+    or the decay timer can invoke it every cadence without paying for a rebuild
+    on every note edit. Returns what it did.
+    """
+    from .attractor import detect_communities
+
+    status = community_build_status(conn)
+    if not force and not status["stale"]:
+        return {"rebuilt": False, "reason": status["reason"], "status": status}
+
+    n_coarse, n_fine = detect_communities(conn=conn)
+    # summarize_all_communities defaults its URLs to module constants — only
+    # forward overrides, never a None that would clobber the default.
+    summ_kwargs = {}
+    if summarize_url is not None:
+        summ_kwargs["summarize_url"] = summarize_url
+    if embed_url is not None:
+        summ_kwargs["embed_url"] = embed_url
+    summarize_all_communities(conn=conn, **summ_kwargs)
+    return {
+        "rebuilt": True,
+        "coarse": n_coarse,
+        "fine": n_fine,
+        "trigger": "force" if force else status["reason"],
+    }
+
+
 COMMUNITY_PROMPT = (
     "You are summarizing a cluster of thematically"
     " related notes from a personal knowledge vault.\n"
