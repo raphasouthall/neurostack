@@ -67,6 +67,69 @@ def cmd_search(args):
         print(f"   Snippet: {r.snippet[:200]}")
 
 
+def _default_eval_path(name: str) -> Path:
+    """Resolve a file under ``tests/eval/`` relative to the repo root.
+
+    Works from a source checkout (where ``neurostack eval`` is actually run);
+    the eval set is test data, not packaged with the pip/npm distribution.
+    """
+    # cli/search.py -> cli -> neurostack -> src -> repo root
+    return Path(__file__).resolve().parents[3] / "tests" / "eval" / name
+
+
+def cmd_eval(args):
+    """Retrieval-quality benchmark + per-signal ablation harness (issue #63)."""
+    from .. import eval as ev
+
+    queries_path = Path(args.queries) if args.queries else _default_eval_path("queries.yaml")
+    if not queries_path.exists():
+        print(f"  Query set not found: {queries_path}")
+        print("  Pass --queries <path/to/queries.yaml> or run from a source checkout.")
+        raise SystemExit(1)
+    queries = ev.load_queries(queries_path)
+
+    cache_path = Path(args.cache) if args.cache else _default_eval_path("query_embeddings.json")
+
+    # Rebuild the offline embedding cache from a live embedder, then continue.
+    if args.refresh_embeddings:
+        print(f"  Fetching {len(queries)} query embeddings from {args.embed_url} ...")
+        cache = ev.build_embedding_cache(queries, embed_url=args.embed_url)
+        ev.save_embedding_cache(cache_path, cache)
+        print(f"  Wrote {len(cache)} embeddings to {cache_path}")
+
+    # Resolve the DB under test (a copy of the prod index for a real run).
+    if args.db:
+        db_path = Path(args.db)
+    else:
+        from ..schema import DB_PATH
+        db_path = Path(DB_PATH)
+
+    # Live embedder vs cached replay. --live skips the cache (needs Ollama up).
+    cache = None
+    if not args.live:
+        cache = ev.load_embedding_cache(cache_path)
+        missing = [q.query for q in queries if q.query not in cache]
+        if missing:
+            print(f"  {len(missing)} queries have no cached embedding (e.g. {missing[0]!r}).")
+            print("  Run with --refresh-embeddings (live embedder) or pass --live.")
+            raise SystemExit(1)
+
+    rows = ev.run_eval(
+        queries,
+        db_path=db_path,
+        k=args.top_k,
+        embed_url=args.embed_url,
+        cache=cache,
+        ablation=not args.no_ablation,
+    )
+
+    if args.json:
+        print(json.dumps(ev.results_to_dict(rows, args.top_k), indent=2))
+        return
+    print(f"\n  {len(queries)} queries · db={db_path} · k={args.top_k}\n")
+    print(ev.format_table(rows, args.top_k))
+
+
 def cmd_ask(args):
     from ..ask import ask_vault
     result = ask_vault(
