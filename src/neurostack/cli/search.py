@@ -170,6 +170,16 @@ def _run_tune(args, queries, db_path, cache):
             "tuned_weights": vars(result.best_weights),
             "history": result.history,
         }
+        # The out-of-sample score is the number that gates committing a weight, so
+        # emit it here too — not just on the human-readable path.
+        if holdout is not None:
+            base_h, tuned_h = tn.holdout_scores(
+                result, holdout, db_path=db_path, k=args.top_k,
+                cache=cache, embed_url=args.embed_url,
+            )
+            out["test_baseline"] = round(base_h, 4)
+            out["test_tuned"] = round(tuned_h, 4)
+            out["test_delta"] = round(tuned_h - base_h, 4)
         print(json.dumps(out, indent=2, default=str))
         return
 

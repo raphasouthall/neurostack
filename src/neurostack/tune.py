@@ -21,10 +21,16 @@ train only.
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field, replace
 
 from .config import RankingWeights
 from .eval import EvalQuery, cached_query_embeddings, evaluate_config
+
+
+def _cache_ctx(cache: dict[str, list[float]] | None):
+    """Patch in the offline query-embedding cache, or a no-op context in live mode."""
+    return cached_query_embeddings(cache) if cache is not None else contextlib.nullcontext()
 
 # Per-parameter candidate grids. Centred on the production defaults so the
 # baseline is always reachable (coordinate ascent can decline to move). Kept
@@ -172,7 +178,7 @@ def coordinate_ascent(
             queries, w, db_path=db_path, k=k, metric=metric, embed_url=embed_url
         )
 
-    def _run() -> tuple[RankingWeights, float, int]:
+    def _run() -> tuple[RankingWeights, float, int, float]:
         current = baseline
         current_score = _eval(current)
         base_score = current_score
@@ -211,10 +217,7 @@ def coordinate_ascent(
                 break
         return current, current_score, rounds_done, base_score
 
-    if cache is not None:
-        with cached_query_embeddings(cache):
-            best_w, best_s, rounds_done, base_s = _run()
-    else:
+    with _cache_ctx(cache):
         best_w, best_s, rounds_done, base_s = _run()
 
     return TuneResult(
@@ -227,6 +230,27 @@ def coordinate_ascent(
         n_evals=state["evals"],
         history=history,
     )
+
+
+def holdout_scores(
+    result: TuneResult,
+    holdout: list[EvalQuery],
+    *,
+    db_path,
+    k: int = 5,
+    cache: dict[str, list[float]] | None = None,
+    embed_url: str | None = None,
+) -> tuple[float, float]:
+    """Out-of-sample (baseline, tuned) scores for ``result.metric`` on a held-out
+    set. This is the number that gates committing a weight: the tuner optimised on
+    the train split, so the honest read is how the tuned vector does on queries it
+    never saw."""
+    with _cache_ctx(cache):
+        base = evaluate_weights(holdout, result.baseline_weights, db_path=db_path,
+                                k=k, metric=result.metric, embed_url=embed_url)
+        tuned = evaluate_weights(holdout, result.best_weights, db_path=db_path,
+                                 k=k, metric=result.metric, embed_url=embed_url)
+    return base, tuned
 
 
 def format_tune_report(
@@ -250,20 +274,8 @@ def format_tune_report(
                  f"(Δ {result.best_score - result.baseline_score:+.4f})")
 
     if holdout is not None and db_path is not None:
-        def _holdout_score(w: RankingWeights) -> float:
-            if cache is not None:
-                with cached_query_embeddings(cache):
-                    return evaluate_weights(
-                        holdout, w, db_path=db_path, k=k,
-                        metric=result.metric, embed_url=embed_url,
-                    )
-            return evaluate_weights(
-                holdout, w, db_path=db_path, k=k,
-                metric=result.metric, embed_url=embed_url,
-            )
-
-        base_h = _holdout_score(result.baseline_weights)
-        tuned_h = _holdout_score(result.best_weights)
+        base_h, tuned_h = holdout_scores(result, holdout, db_path=db_path, k=k,
+                                         cache=cache, embed_url=embed_url)
         lines.append(f"  test  {result.metric}:  baseline {base_h:.4f}  "
                      f"→  tuned {tuned_h:.4f}  (Δ {tuned_h - base_h:+.4f})   ← out-of-sample")
 

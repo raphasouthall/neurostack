@@ -191,3 +191,15 @@ def test_coordinate_ascent_end_to_end(signal_corpus):
     assert res.n_evals > 0
     assert res.best_score >= res.baseline_score
     assert 0.0 <= res.best_score <= 1.0
+
+
+def test_holdout_scores_match_result_on_same_set(signal_corpus):
+    # holdout_scores must recompute the same metric the ascent recorded when the
+    # holdout is the set the tuner ran on — this is the out-of-sample number the
+    # CLI (human + --json) reports, so it has to be consistent.
+    db_file, query, cache = signal_corpus
+    queries = [EvalQuery(query, ["notes/alpha"], category="pinpoint")]
+    res = tune.coordinate_ascent(queries, db_path=db_file, k=5, cache=cache, metric="ndcg")
+    base, tuned = tune.holdout_scores(res, queries, db_path=db_file, k=5, cache=cache)
+    assert base == pytest.approx(res.baseline_score)
+    assert tuned == pytest.approx(res.best_score)
