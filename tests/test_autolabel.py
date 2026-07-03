@@ -137,6 +137,50 @@ def test_llm_labels_generate_and_cache(label_corpus, tmp_path, monkeypatch):
     assert calls["n"] == first_calls
 
 
+def test_llm_cache_key_includes_k(label_corpus, tmp_path, monkeypatch):
+    # Changing --autolabel-k on a reused cache must regenerate, not silently
+    # return the stale per-note count.
+    monkeypatch.setattr(autolabel.httpx, "post",
+                        lambda url, **kw: _FakeResp("q1\nq2\nq3\nq4"))
+    cache_path = tmp_path / "qgen.json"
+    conn = label_corpus[1]
+    two = autolabel.llm_labels(conn=conn, n=10, seed=0, k_per_note=2,
+                               cache_path=cache_path, llm_url="http://x")
+    three = autolabel.llm_labels(conn=conn, n=10, seed=0, k_per_note=3,
+                                 cache_path=cache_path, llm_url="http://x")
+    # 4 notes with content → k queries each; the k=3 run must not reuse the k=2 rows.
+    assert len(two) == 4 * 2
+    assert len(three) == 4 * 3
+
+
+def test_llm_cache_write_creates_parent_dir(label_corpus, tmp_path, monkeypatch):
+    # --autolabel-cache pointing into a missing dir must not lose all the LLM
+    # work at the final write.
+    monkeypatch.setattr(autolabel.httpx, "post", lambda url, **kw: _FakeResp("q1\nq2"))
+    cache_path = tmp_path / "nested" / "dir" / "qgen.json"
+    labels = autolabel.llm_labels(conn=label_corpus[1], n=10, seed=0, k_per_note=2,
+                                  cache_path=cache_path, llm_url="http://x")
+    assert labels
+    assert cache_path.exists()
+
+
+def test_auto_falls_back_on_malformed_llm_body(label_corpus, monkeypatch):
+    # A reachable endpoint that returns a 200 with a junk body must degrade to
+    # the heuristic floor under mode="auto", not crash the run.
+    class _Junk:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"unexpected": "shape"}  # no choices[0].message.content
+
+    monkeypatch.setattr(autolabel, "_llm_reachable", lambda *a, **k: True)
+    monkeypatch.setattr(autolabel.httpx, "post", lambda url, **kw: _Junk())
+    labels = autolabel.generate_labels(label_corpus[1], mode="auto", n=10)
+    assert labels
+    assert all(q.category in ("autolabel-summary", "autolabel-title") for q in labels)
+
+
 # ── dispatcher ──────────────────────────────────────────────────────────────
 
 

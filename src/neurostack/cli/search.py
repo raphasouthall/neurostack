@@ -4,6 +4,7 @@
 
 import json
 import os
+from collections import Counter
 from pathlib import Path
 
 from .utils import _get_workspace
@@ -162,14 +163,14 @@ def _autolabel_queries(args, db_path, ev):
         seed=args.autolabel_seed,
         k_per_note=args.autolabel_k,
         cache_path=args.autolabel_cache,
-        llm_url=args.llm_url or None,
-        llm_model=args.llm_model or None,
+        llm_url=args.llm_url,
+        llm_model=args.llm_model,
     )
     if not queries:
         print("  No labels generated — vault has no notes with summaries or titles.")
         raise SystemExit(1)
     n_unique = len({q.query for q in queries})
-    cats = {c: sum(1 for q in queries if q.category == c) for c in {q.category for q in queries}}
+    cats = dict(Counter(q.category for q in queries))
     print(f"  {len(queries)} labels ({n_unique} unique queries) — {cats}")
     print(f"  Embedding queries from {args.embed_url} ...")
     cache = ev.build_embedding_cache(queries, embed_url=args.embed_url)

@@ -31,20 +31,21 @@ from neurostack.search import ABLATABLE_SIGNALS
 
 
 class TestMatchRule:
+    # Synthetic paths only — these assert the match rule, not any real vault.
     def test_prefix_match(self):
-        assert matches("home/resources/infrastructure.md", "home/resources/infrastructure")
+        assert matches("guides/database-pooling.md", "guides/database-pooling")
 
     def test_directory_target(self):
-        assert matches("home/projects/sunshine/setup.md", "home/projects/sunshine")
+        assert matches("projects/example/setup.md", "projects/example")
 
     def test_substring_match(self):
-        assert matches("work/x/afd-migration/afd-migration.md", "afd-migration")
+        assert matches("ops/x/data-export/data-export.md", "data-export")
 
     def test_case_insensitive(self):
-        assert matches("Home/Resources/Foo.md", "home/resources/foo")
+        assert matches("Guides/Setup/Foo.md", "guides/setup/foo")
 
     def test_no_match(self):
-        assert not matches("home/resources/infrastructure.md", "home/resources/grocery-system")
+        assert not matches("guides/database-pooling.md", "ops/backup-restore")
 
 
 class TestRecall:

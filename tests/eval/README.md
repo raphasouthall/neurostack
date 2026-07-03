@@ -76,16 +76,16 @@ neutral-or-better) and #66 (weight tuning).
 `tests/test_eval.py` builds a tiny deterministic corpus with hand-assigned
 embeddings and an injected query-embedding cache, so the harness — including the
 per-signal ablation and the side-effect-free guarantee — runs in CI with no
-embedder. It does **not** use `queries.yaml`'s real vault paths (those need the
-real index); it only checks that `queries.yaml` ships and parses.
+embedder. It uses fictional paths, not any real vault; it only checks that
+`queries.sample.yaml` ships and parses.
 
-## Maintaining the labels
+## Maintaining labels
 
-Paths in `queries.yaml` were verified against the live vault on 2026-07-02. If
-the vault is reorganised, re-verify with `vault_list_files` and adjust targets.
-Labels are a starting point — after the first real run, inspect misses
-(`--json` shows each query's top-k) and correct any target that is genuinely
-wrong before trusting the deltas for weight decisions.
+Prefer `--autolabel`: generated labels track whatever the vault currently
+contains, so there is nothing to re-verify when notes move. If you keep a
+hand-written `queries.yaml`, it stays local and gitignored — after a real run,
+inspect misses (`--json` shows each query's top-k) and correct any target that
+is genuinely wrong before trusting the deltas for weight decisions.
 
 ## Weight tuning (issue #66)
 

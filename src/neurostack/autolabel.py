@@ -114,6 +114,9 @@ Queries:"""
 
 def _parse_query_lines(text: str, k: int) -> list[str]:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # An unclosed <think> (a reasoning model that ran past max_tokens) would
+    # otherwise leak its reasoning as "queries" — strip from the open tag on.
+    text = re.sub(r"<think>.*", "", text, flags=re.DOTALL)
     out: list[str] = []
     for line in text.splitlines():
         line = re.sub(r"^\s*(?:\d+[.)]|[-*])\s*", "", line).strip().strip('"').strip()
@@ -178,8 +181,12 @@ def llm_labels(
         if row is None:
             continue
         title, content_hash = row[0] or "", row[1] or path
-        if content_hash in cache:
-            queries = cache[content_hash]
+        # Key by (content, k): the cached list is already sliced to k, so a run
+        # with a different --autolabel-k must regenerate rather than return the
+        # old count.
+        cache_key = f"{content_hash}:{k_per_note}"
+        if cache_key in cache:
+            queries = cache[cache_key]
         else:
             chunk_rows = conn.execute(
                 "SELECT content FROM chunks WHERE note_path = ? ORDER BY position",
@@ -190,13 +197,14 @@ def llm_labels(
                 continue
             queries = _llm_queries(title, content, k_per_note,
                                    base_url=base_url, model=model, headers=headers)
-            cache[content_hash] = queries
+            cache[cache_key] = queries
             dirty = True
         for q in queries:
             labels.append(EvalQuery(query=q, targets=[_target_for(path)],
                                     category="autolabel-llm"))
 
     if cpath and dirty:
+        cpath.parent.mkdir(parents=True, exist_ok=True)
         cpath.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
     return labels
 
@@ -247,6 +255,9 @@ def generate_labels(
                                 cache_path=cache_path, llm_url=llm_url, llm_model=llm_model)
             if labels:
                 return labels
-        except httpx.HTTPError:
+        except (httpx.HTTPError, KeyError, IndexError, ValueError):
+            # A reachable-but-broken endpoint (junk/non-JSON body, unexpected
+            # shape) or a corrupt cache file must not sink the whole run — that
+            # is the point of "auto". mode="llm" still surfaces these.
             pass  # fall through to heuristic
     return heuristic_labels(conn, n=n, seed=seed)
