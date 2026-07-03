@@ -114,6 +114,11 @@ def cmd_eval(args):
             print("  Run with --refresh-embeddings (live embedder) or pass --live.")
             raise SystemExit(1)
 
+    # Weight tuning (issue #66) — coordinate ascent instead of the ablation table.
+    if getattr(args, "tune", False):
+        _run_tune(args, queries, db_path, cache)
+        return
+
     rows = ev.run_eval(
         queries,
         db_path=db_path,
@@ -128,6 +133,54 @@ def cmd_eval(args):
         return
     print(f"\n  {len(queries)} queries · db={db_path} · k={args.top_k}\n")
     print(ev.format_table(rows, args.top_k))
+
+
+def _run_tune(args, queries, db_path, cache):
+    """Coordinate-ascent weight tuning (issue #66).
+
+    Tunes on the train half and reports the holdout (out-of-sample) score, which
+    is the number that gates committing a weight. ``--no-holdout`` tunes on the
+    full set — faster, but the reported gain is in-sample only.
+    """
+    from .. import tune as tn
+
+    if args.no_holdout:
+        train, holdout = queries, None
+    else:
+        train, holdout = tn.interleaved_split(queries)
+
+    result = tn.coordinate_ascent(
+        train,
+        db_path=db_path,
+        k=args.top_k,
+        metric=args.tune_metric,
+        cache=cache,
+        embed_url=args.embed_url,
+    )
+
+    if args.json:
+        out = {
+            "metric": result.metric,
+            "k": args.top_k,
+            "n_evals": result.n_evals,
+            "rounds": result.rounds,
+            "train_baseline": round(result.baseline_score, 4),
+            "train_tuned": round(result.best_score, 4),
+            "changed_weights": {k: list(v) for k, v in result.changed_params.items()},
+            "tuned_weights": vars(result.best_weights),
+            "history": result.history,
+        }
+        print(json.dumps(out, indent=2, default=str))
+        return
+
+    n = len(queries)
+    split_note = "full set (in-sample only)" if args.no_holdout else \
+        f"{len(train)} train / {len(holdout)} test"
+    print(f"\n  weight tuning · {n} queries ({split_note}) · db={db_path} · k={args.top_k}\n")
+    print(tn.format_tune_report(
+        result, holdout=holdout, db_path=db_path, k=args.top_k,
+        cache=cache, embed_url=args.embed_url,
+    ))
 
 
 def cmd_ask(args):

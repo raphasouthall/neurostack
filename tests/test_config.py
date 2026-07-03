@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
-from neurostack.config import Config, load_config
+from neurostack.config import Config, RankingWeights, load_config
 
 
 class TestConfig:
@@ -64,3 +64,72 @@ class TestLoadConfig:
         with patch("neurostack.config.CONFIG_PATH", config_file):
             cfg = load_config()
             assert cfg.embed_model == "nomic-embed-text"  # defaults
+
+
+class TestRankingWeights:
+    """Ranking-signal weights (issue #66): config plumbing + RankingWeights."""
+
+    def test_config_defaults_reproduce_prod_constants(self):
+        cfg = Config()
+        assert cfg.convergence_weight == 0.3
+        assert cfg.hotness_weight == 0.2
+        assert cfg.inhibition_threshold == 0.65
+        assert cfg.inhibition_strength == 0.30
+
+    def test_weights_defaults_match_config_defaults(self):
+        # A default RankingWeights and one built from a default Config must agree,
+        # or hybrid_search(weights=None) and hybrid_search(weights=RankingWeights())
+        # would diverge.
+        assert RankingWeights() == RankingWeights.from_config(Config())
+
+    def test_from_config_reads_fields(self):
+        cfg = Config(
+            convergence_weight=0.5,
+            hotness_weight=0.05,
+            inhibition_threshold=0.8,
+            inhibition_strength=0.15,
+            cooccurrence_boost_weight=0.2,
+            link_section_penalty=0.7,
+            link_density_threshold=0.6,
+        )
+        w = RankingWeights.from_config(cfg)
+        assert w.convergence_weight == 0.5
+        assert w.hotness_weight == 0.05
+        assert w.inhibition_threshold == 0.8
+        assert w.inhibition_strength == 0.15
+        assert w.cooccurrence_boost_weight == 0.2
+        assert w.link_section_penalty == 0.7
+        assert w.link_density_threshold == 0.6
+
+    def test_weights_are_frozen(self):
+        import dataclasses
+
+        import pytest
+        w = RankingWeights()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            w.convergence_weight = 0.9  # type: ignore[misc]
+
+    def test_env_overrides(self):
+        env = {
+            "NEUROSTACK_CONVERGENCE_WEIGHT": "0.42",
+            "NEUROSTACK_HOTNESS_WEIGHT": "0.11",
+            "NEUROSTACK_INHIBITION_THRESHOLD": "0.7",
+            "NEUROSTACK_INHIBITION_STRENGTH": "0.2",
+        }
+        with patch.dict(os.environ, env):
+            cfg = load_config()
+        assert cfg.convergence_weight == 0.42
+        assert cfg.hotness_weight == 0.11
+        assert cfg.inhibition_threshold == 0.7
+        assert cfg.inhibition_strength == 0.2
+
+    def test_toml_config(self, tmp_path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            "convergence_weight = 0.25\ninhibition_strength = 0.15\n"
+        )
+        with patch("neurostack.config.CONFIG_PATH", config_file):
+            cfg = load_config()
+        assert cfg.convergence_weight == 0.25
+        assert cfg.inhibition_strength == 0.15
+        assert cfg.hotness_weight == 0.2  # untouched key keeps default
