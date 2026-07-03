@@ -296,6 +296,20 @@ def vault_read_file(path: str) -> dict:
         return {"path": path, "exists": False, "size_bytes": 0, "content": ""}
 
     data = abs_path.read_bytes()
+
+    # Implicit-feedback loop (issue #66): opening a note is a deliberate use, so
+    # attribute it back to the search that surfaced it. Opt-in, non-blocking, and
+    # writes only to the index DB (not the vault) — the read stays read-only.
+    from ..config import get_config
+    cfg = get_config()
+    if cfg.feedback_enabled:
+        try:
+            from ..feedback import attribute_use
+            from ..schema import DB_PATH, get_db
+            attribute_use(get_db(DB_PATH), [path], cfg.feedback_window_seconds)
+        except Exception:
+            pass
+
     return {
         "path": path,
         "exists": True,

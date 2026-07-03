@@ -121,3 +121,32 @@ between the sweep and `config.py`:
 
 The offline unit tests are `tests/test_tune.py`; the tuner is
 `src/neurostack/tune.py`.
+
+## Learning from real usage (`--feedback`, issue #66)
+
+Auto-labels reflect content, not behaviour, so they can't judge usage signals
+like hotness (that's why `--autolabel --tune` freezes it). The implicit-feedback
+loop closes the gap by labelling from what actually gets used:
+
+1. **Capture** (opt-in, `feedback_enabled`) — every search logs what it surfaced;
+   when a surfaced note is then deliberately used (`vault_record_usage` /
+   `vault_read_file`) within `feedback_window_seconds`, that use is attributed
+   back to the query as a `search_feedback` event, tagged with the note's rank.
+2. **Inspect** — `neurostack feedback` shows volume, distinct queries, and how
+   many uses were of a *non-top* result (the informative ones).
+3. **Tune** — `neurostack eval --feedback --tune` builds labels from the events
+   and tunes against them. Hotness is **not** frozen here: the labels are real
+   usage, so the confound that skewed the hand labels doesn't apply.
+
+```bash
+neurostack feedback --db /tmp/neurostack-copy.db          # how much has accumulated
+neurostack eval --db /tmp/neurostack-copy.db --feedback --tune
+```
+
+Enable capture in `config.toml` (`feedback_enabled = true`) or via
+`NEUROSTACK_FEEDBACK_ENABLED=true`. It's off by default — turning it on adds a
+lightweight write to the search and record-usage paths, and every capture call
+swallows its own errors so it can never disrupt retrieval. The signal is
+position-biased and small at first; the #66 commit gate (label quality +
+out-of-sample) still stands before any weight lands in `config.py`. The module is
+`src/neurostack/feedback.py`; tests are `tests/test_feedback.py`.
