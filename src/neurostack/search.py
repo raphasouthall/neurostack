@@ -664,6 +664,22 @@ def decay_hours_since(now=None) -> float | None:
     return (current - last).total_seconds() / 3600.0
 
 
+#: Ranking signals stacked on top of the base (FTS + cosine) score, in pipeline
+#: order. Each name can be passed in ``hybrid_search(ablate=...)`` to skip that
+#: stage — the mechanism the eval harness (issue #63) uses to measure a signal's
+#: marginal contribution to recall@k / MRR / NDCG.
+ABLATABLE_SIGNALS = (
+    "link_section",
+    "convergence",
+    "context",
+    "hotness",
+    "cooccurrence",
+    "excitability",
+    "prediction_error",
+    "lateral_inhibition",
+)
+
+
 def hybrid_search(
     query: str,
     top_k: int = 5,
@@ -673,6 +689,8 @@ def hybrid_search(
     context: str = None,
     workspace: str | None = None,
     explain: bool = False,
+    ablate: set[str] | None = None,
+    record: bool = True,
 ) -> list[SearchResult]:
     """
     Hybrid search combining FTS5 and semantic similarity.
@@ -686,9 +704,18 @@ def hybrid_search(
     dict recording the per-stage score breakdown (base, link-section penalty,
     convergence, context, hotness, co-occurrence, excitability, prediction-error,
     lateral inhibition) — used to diagnose ranking (issue #41).
+
+    ``ablate`` is a set of signal names from ``ABLATABLE_SIGNALS``; any listed
+    stage is skipped so the eval harness (issue #63) can measure each signal's
+    marginal contribution. ``record`` gates the write side-effects — usage
+    recording (which feeds hotness), Hebbian co-occurrence reinforcement, and
+    prediction-error logging. Pass ``record=False`` for a side-effect-free run:
+    an ablation sweep re-runs the same query many times, and letting each run
+    mutate usage/hotness would contaminate every subsequent configuration.
     """
     from .schema import DB_PATH
 
+    ablate = ablate or set()
     cfg = get_config()
     embed_url = embed_url or cfg.embed_url
     conn = get_db(db_path or DB_PATH)
@@ -768,7 +795,7 @@ def hybrid_search(
         is_link_section = _is_link_section(
             r.get("heading_path", ""), r.get("content", "") or "", link_density_threshold
         )
-        if is_link_section:
+        if is_link_section and "link_section" not in ablate:
             r["score"] *= link_section_penalty
         if explain:
             r["_explain"]["link_density"] = round(density, 3)
@@ -787,7 +814,7 @@ def hybrid_search(
     # The final score is blended: 0.7 * raw_score + 0.3 * convergence
     # so convergence can lift or dampen but never dominate.
     note_paths_unique = list({r["note_path"] for r in valid_results})
-    if note_paths_unique:
+    if note_paths_unique and "convergence" not in ablate:
         placeholders = ",".join("?" * len(note_paths_unique))
         all_chunks = conn.execute(
             f"SELECT note_path, embedding FROM chunks "
@@ -824,7 +851,7 @@ def hybrid_search(
 
     # Apply context boost; track which notes are in-context for mismatch detection
     in_context_notes: set[str] = set()
-    if context:
+    if context and "context" not in ablate:
         direct_ctx, neighbor_ctx = _get_context_notes(conn, context, embed_url=embed_url)
         in_context_notes = direct_ctx | neighbor_ctx
         for r in valid_results:
@@ -837,12 +864,13 @@ def hybrid_search(
                 _rec(r, context_boost=1.2, after_context=round(r["score"], 4))
 
     # Apply hotness blend: final_score = 0.8 * semantic + 0.2 * hotness
-    hotness_map = batch_hotness_scores(conn, [r["note_path"] for r in valid_results])
-    for r in valid_results:
-        h = hotness_map.get(r["note_path"], 0.0)
-        if h > 0.0:
-            r["score"] = 0.8 * r["score"] + 0.2 * h
-            _rec(r, hotness=round(h, 4), after_hotness=round(r["score"], 4))
+    if "hotness" not in ablate:
+        hotness_map = batch_hotness_scores(conn, [r["note_path"] for r in valid_results])
+        for r in valid_results:
+            h = hotness_map.get(r["note_path"], 0.0)
+            if h > 0.0:
+                r["score"] = 0.8 * r["score"] + 0.2 * h
+                _rec(r, hotness=round(h, 4), after_hotness=round(r["score"], 4))
 
     # Extract query-matched entities (used for co-occurrence boost AND reinforcement)
     query_words = [w.lower() for w in query.split() if len(w) > 2]
@@ -860,7 +888,7 @@ def hybrid_search(
     # Co-occurrence boost: notes containing entities that co-occur with query entities
     # get a bounded multiplicative boost. Slots after hotness, before excitability.
     cooc_weight = cfg.cooccurrence_boost_weight
-    if cooc_weight > 0 and query_entities:
+    if cooc_weight > 0 and query_entities and "cooccurrence" not in ablate:
                 # Step 2: Find co-occurring entities and their weights
                 cooc_entities = {}  # entity -> max co-occurrence weight
                 for qe in query_entities:
@@ -913,34 +941,35 @@ def hybrid_search(
     # neurons are preferentially recruited into new engrams.
     # Reads from note_metadata (SQLite-owned) with frontmatter fallback.
     meta_paths = [r["note_path"] for r in valid_results]
-    if meta_paths:
-        placeholders = ",".join("?" * len(meta_paths))
-        meta_rows = conn.execute(
-            f"SELECT note_path, status FROM note_metadata"
-            f" WHERE note_path IN ({placeholders})",
-            meta_paths,
-        ).fetchall()
-        meta_status = {r["note_path"]: r["status"] for r in meta_rows}
-    else:
-        meta_status = {}
+    if "excitability" not in ablate:
+        if meta_paths:
+            placeholders = ",".join("?" * len(meta_paths))
+            meta_rows = conn.execute(
+                f"SELECT note_path, status FROM note_metadata"
+                f" WHERE note_path IN ({placeholders})",
+                meta_paths,
+            ).fetchall()
+            meta_status = {r["note_path"]: r["status"] for r in meta_rows}
+        else:
+            meta_status = {}
 
-    for r in valid_results:
-        status = meta_status.get(r["note_path"])
-        if status is None:
-            # Fallback: parse from notes.frontmatter
-            note_row = conn.execute(
-                "SELECT frontmatter FROM notes WHERE path = ?",
-                (r["note_path"],),
-            ).fetchone()
-            if note_row and note_row["frontmatter"]:
-                try:
-                    fm = json.loads(note_row["frontmatter"])
-                    status = fm.get("status")
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        if status == "active":
-            r["score"] *= 1.15
-            _rec(r, excitability_boost=1.15, after_excitability=round(r["score"], 4))
+        for r in valid_results:
+            status = meta_status.get(r["note_path"])
+            if status is None:
+                # Fallback: parse from notes.frontmatter
+                note_row = conn.execute(
+                    "SELECT frontmatter FROM notes WHERE path = ?",
+                    (r["note_path"],),
+                ).fetchone()
+                if note_row and note_row["frontmatter"]:
+                    try:
+                        fm = json.loads(note_row["frontmatter"])
+                        status = fm.get("status")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            if status == "active":
+                r["score"] *= 1.15
+                _rec(r, excitability_boost=1.15, after_excitability=round(r["score"], 4))
 
     # ── Prediction error demotion ──
     # Notes with unresolved prediction errors have previously "surprised" on
@@ -954,7 +983,7 @@ def hybrid_search(
     # Only notes that have surprised >= PREDICTION_ERROR_MIN_OCCURRENCES distinct
     # retrieval events are demoted; a single ad-hoc flag is query noise and must
     # not deprioritise an otherwise-correct note in future searches.
-    if meta_paths:
+    if meta_paths and "prediction_error" not in ablate:
         try:
             placeholders = ",".join("?" * len(meta_paths))
             error_rows = conn.execute(
@@ -1003,7 +1032,7 @@ def hybrid_search(
     # penalty = 1 - inhibition_strength * max_similarity_to_higher_ranked
     INHIBITION_THRESHOLD = 0.65   # only suppress when note embeddings are >0.65 similar
     INHIBITION_STRENGTH = 0.30    # max 30% score reduction at similarity=1.0
-    if len(deduped) > 1:
+    if len(deduped) > 1 and "lateral_inhibition" not in ablate:
         # Build embedding lookup for deduped results
         deduped_embeddings = []
         for r in deduped:
@@ -1042,55 +1071,60 @@ def hybrid_search(
     # Trim to final top_k after lateral inhibition
     deduped = deduped[:top_k]
 
-    # Auto-record usage for returned results (drives hotness scoring)
+    # Write side-effects — skipped entirely when record=False so an eval /
+    # ablation sweep (issue #63) can re-run the same query many times without
+    # each pass mutating usage, hotness, co-occurrence weights, or the
+    # prediction-error log that the next configuration would then read back.
     returned_paths = [r["note_path"] for r in deduped[:top_k]]
-    _record_note_usage(conn, returned_paths)
+    if record:
+        # Auto-record usage for returned results (drives hotness scoring)
+        _record_note_usage(conn, returned_paths)
 
-    # Hebbian reinforcement: strengthen co-occurrence for entity pairs shared
-    # between query-matched entities and result-note entities.
-    # Fires regardless of cooccurrence_boost_weight setting.
-    if query_entities and returned_paths:
-        try:
-            placeholders = ",".join("?" * len(returned_paths))
-            result_ent_rows = conn.execute(
-                f"SELECT DISTINCT subject, object FROM triples "
-                f"WHERE note_path IN ({placeholders})",
-                returned_paths,
-            ).fetchall()
-            result_entities: set[str] = set()
-            for rer in result_ent_rows:
-                result_entities.add(rer["subject"])
-                result_entities.add(rer["object"])
+        # Hebbian reinforcement: strengthen co-occurrence for entity pairs shared
+        # between query-matched entities and result-note entities.
+        # Fires regardless of cooccurrence_boost_weight setting.
+        if query_entities and returned_paths:
+            try:
+                placeholders = ",".join("?" * len(returned_paths))
+                result_ent_rows = conn.execute(
+                    f"SELECT DISTINCT subject, object FROM triples "
+                    f"WHERE note_path IN ({placeholders})",
+                    returned_paths,
+                ).fetchall()
+                result_entities: set[str] = set()
+                for rer in result_ent_rows:
+                    result_entities.add(rer["subject"])
+                    result_entities.add(rer["object"])
 
-            # Build reinforcement pairs: each query entity x each result entity
-            reinforce_pairs = [
-                (qe, re)
-                for qe in query_entities
-                for re in result_entities
-                if qe != re
-            ]
-            if reinforce_pairs:
-                reinforce_cooccurrence(conn, reinforce_pairs)
-        except Exception:
-            pass  # Never let reinforcement disrupt search
+                # Build reinforcement pairs: each query entity x each result entity
+                reinforce_pairs = [
+                    (qe, re)
+                    for qe in query_entities
+                    for re in result_entities
+                    if qe != re
+                ]
+                if reinforce_pairs:
+                    reinforce_cooccurrence(conn, reinforce_pairs)
+            except Exception:
+                pass  # Never let reinforcement disrupt search
 
-    # Prediction error detection — check top result for high semantic distance
-    if deduped:
-        top = deduped[0]
-        top_cosine = top.get("cosine_sim", 1.0)
-        if top_cosine < PREDICTION_ERROR_SIM_THRESHOLD:
-            log_prediction_error(
-                conn, top["note_path"], query, top_cosine, "low_overlap", context
-            )
-        elif (
-            context
-            and in_context_notes
-            and top["note_path"] not in in_context_notes
-            and top_cosine < CONTEXTUAL_MISMATCH_MAX_SIM
-        ):
-            log_prediction_error(
-                conn, top["note_path"], query, top_cosine, "contextual_mismatch", context
-            )
+        # Prediction error detection — check top result for high semantic distance
+        if deduped:
+            top = deduped[0]
+            top_cosine = top.get("cosine_sim", 1.0)
+            if top_cosine < PREDICTION_ERROR_SIM_THRESHOLD:
+                log_prediction_error(
+                    conn, top["note_path"], query, top_cosine, "low_overlap", context
+                )
+            elif (
+                context
+                and in_context_notes
+                and top["note_path"] not in in_context_notes
+                and top_cosine < CONTEXTUAL_MISMATCH_MAX_SIM
+            ):
+                log_prediction_error(
+                    conn, top["note_path"], query, top_cosine, "contextual_mismatch", context
+                )
 
     return _to_search_results(conn, deduped)
 
