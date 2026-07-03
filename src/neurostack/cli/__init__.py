@@ -18,6 +18,7 @@ from .search import (
     cmd_context,
     cmd_cooccurrence,
     cmd_decay,
+    cmd_eval,
     cmd_folder_summaries,
     cmd_graph,
     cmd_prediction_errors,
@@ -402,6 +403,39 @@ def main():
         "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_search)
+
+    # eval — retrieval-quality benchmark + per-signal ablation (issue #63)
+    p = sub.add_parser(
+        "eval",
+        help="Benchmark retrieval (recall@k / MRR / NDCG) + per-signal ablation",
+    )
+    p.add_argument(
+        "--queries", default=None,
+        help="Labelled query set (YAML). Default: tests/eval/queries.yaml",
+    )
+    p.add_argument("--top-k", type=int, default=5, help="k for recall@k / NDCG@k")
+    p.add_argument(
+        "--db", default=None,
+        help="SQLite index to evaluate. Default: the configured DB. "
+        "Use a COPY of the prod index — eval reads only, but point it at a copy.",
+    )
+    p.add_argument(
+        "--cache", default=None,
+        help="Query-embedding cache (JSON). Default: tests/eval/query_embeddings.json",
+    )
+    p.add_argument(
+        "--refresh-embeddings", action="store_true",
+        help="Fetch query embeddings from the live embedder and rewrite the cache",
+    )
+    p.add_argument(
+        "--live", action="store_true",
+        help="Embed queries live instead of from the cache (needs a reachable embedder)",
+    )
+    p.add_argument(
+        "--no-ablation", action="store_true",
+        help="Report only the full-pipeline metrics, skip the per-signal sweep",
+    )
+    p.set_defaults(func=cmd_eval)
 
     # ask
     p = sub.add_parser("ask", help="Ask a question using vault content (RAG)")
