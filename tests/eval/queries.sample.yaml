@@ -1,0 +1,32 @@
+# Sample labelled query set — the format the eval harness expects.
+#
+# This is a public template, NOT a real benchmark: the target paths below point
+# at an imaginary vault. Do not tune against this file. To benchmark your own
+# vault, either:
+#   * run `neurostack eval --autolabel` to generate labels from it automatically, or
+#   * copy this file, point the targets at your own note paths, and pass it with
+#     `--queries my-queries.yaml`.
+#
+# Each entry maps a query to the note(s) that should surface in the top-k.
+# `target:` is shorthand for a single note; `targets: [...]` for several.
+# `category` is one of: pinpoint | thematic | crossref | adversarial.
+queries:
+  - query: "how do I configure the database connection pool"
+    target: guides/database-connection-pooling
+    category: pinpoint
+
+  - query: "backup and restore procedure"
+    target: ops/backup-restore
+    category: pinpoint
+
+  - query: "what are the coding style conventions"
+    target: contributing/style-guide
+    category: thematic
+
+  - query: "authentication and authorization design"
+    targets: [design/auth-model, guides/api-authentication]
+    category: crossref
+
+  - query: "why did we choose the message queue over direct calls"
+    target: decisions/adr-004-message-queue
+    category: adversarial

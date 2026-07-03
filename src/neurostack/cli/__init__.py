@@ -449,6 +449,46 @@ def main():
         help="Tune on the full query set with no train/test split. Faster, but the "
         "reported gain is in-sample — never commit a weight on this alone.",
     )
+    p.add_argument(
+        "--autolabel", action="store_true",
+        help="Generate the label set from the vault under test instead of a "
+        "hand-written queries.yaml (issue #66) — makes the benchmark vault-agnostic.",
+    )
+    p.add_argument(
+        "--autolabel-mode", default="auto", choices=("auto", "heuristic", "llm"),
+        help="auto = LLM queries when a model is reachable, else heuristic "
+        "(summary/title) queries; heuristic = never call the LLM; llm = require it.",
+    )
+    p.add_argument(
+        "--autolabel-n", type=int, default=150,
+        help="How many notes to sample for auto-labelling (default 150)",
+    )
+    p.add_argument(
+        "--autolabel-k", type=int, default=2,
+        help="LLM queries generated per sampled note (default 2)",
+    )
+    p.add_argument(
+        "--autolabel-seed", type=int, default=0,
+        help="Seed for the deterministic note sample (default 0)",
+    )
+    p.add_argument(
+        "--autolabel-cache", default=None,
+        help="Persist generated LLM queries here (JSON, keyed by note content hash) "
+        "so a re-run only re-generates changed notes",
+    )
+    p.add_argument(
+        "--llm-url", default=None,
+        help="LLM endpoint for --autolabel LLM query generation (default: configured llm_url)",
+    )
+    p.add_argument(
+        "--llm-model", default=None,
+        help="LLM model for --autolabel LLM query generation (default: configured llm_model)",
+    )
+    p.add_argument(
+        "--tune-usage-signals", action="store_true",
+        help="Also tune the hotness weight under --autolabel. Off by default: "
+        "synthetic labels can't judge usage signals.",
+    )
     p.set_defaults(func=cmd_eval)
 
     # ask

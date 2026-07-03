@@ -10,11 +10,40 @@ visible.
 
 | File | What it is |
 |------|-----------|
-| `queries.yaml` | Labelled query set: 36 queries → the note(s) each should surface. Seeded from the 2026-04-16 retrieval benchmark and expanded across pinpoint / thematic / crossref / adversarial. |
-| `query_embeddings.json` | Cache of query embeddings (created by `--refresh-embeddings`). Lets the harness run offline. Not committed until you generate it against your embedder. |
+| `queries.sample.yaml` | Public format template: a handful of queries pointing at an imaginary vault. Not a benchmark — copy it and repoint the targets, or use `--autolabel`. |
+| `queries.yaml` | Your own hand-written labels, if you keep any. **Gitignored** — it encodes your vault's structure, so it never ships. |
+| `query_embeddings.json` | Offline cache of query embeddings (created by `--refresh-embeddings`). Gitignored — its keys are the raw query strings. |
 
-The code lives in `src/neurostack/eval.py`; the CLI is `neurostack eval`; the
-offline unit tests are `tests/test_eval.py`.
+The code lives in `src/neurostack/eval.py` (harness) and
+`src/neurostack/autolabel.py` (label generation); the CLI is `neurostack eval`;
+the offline unit tests are `tests/test_eval.py` and `tests/test_autolabel.py`.
+
+## Labelling any vault automatically (`--autolabel`, issue #66)
+
+A note is its own answer key, so the harness can manufacture labels from whatever
+vault is under test — no hand-labelling, nothing vault-specific to commit:
+
+```bash
+# Generate labels from the vault, then run the ablation table
+neurostack eval --db /tmp/neurostack-copy.db --autolabel
+
+# Generate labels and tune weights against them (out-of-sample split)
+neurostack eval --db /tmp/neurostack-copy.db --autolabel --tune
+```
+
+Two tiers (`--autolabel-mode`):
+
+* `heuristic` — no LLM. Uses each sampled note's pre-computed summary (a paraphrase)
+  as the query, title as fallback. Free, offline, exercises the semantic signals.
+* `llm` — asks the configured model for natural questions each note answers.
+  Cached by note content hash (`--autolabel-cache`), so a re-run only regenerates
+  changed notes.
+* `auto` (default) — LLM when a model is reachable, else the heuristic floor.
+
+Under `--autolabel --tune`, the **hotness** weight is frozen: a synthetic
+known-item query reflects content, not what a user actually opens, so it can't
+judge usage signals (the confound that skewed the hand labels). Tune those from
+real click feedback instead. `--tune-usage-signals` overrides.
 
 ## Running it
 
@@ -47,16 +76,16 @@ neutral-or-better) and #66 (weight tuning).
 `tests/test_eval.py` builds a tiny deterministic corpus with hand-assigned
 embeddings and an injected query-embedding cache, so the harness — including the
 per-signal ablation and the side-effect-free guarantee — runs in CI with no
-embedder. It does **not** use `queries.yaml`'s real vault paths (those need the
-real index); it only checks that `queries.yaml` ships and parses.
+embedder. It uses fictional paths, not any real vault; it only checks that
+`queries.sample.yaml` ships and parses.
 
-## Maintaining the labels
+## Maintaining labels
 
-Paths in `queries.yaml` were verified against the live vault on 2026-07-02. If
-the vault is reorganised, re-verify with `vault_list_files` and adjust targets.
-Labels are a starting point — after the first real run, inspect misses
-(`--json` shows each query's top-k) and correct any target that is genuinely
-wrong before trusting the deltas for weight decisions.
+Prefer `--autolabel`: generated labels track whatever the vault currently
+contains, so there is nothing to re-verify when notes move. If you keep a
+hand-written `queries.yaml`, it stays local and gitignored — after a real run,
+inspect misses (`--json` shows each query's top-k) and correct any target that
+is genuinely wrong before trusting the deltas for weight decisions.
 
 ## Weight tuning (issue #66)
 
