@@ -81,38 +81,19 @@ def cmd_eval(args):
     """Retrieval-quality benchmark + per-signal ablation harness (issue #63)."""
     from .. import eval as ev
 
-    queries_path = Path(args.queries) if args.queries else _default_eval_path("queries.yaml")
-    if not queries_path.exists():
-        print(f"  Query set not found: {queries_path}")
-        print("  Pass --queries <path/to/queries.yaml> or run from a source checkout.")
-        raise SystemExit(1)
-    queries = ev.load_queries(queries_path)
-
-    cache_path = Path(args.cache) if args.cache else _default_eval_path("query_embeddings.json")
-
-    # Rebuild the offline embedding cache from a live embedder, then continue.
-    if args.refresh_embeddings:
-        print(f"  Fetching {len(queries)} query embeddings from {args.embed_url} ...")
-        cache = ev.build_embedding_cache(queries, embed_url=args.embed_url)
-        ev.save_embedding_cache(cache_path, cache)
-        print(f"  Wrote {len(cache)} embeddings to {cache_path}")
-
-    # Resolve the DB under test (a copy of the prod index for a real run).
+    # Resolve the DB under test first — both auto-labelling and eval need it.
     if args.db:
         db_path = Path(args.db)
     else:
         from ..schema import DB_PATH
         db_path = Path(DB_PATH)
 
-    # Live embedder vs cached replay. --live skips the cache (needs Ollama up).
-    cache = None
-    if not args.live:
-        cache = ev.load_embedding_cache(cache_path)
-        missing = [q.query for q in queries if q.query not in cache]
-        if missing:
-            print(f"  {len(missing)} queries have no cached embedding (e.g. {missing[0]!r}).")
-            print("  Run with --refresh-embeddings (live embedder) or pass --live.")
-            raise SystemExit(1)
+    # Labels: generate them from the vault under test (--autolabel), or load a
+    # hand-written set. Auto-labels make the benchmark vault-agnostic — see #66.
+    if getattr(args, "autolabel", False):
+        queries, cache = _autolabel_queries(args, db_path, ev)
+    else:
+        queries, cache = _labelled_queries(args, ev)
 
     # Weight tuning (issue #66) — coordinate ascent instead of the ablation table.
     if getattr(args, "tune", False):
@@ -135,6 +116,66 @@ def cmd_eval(args):
     print(ev.format_table(rows, args.top_k))
 
 
+def _labelled_queries(args, ev):
+    """Load a hand-written labelled query set and its offline embedding cache."""
+    queries_path = Path(args.queries) if args.queries else _default_eval_path("queries.yaml")
+    if not queries_path.exists():
+        print(f"  Query set not found: {queries_path}")
+        print("  Pass --queries <path>, run with --autolabel to generate labels from "
+              "the vault, or run from a source checkout.")
+        raise SystemExit(1)
+    queries = ev.load_queries(queries_path)
+
+    cache_path = Path(args.cache) if args.cache else _default_eval_path("query_embeddings.json")
+
+    if args.refresh_embeddings:
+        print(f"  Fetching {len(queries)} query embeddings from {args.embed_url} ...")
+        cache = ev.build_embedding_cache(queries, embed_url=args.embed_url)
+        ev.save_embedding_cache(cache_path, cache)
+        print(f"  Wrote {len(cache)} embeddings to {cache_path}")
+
+    # Live embedder vs cached replay. --live skips the cache (needs Ollama up).
+    cache = None
+    if not args.live:
+        cache = ev.load_embedding_cache(cache_path)
+        missing = [q.query for q in queries if q.query not in cache]
+        if missing:
+            print(f"  {len(missing)} queries have no cached embedding (e.g. {missing[0]!r}).")
+            print("  Run with --refresh-embeddings (live embedder) or pass --live.")
+            raise SystemExit(1)
+    return queries, cache
+
+
+def _autolabel_queries(args, db_path, ev):
+    """Generate labels from the vault under test, then embed each unique query
+    once so the eval / tune run that follows is fully offline."""
+    from .. import autolabel
+    from ..schema import get_db
+
+    conn = get_db(db_path)
+    print(f"  Auto-labelling from {db_path} "
+          f"(mode={args.autolabel_mode}, n={args.autolabel_n}, seed={args.autolabel_seed}) ...")
+    queries = autolabel.generate_labels(
+        conn,
+        mode=args.autolabel_mode,
+        n=args.autolabel_n,
+        seed=args.autolabel_seed,
+        k_per_note=args.autolabel_k,
+        cache_path=args.autolabel_cache,
+        llm_url=args.llm_url or None,
+        llm_model=args.llm_model or None,
+    )
+    if not queries:
+        print("  No labels generated — vault has no notes with summaries or titles.")
+        raise SystemExit(1)
+    n_unique = len({q.query for q in queries})
+    cats = {c: sum(1 for q in queries if q.category == c) for c in {q.category for q in queries}}
+    print(f"  {len(queries)} labels ({n_unique} unique queries) — {cats}")
+    print(f"  Embedding queries from {args.embed_url} ...")
+    cache = ev.build_embedding_cache(queries, embed_url=args.embed_url)
+    return queries, cache
+
+
 def _run_tune(args, queries, db_path, cache):
     """Coordinate-ascent weight tuning (issue #66).
 
@@ -149,6 +190,20 @@ def _run_tune(args, queries, db_path, cache):
     else:
         train, holdout = tn.interleaved_split(queries)
 
+    # Freeze the usage signal (hotness) when tuning on auto-labels: a synthetic
+    # known-item query reflects content, not what a user actually opens, so it
+    # cannot judge hotness fairly (the confound that burned the hand labels).
+    # Tune usage signals from real click feedback instead. --tune-usage-signals
+    # overrides for when the label set genuinely reflects usage.
+    grids, order = tn.DEFAULT_GRIDS, tn.DEFAULT_ORDER
+    freeze_hotness = getattr(args, "autolabel", False) and not getattr(
+        args, "tune_usage_signals", False)
+    if freeze_hotness:
+        grids = {k: v for k, v in tn.DEFAULT_GRIDS.items() if k != "hotness_weight"}
+        order = tuple(p for p in tn.DEFAULT_ORDER if p != "hotness_weight")
+        print("  (hotness frozen — synthetic labels can't judge usage; "
+              "pass --tune-usage-signals to include it)")
+
     result = tn.coordinate_ascent(
         train,
         db_path=db_path,
@@ -156,6 +211,8 @@ def _run_tune(args, queries, db_path, cache):
         metric=args.tune_metric,
         cache=cache,
         embed_url=args.embed_url,
+        grids=grids,
+        order=order,
     )
 
     if args.json:

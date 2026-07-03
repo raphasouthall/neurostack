@@ -92,10 +92,12 @@ class TestNDCG:
 # ── labelled query set ships and parses ────────────────────────────────────
 
 
-def test_shipped_query_set_loads():
-    path = Path(__file__).parent / "eval" / "queries.yaml"
+def test_sample_query_set_loads():
+    # Only the public synthetic sample ships; real labels are vault-specific and
+    # gitignored (generate them with `neurostack eval --autolabel`).
+    path = Path(__file__).parent / "eval" / "queries.sample.yaml"
     queries = load_queries(path)
-    assert len(queries) >= 30, "issue #63 asks for 30-50 labelled queries"
+    assert queries, "queries.sample.yaml should ship as the format template"
     for q in queries:
         assert q.query
         assert q.targets, f"{q.query!r} has no target"
