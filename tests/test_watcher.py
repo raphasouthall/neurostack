@@ -199,3 +199,56 @@ class TestTripleRetryQueue:
         assert conn.execute(
             "SELECT COUNT(*) c FROM triples WHERE note_path=?", ("notes/a.md",)
         ).fetchone()["c"] == 1
+
+
+class TestReindexPreservesNoteMetadata:
+    """A reindex of a *changed* note must not wipe accumulated per-note state.
+
+    Regression: `INSERT OR REPLACE INTO notes` cascade-deleted the note_metadata
+    row (ON DELETE CASCADE) before the upsert could preserve it, so status reset
+    dormant->active and date_added was bumped on every reindex. The fix updates
+    the note row in place via ON CONFLICT so the cascade never fires.
+    """
+
+    def _write(self, path, body):
+        path.write_text(
+            "---\ndate: 2026-01-01\ntags: [x]\ntype: permanent\n---\n\n# N\n\n" + body + "\n"
+        )
+
+    def test_status_date_and_usage_survive_reindex(self, in_memory_db, tmp_path, monkeypatch):
+        import neurostack.watcher as w
+
+        # Avoid the embedder: chunk embeddings aren't needed to prove metadata survival.
+        monkeypatch.setattr(w, "get_embeddings_batch", lambda texts, **k: [None] * len(texts))
+        conn = in_memory_db
+        note = tmp_path / "n.md"
+        self._write(note, "original body")
+        w.index_single_note(note, tmp_path, conn, skip_summary=True, skip_triples=True)
+
+        # Accumulate state that only exists post-index: a demotion, a distinct
+        # date_added sentinel, and a usage row (hotness).
+        conn.execute(
+            "UPDATE note_metadata SET status='dormant', date_added='2020-12-25'"
+            " WHERE note_path='n.md'"
+        )
+        conn.execute("INSERT INTO note_usage(note_path,used_at) VALUES('n.md','2026-06-01')")
+        conn.commit()
+
+        # Edit the file so content_hash changes, forcing a real reindex.
+        self._write(note, "EDITED body now")
+        w.index_single_note(note, tmp_path, conn, skip_summary=True, skip_triples=True)
+
+        row = conn.execute(
+            "SELECT status, date_added FROM note_metadata WHERE note_path='n.md'"
+        ).fetchone()
+        assert row["status"] == "dormant", "reindex must preserve dormant status"
+        assert row["date_added"] == "2020-12-25", "reindex must preserve date_added"
+        # Hotness history (no FK, must be untouched)
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM note_usage WHERE note_path='n.md'"
+        ).fetchone()["c"] == 1
+        # ...and the content genuinely updated (chunks reflect the edit)
+        chunks = conn.execute(
+            "SELECT content FROM chunks WHERE note_path='n.md'"
+        ).fetchall()
+        assert any("EDITED" in c["content"] for c in chunks)
