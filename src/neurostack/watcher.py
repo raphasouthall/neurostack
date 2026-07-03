@@ -163,10 +163,21 @@ def index_single_note(
 
     frontmatter_json = json.dumps(parsed.frontmatter, default=str)
 
-    # Update note
+    # Update the note row IN PLACE. Deliberately not INSERT OR REPLACE: with
+    # foreign_keys=ON, REPLACE deletes the existing row first, which cascades to
+    # note_metadata (ON DELETE CASCADE) and wipes its status/date_added BEFORE
+    # the upsert below can preserve them — a reindex of a changed note silently
+    # reset dormant->active and bumped date_added. ON CONFLICT UPDATE keeps the
+    # row so the cascade never fires. Chunks/summaries/triples are cleared
+    # explicitly further down, so nothing relied on the REPLACE cascade.
     conn.execute(
-        """INSERT OR REPLACE INTO notes (path, title, frontmatter, content_hash, updated_at)
-           VALUES (?, ?, ?, ?, ?)""",
+        """INSERT INTO notes (path, title, frontmatter, content_hash, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(path) DO UPDATE SET
+             title = excluded.title,
+             frontmatter = excluded.frontmatter,
+             content_hash = excluded.content_hash,
+             updated_at = excluded.updated_at""",
         (parsed.path, parsed.title, frontmatter_json, parsed.content_hash, now),
     )
 
@@ -479,10 +490,17 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
     triples = result["triples"]
     triple_embeddings = result["triple_embeddings"]
 
-    # Update note
+    # Update the note row IN PLACE — see index_single_note for why not REPLACE:
+    # REPLACE cascade-deletes note_metadata (status/date_added) before the upsert
+    # below can preserve it. ON CONFLICT UPDATE keeps the row.
     conn.execute(
-        """INSERT OR REPLACE INTO notes (path, title, frontmatter, content_hash, updated_at)
-           VALUES (?, ?, ?, ?, ?)""",
+        """INSERT INTO notes (path, title, frontmatter, content_hash, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(path) DO UPDATE SET
+             title = excluded.title,
+             frontmatter = excluded.frontmatter,
+             content_hash = excluded.content_hash,
+             updated_at = excluded.updated_at""",
         (parsed.path, parsed.title, frontmatter_json, parsed.content_hash, now),
     )
 
