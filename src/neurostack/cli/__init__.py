@@ -450,7 +450,11 @@ def main():
         help="Tune on the full query set with no train/test split. Faster, but the "
         "reported gain is in-sample — never commit a weight on this alone.",
     )
-    p.add_argument(
+    # Label source: hand-written (default), generated from the vault (--autolabel),
+    # or from implicit feedback (--feedback). The latter two are exclusive — they
+    # differ on whether hotness is tuned, so combining them is ambiguous.
+    label_src = p.add_mutually_exclusive_group()
+    label_src.add_argument(
         "--autolabel", action="store_true",
         help="Generate the label set from the vault under test instead of a "
         "hand-written queries.yaml (issue #66) — makes the benchmark vault-agnostic.",
@@ -490,7 +494,7 @@ def main():
         help="Also tune the hotness weight under --autolabel. Off by default: "
         "synthetic labels can't judge usage signals.",
     )
-    p.add_argument(
+    label_src.add_argument(
         "--feedback", action="store_true",
         help="Label from accumulated implicit feedback (issue #66) — real (query, "
         "used-note) events. Unlike --autolabel these reflect usage, so hotness is tuned.",

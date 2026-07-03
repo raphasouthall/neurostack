@@ -475,11 +475,8 @@ def vault_record_usage(note_paths: list[str]) -> dict:
 
     # Implicit-feedback loop (issue #66): a deliberate use is the click signal —
     # attribute it back to the search that surfaced it. Opt-in, non-blocking.
-    from ..config import get_config
-    cfg = get_config()
-    if cfg.feedback_enabled:
-        from ..feedback import attribute_use
-        attribute_use(conn, note_paths, cfg.feedback_window_seconds)
+    from ..feedback import capture_use
+    capture_use(note_paths, conn=conn)
     return {"recorded": len(note_paths), "paths": note_paths}
 
 

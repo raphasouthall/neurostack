@@ -91,12 +91,22 @@ def attribute_use(conn, used_paths: list[str], window_seconds: float = 1800.0) -
             if path in shown:
                 rank = shown.index(path) + 1
                 try:
-                    conn.execute(
-                        "INSERT INTO search_feedback "
-                        "(query, chosen_path, shown_paths, rank) VALUES (?, ?, ?, ?)",
-                        (query, path, json.dumps(shown), rank),
-                    )
-                    written += 1
+                    # One logical use = one event. A read + a record-usage for the
+                    # same note (a normal RAG pairing), or re-opening it, must not
+                    # each add a row — skip if this (query, path) is already
+                    # recorded within the window.
+                    dup = conn.execute(
+                        "SELECT 1 FROM search_feedback WHERE query = ? AND "
+                        "chosen_path = ? AND created_at >= datetime('now', ?) LIMIT 1",
+                        (query, path, f"-{int(window_seconds)} seconds"),
+                    ).fetchone()
+                    if dup is None:
+                        conn.execute(
+                            "INSERT INTO search_feedback "
+                            "(query, chosen_path, shown_paths, rank) VALUES (?, ?, ?, ?)",
+                            (query, path, json.dumps(shown), rank),
+                        )
+                        written += 1
                 except Exception:
                     pass
                 break  # only the most recent surfacing search
@@ -106,6 +116,27 @@ def attribute_use(conn, used_paths: list[str], window_seconds: float = 1800.0) -
         except Exception:
             pass
     return written
+
+
+def capture_use(used_paths: list[str], conn=None) -> None:
+    """Opt-in, fully-guarded entry point for the read/usage hooks: attribute a
+    use only when ``feedback_enabled``. Never raises. When ``conn`` is omitted a
+    DB connection is opened lazily — but only after the enabled check, so a
+    default (disabled) deploy opens nothing.
+    """
+    try:
+        from .config import get_config
+
+        cfg = get_config()
+        if not cfg.feedback_enabled:
+            return
+        if conn is None:
+            from .schema import DB_PATH, get_db
+
+            conn = get_db(DB_PATH)
+        attribute_use(conn, used_paths, cfg.feedback_window_seconds)
+    except Exception:
+        pass  # feedback capture must never disrupt a read or a usage record
 
 
 # ── harvest (called from CLI — may raise) ──────────────────────────────────

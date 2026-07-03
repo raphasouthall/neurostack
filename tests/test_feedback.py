@@ -99,6 +99,15 @@ def test_attribute_respects_window(fb_db):
     assert fb.attribute_use(fb_db, ["a.md"], window_seconds=1800) == 0
 
 
+def test_attribute_dedups_same_use_within_window(fb_db):
+    # A read + a record-usage for the same note (a normal pairing) must be one
+    # event, not two.
+    fb.log_search(fb_db, "q", ["a.md", "b.md"])
+    assert fb.attribute_use(fb_db, ["a.md"], 1800) == 1
+    assert fb.attribute_use(fb_db, ["a.md"], 1800) == 0  # deduped
+    assert fb_db.execute("SELECT COUNT(*) FROM search_feedback").fetchone()[0] == 1
+
+
 def test_attribute_picks_most_recent_search(fb_db):
     fb.log_search(fb_db, "old query", ["x.md", "a.md"])
     fb.log_search(fb_db, "new query", ["a.md", "y.md"])
