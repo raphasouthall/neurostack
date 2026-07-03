@@ -37,8 +37,8 @@ When retrieved notes genuinely informed your answer, record them:
 vault_record_usage(note_paths=["path/a.md", "path/b.md"])
 ```
 This is how the vault learns to rank better for you. It drives two signals:
-**hotness** (frequently-used notes rank higher — always on) and the
+**hotness** (frequently-used notes rank higher, always on) and the
 **implicit-feedback loop** (which result answered which query, used to tune
-ranking — opt-in via `feedback_enabled`). Record the notes that actually helped,
+ranking; opt-in via `feedback_enabled`). Record the notes that actually helped,
 not incidental or irrelevant hits. Skipping it isn't wrong, but the ranking only
 improves from the uses you record.
