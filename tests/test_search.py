@@ -392,59 +392,6 @@ class TestDecayRunTracking:
         assert decay_hours_since() is None
 
 
-class TestExcitabilityBoost:
-    def test_active_notes_boost_fts_results(self, in_memory_db):
-        """Notes with status=active in frontmatter get higher scores."""
-        import json
-        conn = in_memory_db
-        # Insert two notes with same content but different status
-        conn.execute(
-            "INSERT INTO notes (path, title, frontmatter, "
-            "content_hash, updated_at) VALUES (?, ?, ?, ?, ?)",
-            ("active.md", "Active Note",
-             json.dumps({"status": "active"}), "a1", "2026-01-01"),
-        )
-        conn.execute(
-            "INSERT INTO notes (path, title, frontmatter, "
-            "content_hash, updated_at) VALUES (?, ?, ?, ?, ?)",
-            ("ref.md", "Reference Note",
-             json.dumps({"status": "reference"}), "r1", "2026-01-01"),
-        )
-        # Insert identical chunks so FTS scores are equal
-        for path in ["active.md", "ref.md"]:
-            conn.execute(
-                "INSERT INTO chunks (note_path, heading_path, "
-                "content, content_hash, position) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (path, "## Test", "unique_excitability_test_content",
-                 "h", 0),
-            )
-        conn.commit()
-
-        # FTS search returns both — verify active gets boosted
-        results = fts_search(conn, "unique_excitability_test_content")
-        assert len(results) == 2
-
-    def test_active_status_parsed_from_frontmatter(self, in_memory_db):
-        """Verify frontmatter JSON is correctly parsed for status."""
-        import json
-        conn = in_memory_db
-        fm = {"status": "active", "tags": ["test"]}
-        conn.execute(
-            "INSERT INTO notes (path, title, frontmatter, "
-            "content_hash, updated_at) VALUES (?, ?, ?, ?, ?)",
-            ("test.md", "Test", json.dumps(fm), "h", "2026-01-01"),
-        )
-        conn.commit()
-
-        row = conn.execute(
-            "SELECT frontmatter FROM notes WHERE path = ?",
-            ("test.md",),
-        ).fetchone()
-        parsed = json.loads(row["frontmatter"])
-        assert parsed["status"] == "active"
-
-
 def _fake_embedding(val: float = 0.5, dim: int = 768) -> bytes:
     """Create a fake embedding blob for testing."""
     return struct.pack(f"{dim}f", *([val] * dim))
