@@ -524,9 +524,11 @@ def run_excitability_demotion(
     Demotes active notes whose decayed hotness fell below threshold (and
     never-used notes older than 90 days) to dormant, and re-promotes dormant
     notes whose hotness has risen back above threshold to active. Keeps the
-    status cache — which drives the ×1.15 search boost — in sync with the
-    note_usage signal. Updates note_metadata.status only; vault files are
-    NEVER modified.
+    status cache in sync with the note_usage signal. Since issue #64 removed the
+    ×1.15 search boost, status no longer affects ranking; it now serves the
+    agent-linking convention (link preferentially to `active` notes) and the
+    `neurostack decay` report. Updates note_metadata.status only; vault files
+    are NEVER modified.
 
     Returns {"demoted": N, "paths": [...], "promoted": M, "promoted_paths": [...]}.
     """
@@ -674,7 +676,6 @@ ABLATABLE_SIGNALS = (
     "context",
     "hotness",
     "cooccurrence",
-    "excitability",
     "prediction_error",
     "lateral_inhibition",
 )
@@ -702,8 +703,8 @@ def hybrid_search(
 
     When ``explain`` is True, each returned SearchResult carries an ``explain``
     dict recording the per-stage score breakdown (base, link-section penalty,
-    convergence, context, hotness, co-occurrence, excitability, prediction-error,
-    lateral inhibition) — used to diagnose ranking (issue #41).
+    convergence, context, hotness, co-occurrence, prediction-error, lateral
+    inhibition) — used to diagnose ranking (issue #41).
 
     ``ablate`` is a set of signal names from ``ABLATABLE_SIGNALS``; any listed
     stage is skipped so the eval harness (issue #63) can measure each signal's
@@ -886,7 +887,7 @@ def hybrid_search(
             query_entities.update(r[0] for r in ent_rows)
 
     # Co-occurrence boost: notes containing entities that co-occur with query entities
-    # get a bounded multiplicative boost. Slots after hotness, before excitability.
+    # get a bounded multiplicative boost. Slots after hotness, before demotion.
     cooc_weight = cfg.cooccurrence_boost_weight
     if cooc_weight > 0 and query_entities and "cooccurrence" not in ablate:
                 # Step 2: Find co-occurring entities and their weights
@@ -936,40 +937,14 @@ def hybrid_search(
                                 _rec(r, cooccurrence_boost=round(boost, 4),
                                      after_cooccurrence=round(r["score"], 4))
 
-    # Excitability boost: notes with status=active get a 1.15x boost
-    # Mirrors CREB-mediated excitability windows where recently active
-    # neurons are preferentially recruited into new engrams.
-    # Reads from note_metadata (SQLite-owned) with frontmatter fallback.
+    # Excitability boost removed (issue #64). The flat ×1.15 for status='active'
+    # fired uniformly on a default install — status defaults to 'active' and is
+    # demoted only by the opt-in `neurostack decay --demote` timer — so it
+    # contributed no ranking signal while double-counting the recency already
+    # carried by the continuous hotness blend above. note_metadata.status is
+    # still maintained (for the agent-linking convention and the decay report);
+    # it just no longer multiplies search scores.
     meta_paths = [r["note_path"] for r in valid_results]
-    if "excitability" not in ablate:
-        if meta_paths:
-            placeholders = ",".join("?" * len(meta_paths))
-            meta_rows = conn.execute(
-                f"SELECT note_path, status FROM note_metadata"
-                f" WHERE note_path IN ({placeholders})",
-                meta_paths,
-            ).fetchall()
-            meta_status = {r["note_path"]: r["status"] for r in meta_rows}
-        else:
-            meta_status = {}
-
-        for r in valid_results:
-            status = meta_status.get(r["note_path"])
-            if status is None:
-                # Fallback: parse from notes.frontmatter
-                note_row = conn.execute(
-                    "SELECT frontmatter FROM notes WHERE path = ?",
-                    (r["note_path"],),
-                ).fetchone()
-                if note_row and note_row["frontmatter"]:
-                    try:
-                        fm = json.loads(note_row["frontmatter"])
-                        status = fm.get("status")
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            if status == "active":
-                r["score"] *= 1.15
-                _rec(r, excitability_boost=1.15, after_excitability=round(r["score"], 4))
 
     # ── Prediction error demotion ──
     # Notes with unresolved prediction errors have previously "surprised" on
