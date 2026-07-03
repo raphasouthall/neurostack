@@ -17,3 +17,11 @@ uv.lock
 .planning/
 .claude/
 npm/.mcpregistry_*
+
+# Personal / vault-specific eval labels — never publish. The hand-written label
+# set and its embedding cache (keyed by the raw query strings) both encode a
+# specific vault's structure. Ship queries.sample.yaml; generate real labels with
+# `neurostack eval --autolabel`.
+tests/eval/queries.yaml
+tests/eval/query_embeddings.json
+tests/eval/query_gen_cache.json

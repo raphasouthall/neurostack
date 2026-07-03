@@ -31,20 +31,21 @@ from neurostack.search import ABLATABLE_SIGNALS
 
 
 class TestMatchRule:
+    # Synthetic paths only — these assert the match rule, not any real vault.
     def test_prefix_match(self):
-        assert matches("home/resources/infrastructure.md", "home/resources/infrastructure")
+        assert matches("guides/database-pooling.md", "guides/database-pooling")
 
     def test_directory_target(self):
-        assert matches("home/projects/sunshine/setup.md", "home/projects/sunshine")
+        assert matches("projects/example/setup.md", "projects/example")
 
     def test_substring_match(self):
-        assert matches("work/x/afd-migration/afd-migration.md", "afd-migration")
+        assert matches("ops/x/data-export/data-export.md", "data-export")
 
     def test_case_insensitive(self):
-        assert matches("Home/Resources/Foo.md", "home/resources/foo")
+        assert matches("Guides/Setup/Foo.md", "guides/setup/foo")
 
     def test_no_match(self):
-        assert not matches("home/resources/infrastructure.md", "home/resources/grocery-system")
+        assert not matches("guides/database-pooling.md", "ops/backup-restore")
 
 
 class TestRecall:
@@ -92,10 +93,12 @@ class TestNDCG:
 # ── labelled query set ships and parses ────────────────────────────────────
 
 
-def test_shipped_query_set_loads():
-    path = Path(__file__).parent / "eval" / "queries.yaml"
+def test_sample_query_set_loads():
+    # Only the public synthetic sample ships; real labels are vault-specific and
+    # gitignored (generate them with `neurostack eval --autolabel`).
+    path = Path(__file__).parent / "eval" / "queries.sample.yaml"
     queries = load_queries(path)
-    assert len(queries) >= 30, "issue #63 asks for 30-50 labelled queries"
+    assert queries, "queries.sample.yaml should ship as the format template"
     for q in queries:
         assert q.query
         assert q.targets, f"{q.query!r} has no target"
