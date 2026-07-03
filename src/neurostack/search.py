@@ -1069,6 +1069,13 @@ def hybrid_search(
         # Auto-record usage for returned results (drives hotness scoring)
         _record_note_usage(conn, returned_paths)
 
+        # Implicit-feedback loop (issue #66): log what this search surfaced so a
+        # later deliberate use of one of these notes can be attributed back to
+        # the query. Opt-in; log_search swallows its own errors.
+        if cfg.feedback_enabled:
+            from .feedback import log_search
+            log_search(conn, query, returned_paths, cfg.feedback_log_retention)
+
         # Hebbian reinforcement: strengthen co-occurrence for entity pairs shared
         # between query-matched entities and result-note entities.
         # Fires regardless of cooccurrence_boost_weight setting.

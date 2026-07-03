@@ -80,6 +80,13 @@ class Config:
     # when `communities build --if-stale` triggers a rebuild.
     community_stale_age_days: float = 14.0   # flag/rebuild if last build older than this
     community_stale_drift: float = 0.10      # ...or if this fraction of notes changed since
+    # Implicit-feedback loop (issue #66): when enabled, searches are logged and a
+    # subsequent deliberate use of a surfaced note is attributed back to the query,
+    # producing usage-grounded labels the tuner can learn from. Off by default —
+    # opting in adds a lightweight write to the search + record-usage paths.
+    feedback_enabled: bool = False
+    feedback_window_seconds: float = 1800.0  # a use counts as feedback if within this of the search
+    feedback_log_retention: int = 5000       # cap on retained search_log rows
     # Vault write-back (issue #20): opt-in persistence of qualifying memories as
     # markdown files under a quarantined directory (default ``.neurostack/``).
     # Off by default — the DB stays the source of truth; files are exports. Only
@@ -165,6 +172,12 @@ def load_config() -> Config:
                     "inhibition_threshold", "inhibition_strength"):
             if key in data:
                 setattr(cfg, key, float(data[key]))
+        if "feedback_enabled" in data:
+            cfg.feedback_enabled = bool(data["feedback_enabled"])
+        if "feedback_window_seconds" in data:
+            cfg.feedback_window_seconds = float(data["feedback_window_seconds"])
+        if "feedback_log_retention" in data:
+            cfg.feedback_log_retention = int(data["feedback_log_retention"])
         if "auto_summary_weight" in data:
             cfg.auto_summary_weight = float(data["auto_summary_weight"])
         if "community_stale_age_days" in data:
@@ -205,6 +218,9 @@ def load_config() -> Config:
         "NEUROSTACK_HOTNESS_WEIGHT": ("hotness_weight", float),
         "NEUROSTACK_INHIBITION_THRESHOLD": ("inhibition_threshold", float),
         "NEUROSTACK_INHIBITION_STRENGTH": ("inhibition_strength", float),
+        "NEUROSTACK_FEEDBACK_ENABLED": ("feedback_enabled", bool),
+        "NEUROSTACK_FEEDBACK_WINDOW_SECONDS": ("feedback_window_seconds", float),
+        "NEUROSTACK_FEEDBACK_LOG_RETENTION": ("feedback_log_retention", int),
         "NEUROSTACK_AUTO_SUMMARY_WEIGHT": ("auto_summary_weight", float),
         "NEUROSTACK_COMMUNITY_STALE_AGE_DAYS": ("community_stale_age_days", float),
         "NEUROSTACK_COMMUNITY_STALE_DRIFT": ("community_stale_drift", float),

@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -193,6 +193,28 @@ CREATE TABLE IF NOT EXISTS note_usage (
 
 CREATE INDEX IF NOT EXISTS idx_note_usage_path ON note_usage(note_path);
 CREATE INDEX IF NOT EXISTS idx_note_usage_time ON note_usage(used_at);
+
+-- Implicit-feedback loop (issue #66): learn ranking weights from real behaviour.
+-- search_log records what each search surfaced; when a surfaced note is then
+-- deliberately used, that use is attributed back to the query as a feedback event.
+CREATE TABLE IF NOT EXISTS search_log (
+    search_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    shown_paths JSON NOT NULL,
+    searched_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_search_log_time ON search_log(searched_at);
+
+CREATE TABLE IF NOT EXISTS search_feedback (
+    feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    chosen_path TEXT NOT NULL,
+    shown_paths JSON NOT NULL,
+    rank INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_search_feedback_query ON search_feedback(query);
+CREATE INDEX IF NOT EXISTS idx_search_feedback_time ON search_feedback(created_at);
 
 -- Prediction error log: signal-driven vault maintenance
 -- Populated at retrieval time when cosine distance exceeds threshold.
@@ -594,6 +616,27 @@ CREATE INDEX IF NOT EXISTS idx_triple_failed_retry
     ON triple_extraction_failed(next_retry_at);
 """
 
+MIGRATION_V18 = """
+CREATE TABLE IF NOT EXISTS search_log (
+    search_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    shown_paths JSON NOT NULL,
+    searched_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_search_log_time ON search_log(searched_at);
+
+CREATE TABLE IF NOT EXISTS search_feedback (
+    feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    chosen_path TEXT NOT NULL,
+    shown_paths JSON NOT NULL,
+    rank INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_search_feedback_query ON search_feedback(query);
+CREATE INDEX IF NOT EXISTS idx_search_feedback_time ON search_feedback(created_at);
+"""
+
 
 def _run_migrations(conn: sqlite3.Connection):
     """Run schema migrations if needed."""
@@ -901,6 +944,19 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v17 complete.")
+
+    if current < 18:
+        log.info(
+            "Migrating schema v17 -> v18: "
+            "adding search_log + search_feedback tables (implicit-feedback loop)..."
+        )
+        conn.executescript(MIGRATION_V18)
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version"
+            " VALUES (18)"
+        )
+        conn.commit()
+        log.info("Migration to v18 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:

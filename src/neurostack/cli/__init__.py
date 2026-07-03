@@ -19,6 +19,7 @@ from .search import (
     cmd_cooccurrence,
     cmd_decay,
     cmd_eval,
+    cmd_feedback,
     cmd_folder_summaries,
     cmd_graph,
     cmd_prediction_errors,
@@ -449,7 +450,11 @@ def main():
         help="Tune on the full query set with no train/test split. Faster, but the "
         "reported gain is in-sample — never commit a weight on this alone.",
     )
-    p.add_argument(
+    # Label source: hand-written (default), generated from the vault (--autolabel),
+    # or from implicit feedback (--feedback). The latter two are exclusive — they
+    # differ on whether hotness is tuned, so combining them is ambiguous.
+    label_src = p.add_mutually_exclusive_group()
+    label_src.add_argument(
         "--autolabel", action="store_true",
         help="Generate the label set from the vault under test instead of a "
         "hand-written queries.yaml (issue #66) — makes the benchmark vault-agnostic.",
@@ -489,7 +494,28 @@ def main():
         help="Also tune the hotness weight under --autolabel. Off by default: "
         "synthetic labels can't judge usage signals.",
     )
+    label_src.add_argument(
+        "--feedback", action="store_true",
+        help="Label from accumulated implicit feedback (issue #66) — real (query, "
+        "used-note) events. Unlike --autolabel these reflect usage, so hotness is tuned.",
+    )
+    p.add_argument(
+        "--feedback-min-count", type=int, default=1,
+        help="Min times a note must be chosen for a query to count as a target (default 1)",
+    )
+    p.add_argument(
+        "--feedback-max-age-days", type=float, default=None,
+        help="Only use feedback newer than this many days (default: all)",
+    )
     p.set_defaults(func=cmd_eval)
+
+    # feedback — inspect the implicit-feedback loop (issue #66)
+    p = sub.add_parser(
+        "feedback",
+        help="Show accumulated implicit-feedback stats (searches, uses, ranks)",
+    )
+    p.add_argument("--db", default=None, help="SQLite index to inspect (default: configured DB)")
+    p.set_defaults(func=cmd_feedback)
 
     # ask
     p = sub.add_parser("ask", help="Ask a question using vault content (RAG)")

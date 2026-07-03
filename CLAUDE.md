@@ -88,6 +88,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack record-usage "path1" "path2"` | Record note usage for hotness scoring |
 | `neurostack decay` | Report note excitability and dormancy |
 | `neurostack prediction-errors` | Show notes flagged as poor retrieval fit |
+| `neurostack feedback` | Show accumulated implicit-feedback stats — searches, uses, ranks (issue #66) |
 | `neurostack migrate write-back` | Export qualifying memories to markdown files (issue #20). `--dry-run` to preview |
 | `neurostack sync` | Reconcile write-back files against the DB (DB wins on conflict) |
 
@@ -192,6 +193,18 @@ Persist qualifying memories as markdown files under a quarantined dir. Configure
 | `writeback.include_observations` | `false` | `NEUROSTACK_WRITEBACK_INCLUDE_OBSERVATIONS` |
 
 Writes only inside `{vault_root}/<path>/memories/<type>/<YYYY-MM>/<uuid>.md`. Only persistent (no-TTL) `decision`/`convention`/`learning`/`bug` are written by default; `observation`/`context` need `include_observations`. The DB stays source of truth; `vault_writer.py` owns all file IO (it deliberately does **not** reuse `vault_write_file`, which commits to git). The dir self-ignores via its own `.gitignore`; NeuroStack never commits.
+
+### Implicit-feedback loop (issue #66, opt-in)
+
+When enabled, searches are logged and a subsequent deliberate use of a surfaced note (`vault_record_usage` / `vault_read_file`) is attributed back to the query, producing usage-grounded labels the tuner can learn from (`neurostack eval --feedback`). Off by default — turning it on adds a lightweight, failure-isolated write to the search and record-usage paths.
+
+| Key | Default | Env Override |
+|-----|---------|-------------|
+| `feedback_enabled` | `false` | `NEUROSTACK_FEEDBACK_ENABLED` |
+| `feedback_window_seconds` | `1800.0` | `NEUROSTACK_FEEDBACK_WINDOW_SECONDS` |
+| `feedback_log_retention` | `5000` | `NEUROSTACK_FEEDBACK_LOG_RETENTION` |
+
+Inspect accumulated feedback with `neurostack feedback`. The module is `src/neurostack/feedback.py`; data lives in the `search_log` and `search_feedback` tables (schema v18).
 
 ## Architecture
 

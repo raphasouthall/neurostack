@@ -133,3 +133,22 @@ class TestRankingWeights:
         assert cfg.convergence_weight == 0.25
         assert cfg.inhibition_strength == 0.15
         assert cfg.hotness_weight == 0.2  # untouched key keeps default
+
+
+class TestFeedbackConfig:
+    """Implicit-feedback loop config (issue #66)."""
+
+    def test_defaults_off(self):
+        cfg = Config()
+        assert cfg.feedback_enabled is False
+        assert cfg.feedback_window_seconds == 1800.0
+        assert cfg.feedback_log_retention == 5000
+
+    def test_env_enable(self):
+        with patch.dict(os.environ, {
+            "NEUROSTACK_FEEDBACK_ENABLED": "true",
+            "NEUROSTACK_FEEDBACK_WINDOW_SECONDS": "600",
+        }):
+            cfg = load_config()
+        assert cfg.feedback_enabled is True
+        assert cfg.feedback_window_seconds == 600.0

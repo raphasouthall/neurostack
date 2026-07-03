@@ -93,6 +93,8 @@ def cmd_eval(args):
     # hand-written set. Auto-labels make the benchmark vault-agnostic — see #66.
     if getattr(args, "autolabel", False):
         queries, cache = _autolabel_queries(args, db_path, ev)
+    elif getattr(args, "feedback", False):
+        queries, cache = _feedback_queries(args, db_path, ev)
     else:
         queries, cache = _labelled_queries(args, ev)
 
@@ -175,6 +177,47 @@ def _autolabel_queries(args, db_path, ev):
     print(f"  Embedding queries from {args.embed_url} ...")
     cache = ev.build_embedding_cache(queries, embed_url=args.embed_url)
     return queries, cache
+
+
+def _feedback_queries(args, db_path, ev):
+    """Build labels from accumulated implicit feedback (issue #66). Unlike
+    auto-labels these reflect real usage, so hotness is tuned, not frozen."""
+    from .. import feedback as fb
+    from ..schema import get_db
+
+    conn = get_db(db_path)
+    queries = fb.feedback_labels(
+        conn, min_count=args.feedback_min_count, max_age_days=args.feedback_max_age_days
+    )
+    if not queries:
+        print("  No feedback labels found. Set feedback_enabled, let searches + "
+              "note uses accumulate, then retry (see `neurostack feedback`).")
+        raise SystemExit(1)
+    if len(queries) < 30:
+        print(f"  WARNING: only {len(queries)} feedback labels — too few to trust a "
+              "tuned weight. Treat any result as directional until more accumulates.")
+    print(f"  {len(queries)} feedback labels · db={db_path}")
+    print(f"  Embedding queries from {args.embed_url} ...")
+    cache = ev.build_embedding_cache(queries, embed_url=args.embed_url)
+    return queries, cache
+
+
+def cmd_feedback(args):
+    """Show accumulated implicit-feedback stats (issue #66)."""
+    from .. import feedback as fb
+    from ..schema import DB_PATH, get_db
+
+    db_path = Path(args.db) if args.db else DB_PATH
+    stats = fb.feedback_stats(get_db(db_path))
+    if args.json:
+        print(json.dumps(stats, indent=2))
+        return
+    print(f"\n  implicit feedback · db={db_path}\n")
+    for k, v in stats.items():
+        print(f"    {k:<24} {v}")
+    if stats["feedback_events"] == 0:
+        print("\n  Nothing captured yet. Enable feedback_enabled (config/env) so "
+              "searches and note uses are logged.")
 
 
 def _run_tune(args, queries, db_path, cache):

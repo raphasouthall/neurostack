@@ -472,6 +472,11 @@ def vault_record_usage(note_paths: list[str]) -> dict:
         [(p,) for p in note_paths],
     )
     conn.commit()
+
+    # Implicit-feedback loop (issue #66): a deliberate use is the click signal —
+    # attribute it back to the search that surfaced it. Opt-in, non-blocking.
+    from ..feedback import capture_use
+    capture_use(note_paths, conn=conn)
     return {"recorded": len(note_paths), "paths": note_paths}
 
 
