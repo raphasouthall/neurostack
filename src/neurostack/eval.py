@@ -28,8 +28,12 @@ import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .search import ABLATABLE_SIGNALS
+
+if TYPE_CHECKING:
+    from .config import RankingWeights
 
 
 @dataclass
@@ -219,8 +223,14 @@ def evaluate_config(
     db_path,
     k: int,
     embed_url: str | None = None,
+    weights: "RankingWeights | None" = None,
 ) -> ConfigResult:
-    """Run one configuration (a set of ablated signals) over every query."""
+    """Run one configuration (a set of ablated signals) over every query.
+
+    ``weights`` overrides the tunable ranking scalars for every ``hybrid_search``
+    call in this pass — how the tuner (issue #66) scores a candidate weight
+    vector. ``None`` uses the config defaults.
+    """
     from .search import hybrid_search
 
     per_query: list[dict] = []
@@ -234,6 +244,7 @@ def evaluate_config(
             context=q.context,
             ablate=ablate,
             record=False,
+            weights=weights,
         )
         ranked = [r.note_path for r in results]
         per_query.append(
@@ -268,11 +279,13 @@ def run_eval(
     embed_url: str | None = None,
     cache: dict[str, list[float]] | None = None,
     ablation: bool = True,
+    weights: "RankingWeights | None" = None,
 ) -> list[ConfigResult]:
     """Evaluate the full pipeline, then (optionally) each single-signal ablation.
 
     ``cache`` supplies query embeddings for offline replay; pass ``None`` to use
-    the live embedder configured on ``embed_url``.
+    the live embedder configured on ``embed_url``. ``weights`` overrides the
+    tunable ranking scalars for every config in the run (issue #66).
     """
     # Fail loud on an incomplete cache. hybrid_search swallows an embedding
     # error into a silent FTS-only fallback, which would quietly change the
@@ -293,7 +306,8 @@ def run_eval(
         rows: list[ConfigResult] = []
         for name, ablate in run_configs:
             res = evaluate_config(
-                queries, ablate, db_path=db_path, k=k, embed_url=embed_url
+                queries, ablate, db_path=db_path, k=k, embed_url=embed_url,
+                weights=weights,
             )
             res.name = name
             rows.append(res)

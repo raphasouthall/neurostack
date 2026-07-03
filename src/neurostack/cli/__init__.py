@@ -435,6 +435,20 @@ def main():
         "--no-ablation", action="store_true",
         help="Report only the full-pipeline metrics, skip the per-signal sweep",
     )
+    p.add_argument(
+        "--tune", action="store_true",
+        help="Coordinate-ascent weight tuning (issue #66) instead of the ablation "
+        "table. Tunes on a train split, reports out-of-sample on the holdout.",
+    )
+    p.add_argument(
+        "--tune-metric", default="ndcg", choices=("recall", "mrr", "ndcg"),
+        help="Objective the weight sweep maximises (default: ndcg)",
+    )
+    p.add_argument(
+        "--no-holdout", action="store_true",
+        help="Tune on the full query set with no train/test split. Faster, but the "
+        "reported gain is in-sample — never commit a weight on this alone.",
+    )
     p.set_defaults(func=cmd_eval)
 
     # ask

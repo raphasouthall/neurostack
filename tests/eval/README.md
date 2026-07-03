@@ -57,3 +57,38 @@ the vault is reorganised, re-verify with `vault_list_files` and adjust targets.
 Labels are a starting point — after the first real run, inspect misses
 (`--json` shows each query's top-k) and correct any target that is genuinely
 wrong before trusting the deltas for weight decisions.
+
+## Weight tuning (issue #66)
+
+The ranking scalars the ablation measures are now tunable, not hardcoded:
+`convergence_weight`, `hotness_weight`, `inhibition_threshold`,
+`inhibition_strength` (config.py / env), plus the existing co-occurrence and
+link-penalty weights. `RankingWeights` bundles them; `hybrid_search(weights=...)`
+overrides them per call without touching global config.
+
+`neurostack eval --tune` runs coordinate ascent over that vector against the
+harness — sweep one scalar, keep the best, iterate to convergence:
+
+```bash
+# Tune on a train split, report the held-out (out-of-sample) score
+neurostack eval --db /tmp/neurostack-copy.db --tune --tune-metric ndcg
+
+# Tune on the whole set (faster; the gain is in-sample only — do not commit on it)
+neurostack eval --db /tmp/neurostack-copy.db --tune --no-holdout
+```
+
+**A tuned vector is a candidate, not a shipping decision.** Two gates stand
+between the sweep and `config.py`:
+
+* **Label quality.** A signal that scores negative can be a *label* artifact, not
+  a ranking defect. Hotness is the standing example: `note_usage` reflects real
+  traffic, so hand-picked targets can be cold and the optimiser "wins" by
+  zeroing hotness. Decompose the gain — tune with the confounded signal frozen
+  (a custom `grids` without it) to isolate the committable part.
+* **Out of sample.** 36 queries overfit trivially. The holdout guards against
+  memorising specific queries, but not against a bias shared by the whole label
+  set (pinpoint-heavy labels under-value the diversity lateral inhibition buys).
+  Widen and rebalance the labels before trusting a large delta.
+
+The offline unit tests are `tests/test_tune.py`; the tuner is
+`src/neurostack/tune.py`.

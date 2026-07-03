@@ -58,6 +58,16 @@ class Config:
     link_section_penalty: float = 0.5     # score multiplier for link-list chunk matches
     link_density_threshold: float = 0.5   # chunk is a "link section" when this fraction
                                           # or more of its characters are wiki-link markup
+    # Ranking-signal weights (issue #66). Scalars that hybrid_search blends on top
+    # of the base FTS+cosine score. These four were hardcoded in search.py before
+    # #66; the defaults reproduce that exact behaviour. A weight sweep
+    # (RankingWeights + the tune harness) varies them against the eval metrics
+    # (recall@k / MRR / NDCG), and a validated set can be pinned here or via env.
+    convergence_weight: float = 0.3       # blend: score = (1-w)*score + w*convergence
+    hotness_weight: float = 0.2           # blend: score = (1-w)*score + w*hotness
+    inhibition_threshold: float = 0.65    # suppress a result only when its cosine sim to a
+                                          # higher-ranked result exceeds this
+    inhibition_strength: float = 0.30     # max fractional score reduction at sim = 1.0
     # Auto-router merge (issue #58): depth="auto" merges the triple ranking with
     # an independent summary search instead of returning triple order with summary
     # text attached. This is the weight given to the (normalized) summary score in
@@ -89,6 +99,40 @@ class Config:
         return self.db_dir / "sessions.db"
 
 
+@dataclass(frozen=True)
+class RankingWeights:
+    """The tunable ranking-signal scalars ``hybrid_search`` blends on top of the
+    base FTS+cosine score (issue #66).
+
+    Defaults reproduce the production constants. Passing a ``RankingWeights`` to
+    ``hybrid_search(weights=...)`` overrides them for that call without touching
+    global config — the mechanism the weight-tuning sweep uses to evaluate a
+    candidate vector against the eval harness. Production callers pass nothing and
+    get :meth:`from_config`, which reads the operator's config.toml / env.
+    """
+
+    convergence_weight: float = 0.3
+    hotness_weight: float = 0.2
+    inhibition_threshold: float = 0.65
+    inhibition_strength: float = 0.30
+    cooccurrence_boost_weight: float = 0.1
+    link_section_penalty: float = 0.5
+    link_density_threshold: float = 0.5
+
+    @classmethod
+    def from_config(cls, cfg: "Config") -> "RankingWeights":
+        """Build the weight vector from a loaded :class:`Config`."""
+        return cls(
+            convergence_weight=cfg.convergence_weight,
+            hotness_weight=cfg.hotness_weight,
+            inhibition_threshold=cfg.inhibition_threshold,
+            inhibition_strength=cfg.inhibition_strength,
+            cooccurrence_boost_weight=cfg.cooccurrence_boost_weight,
+            link_section_penalty=cfg.link_section_penalty,
+            link_density_threshold=cfg.link_density_threshold,
+        )
+
+
 def load_config() -> Config:
     """Load config from TOML file, then apply env var overrides."""
     cfg = Config()
@@ -117,6 +161,10 @@ def load_config() -> Config:
             cfg.link_section_penalty = float(data["link_section_penalty"])
         if "link_density_threshold" in data:
             cfg.link_density_threshold = float(data["link_density_threshold"])
+        for key in ("convergence_weight", "hotness_weight",
+                    "inhibition_threshold", "inhibition_strength"):
+            if key in data:
+                setattr(cfg, key, float(data[key]))
         if "auto_summary_weight" in data:
             cfg.auto_summary_weight = float(data["auto_summary_weight"])
         if "community_stale_age_days" in data:
@@ -153,6 +201,10 @@ def load_config() -> Config:
         "NEUROSTACK_COOCCURRENCE_BOOST": ("cooccurrence_boost_weight", float),
         "NEUROSTACK_LINK_SECTION_PENALTY": ("link_section_penalty", float),
         "NEUROSTACK_LINK_DENSITY_THRESHOLD": ("link_density_threshold", float),
+        "NEUROSTACK_CONVERGENCE_WEIGHT": ("convergence_weight", float),
+        "NEUROSTACK_HOTNESS_WEIGHT": ("hotness_weight", float),
+        "NEUROSTACK_INHIBITION_THRESHOLD": ("inhibition_threshold", float),
+        "NEUROSTACK_INHIBITION_STRENGTH": ("inhibition_strength", float),
         "NEUROSTACK_AUTO_SUMMARY_WEIGHT": ("auto_summary_weight", float),
         "NEUROSTACK_COMMUNITY_STALE_AGE_DAYS": ("community_stale_age_days", float),
         "NEUROSTACK_COMMUNITY_STALE_DRIFT": ("community_stale_drift", float),

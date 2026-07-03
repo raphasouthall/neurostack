@@ -16,7 +16,7 @@ try:
 except ImportError:
     HAS_NUMPY = False
 
-from .config import get_config
+from .config import RankingWeights, get_config
 
 log = logging.getLogger("neurostack")
 
@@ -692,6 +692,7 @@ def hybrid_search(
     explain: bool = False,
     ablate: set[str] | None = None,
     record: bool = True,
+    weights: RankingWeights | None = None,
 ) -> list[SearchResult]:
     """
     Hybrid search combining FTS5 and semantic similarity.
@@ -713,15 +714,22 @@ def hybrid_search(
     prediction-error logging. Pass ``record=False`` for a side-effect-free run:
     an ablation sweep re-runs the same query many times, and letting each run
     mutate usage/hotness would contaminate every subsequent configuration.
+
+    ``weights`` overrides the tunable ranking scalars (convergence / hotness
+    blends, lateral-inhibition threshold and strength, co-occurrence boost, link
+    penalties) for this call only, without touching global config — the mechanism
+    the weight-tuning sweep (issue #66) uses to score a candidate vector. Defaults
+    to :meth:`RankingWeights.from_config`, so production behaviour is unchanged.
     """
     from .schema import DB_PATH
 
     ablate = ablate or set()
     cfg = get_config()
+    weights = weights or RankingWeights.from_config(cfg)
     embed_url = embed_url or cfg.embed_url
     conn = get_db(db_path or DB_PATH)
-    link_section_penalty = cfg.link_section_penalty
-    link_density_threshold = cfg.link_density_threshold
+    link_section_penalty = weights.link_section_penalty
+    link_density_threshold = weights.link_density_threshold
 
     def _rec(r: dict, **fields) -> None:
         """Record a per-stage score breakdown onto a result when explain is on."""
@@ -846,8 +854,10 @@ def hybrid_search(
             chunk_sims = cosine_similarity_batch(query_embedding, chunk_matrix)
             sigma = float(np.std(chunk_sims))
             convergence = centroid_sim / (1.0 + sigma)
-            # Blend: keep 70% of existing score, add 30% convergence influence
-            r["score"] = 0.7 * r["score"] + 0.3 * convergence
+            # Blend: keep (1-w) of the existing score, add w of convergence
+            # influence (default w=0.3 → 0.7 score + 0.3 convergence).
+            cw = weights.convergence_weight
+            r["score"] = (1.0 - cw) * r["score"] + cw * convergence
             _rec(r, convergence=round(convergence, 4), after_convergence=round(r["score"], 4))
 
     # Apply context boost; track which notes are in-context for mismatch detection
@@ -864,13 +874,15 @@ def hybrid_search(
                 r["score"] *= 1.2
                 _rec(r, context_boost=1.2, after_context=round(r["score"], 4))
 
-    # Apply hotness blend: final_score = 0.8 * semantic + 0.2 * hotness
+    # Apply hotness blend: final_score = (1-w) * score + w * hotness
+    # (default w=0.2 → 0.8 score + 0.2 hotness).
     if "hotness" not in ablate:
+        hw = weights.hotness_weight
         hotness_map = batch_hotness_scores(conn, [r["note_path"] for r in valid_results])
         for r in valid_results:
             h = hotness_map.get(r["note_path"], 0.0)
             if h > 0.0:
-                r["score"] = 0.8 * r["score"] + 0.2 * h
+                r["score"] = (1.0 - hw) * r["score"] + hw * h
                 _rec(r, hotness=round(h, 4), after_hotness=round(r["score"], 4))
 
     # Extract query-matched entities (used for co-occurrence boost AND reinforcement)
@@ -888,7 +900,7 @@ def hybrid_search(
 
     # Co-occurrence boost: notes containing entities that co-occur with query entities
     # get a bounded multiplicative boost. Slots after hotness, before demotion.
-    cooc_weight = cfg.cooccurrence_boost_weight
+    cooc_weight = weights.cooccurrence_boost_weight
     if cooc_weight > 0 and query_entities and "cooccurrence" not in ablate:
                 # Step 2: Find co-occurring entities and their weights
                 cooc_entities = {}  # entity -> max co-occurrence weight
@@ -1005,8 +1017,10 @@ def hybrid_search(
     # maximally similar results retain 70% of their score.
     #
     # penalty = 1 - inhibition_strength * max_similarity_to_higher_ranked
-    INHIBITION_THRESHOLD = 0.65   # only suppress when note embeddings are >0.65 similar
-    INHIBITION_STRENGTH = 0.30    # max 30% score reduction at similarity=1.0
+    # Defaults (threshold 0.65, strength 0.30) live in RankingWeights / config;
+    # the weight sweep (issue #66) tunes them against the eval harness.
+    INHIBITION_THRESHOLD = weights.inhibition_threshold  # suppress above this cosine sim
+    INHIBITION_STRENGTH = weights.inhibition_strength    # max fractional reduction at sim=1.0
     if len(deduped) > 1 and "lateral_inhibition" not in ablate:
         # Build embedding lookup for deduped results
         deduped_embeddings = []
