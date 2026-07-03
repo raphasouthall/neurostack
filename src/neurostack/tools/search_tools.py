@@ -363,10 +363,11 @@ def vault_communities(
         workspace: Optional vault subdirectory prefix to restrict
             results (e.g. "work/acme-cloud")
     """
+    from ..community import community_build_status
     from ..community_search import global_query
 
     _, embed_url = _cfg()
-    return global_query(
+    result = global_query(
         query=query,
         top_k=top_k,
         level=level,
@@ -374,11 +375,16 @@ def vault_communities(
         embed_url=embed_url,
         workspace=workspace,
     )
+    # Flag a drifted partition so the caller knows the answer may be built on a
+    # stale community map rather than silently trusting it (issue #65).
+    result["community_build"] = community_build_status()
+    return result
 
 
 @registry.tool(tags=["search", "stats"], annotations=_READ_ONLY)
 def vault_stats() -> dict:
     """Get index health: note count, embedding coverage, graph stats, triple stats."""
+    from ..community import community_build_status as _community_build_status
     from ..cooccurrence import get_cooccurrence_stats
     from ..memories import get_memory_stats
     from ..schema import DB_PATH, get_db
@@ -435,6 +441,7 @@ def vault_stats() -> dict:
             "SELECT COUNT(*) as c FROM communities WHERE summary IS NOT NULL"
         ).fetchone()["c"],
         "community_levels": _community_level_stats(conn),
+        "community_build": _community_build_status(conn),
         "excitability": {
             "active": dormancy["active_count"],
             "dormant": dormancy["dormant_count"],
