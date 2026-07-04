@@ -501,6 +501,43 @@ class TestCooccurrenceBoost:
             f"{scores['noteA.md']} > {scores['noteB.md']}"
         )
 
+    def test_cooccurrence_boost_uses_reinforcement(self, in_memory_db, monkeypatch):
+        """A reinforcement-only association drives the boost (issue #60 blend)."""
+        conn = in_memory_db
+        self._setup_cooccurrence_scenario(conn)
+        # Convert the structural beta<->gamma association into a pure
+        # usage signal: no structural weight, reinforcement only
+        conn.execute(
+            "UPDATE entity_cooccurrence SET weight = 0.0, reinforcement = 3.0 "
+            "WHERE entity_a = 'beta' AND entity_b = 'gamma'"
+        )
+        conn.commit()
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(search_mod, "get_embedding", lambda q, base_url=None: fake_emb)
+
+        original_config = config_mod._config
+        try:
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.5
+            config_mod._config = cfg
+
+            results = hybrid_search("gamma", top_k=10, embed_url="http://fake")
+            scores = {r.note_path: r.score for r in results}
+        finally:
+            config_mod._config = original_config
+
+        assert scores["noteA.md"] > scores["noteB.md"], (
+            "reinforcement-only co-occurrence should still boost noteA: "
+            f"{scores['noteA.md']} > {scores['noteB.md']}"
+        )
+
     def test_cooccurrence_boost_with_hybrid_scoring(self, in_memory_db, monkeypatch):
         """In hybrid mode, boosted note scores higher than unboosted note."""
         conn = in_memory_db
@@ -729,7 +766,7 @@ class TestReinforcementFromSearch:
 
         # Check initial state: no co-occurrence for (alpha, beta) from reinforcement
         initial = conn.execute(
-            "SELECT weight FROM entity_cooccurrence "
+            "SELECT weight, reinforcement FROM entity_cooccurrence "
             "WHERE entity_a = 'alpha' AND entity_b = 'beta'"
         ).fetchone()
 
@@ -757,13 +794,13 @@ class TestReinforcementFromSearch:
         # After search, reinforcement should have created/increased the
         # co-occurrence between alpha (query entity) and beta (result-note entity)
         after = conn.execute(
-            "SELECT weight FROM entity_cooccurrence "
+            "SELECT weight, reinforcement FROM entity_cooccurrence "
             "WHERE entity_a = 'alpha' AND entity_b = 'beta'"
         ).fetchone()
         assert after is not None, "Reinforcement should have created (alpha, beta) pair"
-        initial_weight = initial["weight"] if initial else 0.0
-        assert after["weight"] > initial_weight, (
-            f"Weight should have increased from {initial_weight}"
+        initial_reinf = initial["reinforcement"] if initial else 0.0
+        assert after["reinforcement"] > initial_reinf, (
+            f"Reinforcement should have increased from {initial_reinf}"
         )
 
     def test_reinforce_noop_no_entities_in_search(self, in_memory_db, monkeypatch):

@@ -905,10 +905,14 @@ def hybrid_search(
                 # Step 2: Find co-occurring entities and their weights
                 cooc_entities = {}  # entity -> max co-occurrence weight
                 for qe in query_entities:
+                    # Blend structural weight with accumulated search
+                    # reinforcement (issue #60)
                     rows = conn.execute(
-                        "SELECT entity_b, weight FROM entity_cooccurrence WHERE entity_a = ? "
+                        "SELECT entity_b, weight + reinforcement AS w "
+                        "FROM entity_cooccurrence WHERE entity_a = ? "
                         "UNION ALL "
-                        "SELECT entity_a, weight FROM entity_cooccurrence WHERE entity_b = ?",
+                        "SELECT entity_a, weight + reinforcement AS w "
+                        "FROM entity_cooccurrence WHERE entity_b = ?",
                         (qe, qe),
                     ).fetchall()
                     for r in rows:

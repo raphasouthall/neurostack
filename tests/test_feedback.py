@@ -36,7 +36,7 @@ def test_fresh_db_has_feedback_tables(fb_db):
     assert _table_exists(fb_db, "search_log")
     assert _table_exists(fb_db, "search_feedback")
     v = fb_db.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-    assert v == SCHEMA_VERSION == 18
+    assert v == SCHEMA_VERSION
 
 
 def test_migration_recreates_tables(tmp_path):
@@ -52,7 +52,9 @@ def test_migration_recreates_tables(tmp_path):
     conn2 = get_db(db)  # reopening runs migrations
     assert _table_exists(conn2, "search_log")
     assert _table_exists(conn2, "search_feedback")
-    assert conn2.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
+    assert conn2.execute(
+        "SELECT MAX(version) FROM schema_version"
+    ).fetchone()[0] == SCHEMA_VERSION
 
 
 # ── log_search ──────────────────────────────────────────────────────────────

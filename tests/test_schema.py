@@ -248,3 +248,53 @@ def test_migration_v12_idempotent(in_memory_db):
 
     row = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()
     assert row["v"] == SCHEMA_VERSION
+
+
+def test_migration_v18_to_v19(in_memory_db):
+    """v19 adds entity_cooccurrence.reinforcement, preserving existing rows."""
+    conn = in_memory_db
+    # Simulate the v18 table shape (no reinforcement column)
+    conn.executescript("""
+        DROP TABLE entity_cooccurrence;
+        CREATE TABLE entity_cooccurrence (
+            entity_a TEXT NOT NULL,
+            entity_b TEXT NOT NULL,
+            weight REAL NOT NULL DEFAULT 0.0,
+            last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (entity_a, entity_b)
+        );
+    """)
+    conn.execute(
+        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+        "VALUES ('Alpha', 'Beta', 5.0, '2026-01-01')"
+    )
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version VALUES (18)")
+    conn.commit()
+
+    _run_migrations(conn)
+
+    row = conn.execute(
+        "SELECT weight, reinforcement FROM entity_cooccurrence"
+    ).fetchone()
+    assert row["weight"] == 5.0
+    assert row["reinforcement"] == 0.0
+    v = conn.execute("SELECT MAX(version) as v FROM schema_version").fetchone()["v"]
+    assert v == SCHEMA_VERSION
+
+
+def test_migration_v19_idempotent(in_memory_db):
+    """Re-running the v19 migration on a table that has the column is a no-op."""
+    conn = in_memory_db
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version VALUES (18)")
+    conn.commit()
+    _run_migrations(conn)
+
+    conn.execute("DELETE FROM schema_version")
+    conn.execute("INSERT INTO schema_version VALUES (18)")
+    conn.commit()
+    _run_migrations(conn)  # column already present -- must not raise
+
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(entity_cooccurrence)")]
+    assert cols.count("reinforcement") == 1

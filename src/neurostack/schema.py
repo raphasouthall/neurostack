@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS entity_cooccurrence (
     entity_a TEXT NOT NULL,
     entity_b TEXT NOT NULL,
     weight REAL NOT NULL DEFAULT 0.0,
+    reinforcement REAL NOT NULL DEFAULT 0.0,
     last_seen TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (entity_a, entity_b)
 );
@@ -957,6 +958,29 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v18 complete.")
+
+    if current < 19:
+        log.info(
+            "Migrating schema v18 -> v19: "
+            "adding entity_cooccurrence.reinforcement (issue #60)..."
+        )
+        # ALTER TABLE doesn't support IF NOT EXISTS -
+        # check column existence first
+        cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(entity_cooccurrence)"
+            ).fetchall()
+        }
+        if "reinforcement" not in cols:
+            conn.execute(
+                "ALTER TABLE entity_cooccurrence ADD COLUMN"
+                " reinforcement REAL NOT NULL DEFAULT 0.0"
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version VALUES (19)"
+        )
+        conn.commit()
+        log.info("Migration to v19 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
