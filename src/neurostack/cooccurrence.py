@@ -2,9 +2,17 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """Entity co-occurrence persistence for NeuroStack.
 
-Computes entity-entity co-occurrence from the triples table and persists
-weights to the entity_cooccurrence table. Two entities co-occur when they
-appear as subject or object in triples within the same note.
+Two separate signals live in the entity_cooccurrence table (issue #60):
+
+- ``weight`` — structural co-occurrence, recomputed from the triples table
+  on every full rebuild. Two entities co-occur when they appear as subject
+  or object in triples within the same note.
+- ``reinforcement`` — Hebbian usage signal, bumped on every search that
+  surfaces an entity pair and never touched by rebuilds, so it accumulates
+  across reindexes.
+
+Query time blends them as ``weight + reinforcement``. A row survives a
+rebuild while either signal is positive.
 """
 
 import logging
@@ -20,13 +28,14 @@ MAX_COOCCURRENCE_WEIGHT = 100.0
 def reinforce_cooccurrence(
     conn: sqlite3.Connection, entity_pairs: list[tuple[str, str]]
 ) -> int:
-    """Hebbian reinforcement: increase co-occurrence weight for entity pairs.
+    """Hebbian reinforcement: increase the usage signal for entity pairs.
 
-    For each pair, applies a multiplicative increment:
-        new_weight = min(existing_weight * 1.1, MAX_COOCCURRENCE_WEIGHT)
-
-    New pairs are seeded with weight 1.0. All pairs are stored in canonical
-    order (entity_a < entity_b).
+    Operates on the ``reinforcement`` column only, so the bump survives
+    structural rebuilds (issue #60). For each pair already reinforced:
+        new = min(reinforcement * 1.1, MAX_COOCCURRENCE_WEIGHT)
+    Pairs not yet reinforced (or not in the table at all) are seeded at
+    1.0; usage-only pairs get structural weight 0. All pairs are stored
+    in canonical order (entity_a < entity_b).
 
     Never raises -- wrapped in try/except to avoid disrupting callers.
     Returns the number of pairs reinforced.
@@ -47,9 +56,9 @@ def reinforce_cooccurrence(
 
         now = datetime.now(timezone.utc).isoformat()
 
-        # Batch-fetch existing weights in a single query
+        # Batch-fetch existing reinforcement in a single query
         canonical_list = sorted(canonical)
-        existing_weights: dict[tuple[str, str], float] = {}
+        existing: dict[tuple[str, str], float] = {}
         # SQLite has a variable limit; process in chunks of 500 pairs
         for chunk_start in range(0, len(canonical_list), 500):
             chunk = canonical_list[chunk_start:chunk_start + 500]
@@ -58,27 +67,29 @@ def reinforce_cooccurrence(
             )
             params = [v for pair in chunk for v in pair]
             rows = conn.execute(
-                f"SELECT entity_a, entity_b, weight FROM entity_cooccurrence "
-                f"WHERE {where_clauses}",
+                f"SELECT entity_a, entity_b, reinforcement "
+                f"FROM entity_cooccurrence WHERE {where_clauses}",
                 params,
             ).fetchall()
             for row in rows:
-                existing_weights[(row["entity_a"], row["entity_b"])] = row["weight"]
+                existing[(row["entity_a"], row["entity_b"])] = row["reinforcement"]
 
         updates: list[tuple[str, str, float, str]] = []
         for a, b in canonical_list:
-            old_weight = existing_weights.get((a, b))
-            if old_weight is not None:
-                new_weight = min(old_weight * 1.1, MAX_COOCCURRENCE_WEIGHT)
+            old = existing.get((a, b), 0.0)
+            if old > 0:
+                new = min(old * 1.1, MAX_COOCCURRENCE_WEIGHT)
             else:
-                new_weight = 1.0
-            updates.append((a, b, new_weight, now))
+                new = 1.0
+            updates.append((a, b, new, now))
 
         conn.executemany(
             "INSERT INTO entity_cooccurrence "
-            "(entity_a, entity_b, weight, last_seen) VALUES (?, ?, ?, ?) "
+            "(entity_a, entity_b, weight, reinforcement, last_seen) "
+            "VALUES (?, ?, 0.0, ?, ?) "
             "ON CONFLICT(entity_a, entity_b) DO UPDATE SET "
-            "weight = excluded.weight, last_seen = excluded.last_seen",
+            "reinforcement = excluded.reinforcement, "
+            "last_seen = excluded.last_seen",
             updates,
         )
         conn.commit()
@@ -89,16 +100,19 @@ def reinforce_cooccurrence(
 
 
 def persist_cooccurrence(conn: sqlite3.Connection) -> int:
-    """Compute and persist entity co-occurrence weights from triples.
+    """Compute and persist structural co-occurrence weights from triples.
 
     For each note, extracts all entities (subjects and objects from triples).
     For each pair of entities that appear in the same note, increments
-    their co-occurrence weight by 1.
+    their structural weight by 1.
 
     Entity pairs are stored in canonical order (entity_a < entity_b).
-    Existing weights are fully replaced (not incremented).
+    Structural weights are fully replaced; the ``reinforcement`` column is
+    never touched, so accumulated search reinforcement survives the rebuild
+    (issue #60). Rows with neither structural weight nor reinforcement are
+    swept away.
 
-    Returns the number of entity pairs persisted.
+    Returns the number of structural entity pairs persisted.
     """
     rows = conn.execute(
         "SELECT note_path, subject, object FROM triples"
@@ -129,16 +143,23 @@ def persist_cooccurrence(conn: sqlite3.Connection) -> int:
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Clear existing co-occurrence data and repopulate
-    conn.execute("DELETE FROM entity_cooccurrence")
+    # Rebuild the structural signal in place: zero it, upsert the fresh
+    # counts (leaving reinforcement untouched), then sweep rows that carry
+    # neither structural weight nor reinforcement.
+    conn.execute("UPDATE entity_cooccurrence SET weight = 0.0")
 
     conn.executemany(
         "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
-        "VALUES (?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(entity_a, entity_b) DO UPDATE SET "
+        "weight = excluded.weight, last_seen = excluded.last_seen",
         [
             (pair[0], pair[1], weight, now)
             for pair, weight in pair_weights.items()
         ],
+    )
+    conn.execute(
+        "DELETE FROM entity_cooccurrence WHERE weight <= 0 AND reinforcement <= 0"
     )
     conn.commit()
 
@@ -151,10 +172,13 @@ def persist_cooccurrence(conn: sqlite3.Connection) -> int:
 def upsert_cooccurrence_for_note(conn: sqlite3.Connection, note_path: str) -> int:
     """Incrementally update co-occurrence for entities found in *note_path*.
 
-    Unlike ``persist_cooccurrence`` (which does a full DELETE+INSERT), this
-    function only touches pairs involving entities from the given note.
-    For each affected pair it recomputes the weight across ALL notes so
-    the result is always globally correct.
+    Unlike ``persist_cooccurrence`` (which rebuilds every structural
+    weight), this function only touches pairs involving entities from the
+    given note. For each affected pair it recomputes the structural weight
+    across ALL notes so the result is always globally correct. The
+    ``reinforcement`` column is never modified, and pairs that no longer
+    co-occur structurally are deleted only when they carry no
+    reinforcement (issue #60).
 
     Returns the number of pairs upserted.
     """
@@ -225,11 +249,17 @@ def upsert_cooccurrence_for_note(conn: sqlite3.Connection, note_path: str) -> in
             upserts,
         )
 
-    # Batch delete pairs that no longer co-occur
+    # Pairs that no longer co-occur structurally: keep the row (weight 0)
+    # while it still carries reinforcement, drop it otherwise
     if deletes:
         conn.executemany(
-            "DELETE FROM entity_cooccurrence "
+            "UPDATE entity_cooccurrence SET weight = 0.0 "
             "WHERE entity_a = ? AND entity_b = ?",
+            deletes,
+        )
+        conn.executemany(
+            "DELETE FROM entity_cooccurrence "
+            "WHERE entity_a = ? AND entity_b = ? AND reinforcement <= 0",
             deletes,
         )
 
@@ -242,26 +272,35 @@ def get_cooccurrence_stats(conn: sqlite3.Connection) -> dict:
 
     Returns dict with:
         pairs: int -- number of entity co-occurrence pairs
-        total_weight: float -- sum of all weights, rounded to 1 decimal
+        total_weight: float -- sum of structural weights, rounded to 1 decimal
+        reinforced_pairs: int -- pairs carrying accumulated search reinforcement
+        total_reinforcement: float -- sum of reinforcement, rounded to 1 decimal
     """
     row = conn.execute(
-        "SELECT COUNT(*) AS pairs, COALESCE(SUM(weight), 0.0) AS total_weight "
+        "SELECT COUNT(*) AS pairs, COALESCE(SUM(weight), 0.0) AS total_weight, "
+        "COUNT(*) FILTER (WHERE reinforcement > 0) AS reinforced_pairs, "
+        "COALESCE(SUM(reinforcement), 0.0) AS total_reinforcement "
         "FROM entity_cooccurrence"
     ).fetchone()
     return {
         "pairs": row["pairs"],
         "total_weight": round(float(row["total_weight"]), 1),
+        "reinforced_pairs": row["reinforced_pairs"],
+        "total_reinforcement": round(float(row["total_reinforcement"]), 1),
     }
 
 
 def get_top_pairs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
-    """Return the top co-occurring entity pairs sorted by weight descending.
+    """Return the top entity pairs sorted by blended weight descending.
 
-    Each element: {"entity_a": str, "entity_b": str, "weight": float, "last_seen": str}
+    Each element: {"entity_a": str, "entity_b": str, "weight": float,
+    "reinforcement": float, "last_seen": str}. ``weight`` is the structural
+    signal; ordering uses weight + reinforcement, the same blend as search.
     """
     rows = conn.execute(
-        "SELECT entity_a, entity_b, weight, last_seen "
-        "FROM entity_cooccurrence ORDER BY weight DESC LIMIT ?",
+        "SELECT entity_a, entity_b, weight, reinforcement, last_seen "
+        "FROM entity_cooccurrence "
+        "ORDER BY weight + reinforcement DESC LIMIT ?",
         (limit,),
     ).fetchall()
     return [
@@ -269,6 +308,7 @@ def get_top_pairs(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
             "entity_a": r["entity_a"],
             "entity_b": r["entity_b"],
             "weight": float(r["weight"]),
+            "reinforcement": float(r["reinforcement"]),
             "last_seen": r["last_seen"],
         }
         for r in rows

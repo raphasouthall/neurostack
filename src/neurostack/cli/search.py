@@ -1026,9 +1026,16 @@ def cmd_cooccurrence(args):
 
     print(
         f"\n  Co-occurrence: {stats['pairs']} pairs"
-        f" ({stats['total_weight']:.1f} total weight)"
+        f" ({stats['total_weight']:.1f} total weight,"
+        f" {stats['reinforced_pairs']} reinforced,"
+        f" {stats['total_reinforcement']:.1f} total reinforcement)"
     )
-    print(f"\n  Top {args.limit} entity pairs by weight:")
+    print(f"\n  Top {args.limit} entity pairs by weight + reinforcement:")
     for p in pairs:
         last = p["last_seen"][:10] if len(p["last_seen"]) >= 10 else p["last_seen"]
-        print(f"    {p['weight']:>8.2f}  {p['entity_a']} <-> {p['entity_b']}  (last: {last})")
+        blended = p["weight"] + p["reinforcement"]
+        tag = f" [+{p['reinforcement']:.2f} reinf]" if p["reinforcement"] > 0 else ""
+        print(
+            f"    {blended:>8.2f}  {p['entity_a']} <-> {p['entity_b']}"
+            f"  (last: {last}){tag}"
+        )

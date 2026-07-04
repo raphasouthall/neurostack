@@ -292,12 +292,13 @@ def test_cooccurrence_stats_with_data(in_memory_db):
 
 
 def test_reinforce_basic(in_memory_db):
-    """Reinforcing an existing pair with weight 2.0 increases it via multiplicative formula."""
+    """Reinforcing a pair with reinforcement 2.0 grows it multiplicatively."""
     conn = in_memory_db
     conn.execute(
-        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
-        "VALUES (?, ?, ?, ?)",
-        ("Alpha", "Beta", 2.0, "2026-01-01"),
+        "INSERT INTO entity_cooccurrence "
+        "(entity_a, entity_b, weight, reinforcement, last_seen) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("Alpha", "Beta", 3.0, 2.0, "2026-01-01"),
     )
     conn.commit()
 
@@ -305,11 +306,32 @@ def test_reinforce_basic(in_memory_db):
 
     assert n == 1
     row = conn.execute(
-        "SELECT weight FROM entity_cooccurrence "
+        "SELECT weight, reinforcement FROM entity_cooccurrence "
         "WHERE entity_a = 'Alpha' AND entity_b = 'Beta'"
     ).fetchone()
     expected = min(2.0 * 1.1, MAX_COOCCURRENCE_WEIGHT)
-    assert abs(row["weight"] - expected) < 1e-9
+    assert abs(row["reinforcement"] - expected) < 1e-9
+    assert row["weight"] == 3.0  # structural signal untouched
+
+
+def test_reinforce_seeds_structural_pair(in_memory_db):
+    """First reinforcement of a structural-only pair seeds reinforcement at 1.0."""
+    conn = in_memory_db
+    conn.execute(
+        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
+        "VALUES (?, ?, ?, ?)",
+        ("Alpha", "Beta", 5.0, "2026-01-01"),
+    )
+    conn.commit()
+
+    reinforce_cooccurrence(conn, [("Alpha", "Beta")])
+
+    row = conn.execute(
+        "SELECT weight, reinforcement FROM entity_cooccurrence "
+        "WHERE entity_a = 'Alpha' AND entity_b = 'Beta'"
+    ).fetchone()
+    assert row["reinforcement"] == 1.0
+    assert row["weight"] == 5.0
 
 
 def test_reinforce_creates_new_pair(in_memory_db):
@@ -320,26 +342,29 @@ def test_reinforce_creates_new_pair(in_memory_db):
 
     assert n == 1
     row = conn.execute(
-        "SELECT weight FROM entity_cooccurrence "
+        "SELECT weight, reinforcement FROM entity_cooccurrence "
         "WHERE entity_a = 'X' AND entity_b = 'Y'"
     ).fetchone()
     assert row is not None
-    assert row["weight"] == 1.0
+    assert row["reinforcement"] == 1.0
+    assert row["weight"] == 0.0  # usage-only pair carries no structural signal
 
 
 def test_reinforce_bounded(in_memory_db):
     """Reinforcement cannot push weight above MAX_COOCCURRENCE_WEIGHT (100.0)."""
     conn = in_memory_db
-    # Insert pair at 99.0
+    # Insert pair with reinforcement at 99.0
     conn.execute(
-        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO entity_cooccurrence "
+        "(entity_a, entity_b, weight, reinforcement, last_seen) "
+        "VALUES (?, ?, 0.0, ?, ?)",
         ("Alpha", "Beta", 99.0, "2026-01-01"),
     )
     # Insert pair already at 100.0
     conn.execute(
-        "INSERT INTO entity_cooccurrence (entity_a, entity_b, weight, last_seen) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO entity_cooccurrence "
+        "(entity_a, entity_b, weight, reinforcement, last_seen) "
+        "VALUES (?, ?, 0.0, ?, ?)",
         ("Gamma", "Delta", 100.0, "2026-01-01"),
     )
     conn.commit()
@@ -347,19 +372,19 @@ def test_reinforce_bounded(in_memory_db):
     reinforce_cooccurrence(conn, [("Alpha", "Beta"), ("Gamma", "Delta")])
 
     row_99 = conn.execute(
-        "SELECT weight FROM entity_cooccurrence "
+        "SELECT reinforcement FROM entity_cooccurrence "
         "WHERE entity_a = 'Alpha' AND entity_b = 'Beta'"
     ).fetchone()
-    assert row_99["weight"] <= MAX_COOCCURRENCE_WEIGHT
+    assert row_99["reinforcement"] <= MAX_COOCCURRENCE_WEIGHT
     # 99.0 * 1.1 = 108.9 -> capped to 100.0
-    assert row_99["weight"] == MAX_COOCCURRENCE_WEIGHT
+    assert row_99["reinforcement"] == MAX_COOCCURRENCE_WEIGHT
 
     row_100 = conn.execute(
-        "SELECT weight FROM entity_cooccurrence "
+        "SELECT reinforcement FROM entity_cooccurrence "
         "WHERE entity_a = 'Gamma' AND entity_b = 'Delta'"
     ).fetchone()
     # Already at max, should not increase
-    assert row_100["weight"] == MAX_COOCCURRENCE_WEIGHT
+    assert row_100["reinforcement"] == MAX_COOCCURRENCE_WEIGHT
 
 
 def test_reinforce_canonical_order(in_memory_db):
@@ -386,3 +411,104 @@ def test_reinforce_noop_no_entities(in_memory_db):
         "SELECT COUNT(*) as c FROM entity_cooccurrence"
     ).fetchone()["c"]
     assert count == 0
+
+
+# --- issue #60: reinforcement survives rebuilds ---
+
+
+def test_persist_preserves_reinforcement(in_memory_db):
+    """Full rebuild recomputes structural weight but keeps reinforcement."""
+    conn = in_memory_db
+    _insert_triple(conn, "note1.md", "Alpha", "Beta")
+    persist_cooccurrence(conn)
+    reinforce_cooccurrence(conn, [("Alpha", "Beta")])  # seeds 1.0
+    reinforce_cooccurrence(conn, [("Alpha", "Beta")])  # 1.0 -> 1.1
+
+    persist_cooccurrence(conn)  # the reindex that used to wipe it
+
+    row = conn.execute(
+        "SELECT weight, reinforcement FROM entity_cooccurrence "
+        "WHERE entity_a = 'Alpha' AND entity_b = 'Beta'"
+    ).fetchone()
+    assert row["weight"] == 1.0
+    assert abs(row["reinforcement"] - 1.1) < 1e-9
+
+
+def test_persist_keeps_usage_only_pairs(in_memory_db):
+    """A pair known only from search reinforcement survives a rebuild at weight 0."""
+    conn = in_memory_db
+    _insert_triple(conn, "note1.md", "Alpha", "Beta")
+    reinforce_cooccurrence(conn, [("Gamma", "Delta")])  # not in any triple
+
+    persist_cooccurrence(conn)
+
+    row = conn.execute(
+        "SELECT weight, reinforcement FROM entity_cooccurrence "
+        "WHERE entity_a = 'Delta' AND entity_b = 'Gamma'"
+    ).fetchone()
+    assert row is not None
+    assert row["weight"] == 0.0
+    assert row["reinforcement"] == 1.0
+
+
+def test_persist_sweeps_dead_pairs(in_memory_db):
+    """Pairs with no structural weight and no reinforcement are removed."""
+    conn = in_memory_db
+    _insert_triple(conn, "note1.md", "Alpha", "Beta")
+    persist_cooccurrence(conn)
+    conn.execute("DELETE FROM triples")
+    conn.commit()
+    _insert_triple(conn, "note2.md", "Gamma", "Delta")
+
+    persist_cooccurrence(conn)
+
+    rows = conn.execute(
+        "SELECT entity_a, entity_b FROM entity_cooccurrence"
+    ).fetchall()
+    assert [(r["entity_a"], r["entity_b"]) for r in rows] == [("Delta", "Gamma")]
+
+
+def test_upsert_preserves_reinforcement(in_memory_db):
+    """Incremental upsert recomputes structure without touching reinforcement."""
+    conn = in_memory_db
+    _insert_triple(conn, "note1.md", "Alpha", "Beta")
+    upsert_cooccurrence_for_note(conn, "note1.md")
+    reinforce_cooccurrence(conn, [("Alpha", "Beta")])
+
+    upsert_cooccurrence_for_note(conn, "note1.md")
+
+    row = conn.execute(
+        "SELECT weight, reinforcement FROM entity_cooccurrence "
+        "WHERE entity_a = 'Alpha' AND entity_b = 'Beta'"
+    ).fetchone()
+    assert row["weight"] == 1.0
+    assert row["reinforcement"] == 1.0
+
+
+def test_upsert_keeps_reinforced_pair_when_structure_vanishes(in_memory_db):
+    """When a pair stops co-occurring, only unreinforced rows are dropped."""
+    conn = in_memory_db
+    _insert_triple(conn, "note1.md", "Alpha", "Beta")
+    _insert_triple(conn, "note1.md", "Alpha", "Ceta")
+    upsert_cooccurrence_for_note(conn, "note1.md")  # pairs AB, AC, BC
+    reinforce_cooccurrence(conn, [("Alpha", "Beta")])
+
+    # note1 rewritten: Beta and Ceta gone, Zeta appears
+    conn.execute("DELETE FROM triples WHERE note_path = 'note1.md'")
+    conn.commit()
+    _insert_triple(conn, "note1.md", "Alpha", "Zeta")
+
+    upsert_cooccurrence_for_note(conn, "note1.md")
+
+    rows = {
+        (r["entity_a"], r["entity_b"]): (r["weight"], r["reinforcement"])
+        for r in conn.execute(
+            "SELECT entity_a, entity_b, weight, reinforcement "
+            "FROM entity_cooccurrence"
+        )
+    }
+    # reinforced pair survives at weight 0; unreinforced dead pairs are gone
+    assert rows[("Alpha", "Beta")] == (0.0, 1.0)
+    assert ("Alpha", "Ceta") not in rows
+    assert ("Beta", "Ceta") not in rows
+    assert rows[("Alpha", "Zeta")][0] == 1.0
