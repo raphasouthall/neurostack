@@ -351,7 +351,7 @@ def test_reinforce_creates_new_pair(in_memory_db):
 
 
 def test_reinforce_bounded(in_memory_db):
-    """Reinforcement cannot push weight above MAX_COOCCURRENCE_WEIGHT (100.0)."""
+    """Reinforcement cannot grow above MAX_COOCCURRENCE_WEIGHT (100.0)."""
     conn = in_memory_db
     # Insert pair with reinforcement at 99.0
     conn.execute(

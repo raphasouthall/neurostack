@@ -433,7 +433,8 @@ def main():
     p.add_argument(
         "--db", default=None,
         help="SQLite index to evaluate. Default: the configured DB. "
-        "Use a COPY of the prod index — eval reads only, but point it at a copy.",
+        "Use a COPY of the prod index — opening it runs pending schema "
+        "migrations in place, so never point this at a treasured snapshot.",
     )
     p.add_argument(
         "--cache", default=None,

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 log = logging.getLogger("neurostack")
 
+# Caps the reinforcement (usage) signal; structural weights are raw counts
 MAX_COOCCURRENCE_WEIGHT = 100.0
 
 
@@ -110,7 +111,8 @@ def persist_cooccurrence(conn: sqlite3.Connection) -> int:
     Structural weights are fully replaced; the ``reinforcement`` column is
     never touched, so accumulated search reinforcement survives the rebuild
     (issue #60). Rows with neither structural weight nor reinforcement are
-    swept away.
+    swept away. When the triples table yields no pairs the function returns
+    early and the table is left untouched (historical behaviour).
 
     Returns the number of structural entity pairs persisted.
     """
@@ -249,17 +251,17 @@ def upsert_cooccurrence_for_note(conn: sqlite3.Connection, note_path: str) -> in
             upserts,
         )
 
-    # Pairs that no longer co-occur structurally: keep the row (weight 0)
-    # while it still carries reinforcement, drop it otherwise
+    # Pairs that no longer co-occur structurally: drop unreinforced rows,
+    # keep reinforced ones at weight 0
     if deletes:
-        conn.executemany(
-            "UPDATE entity_cooccurrence SET weight = 0.0 "
-            "WHERE entity_a = ? AND entity_b = ?",
-            deletes,
-        )
         conn.executemany(
             "DELETE FROM entity_cooccurrence "
             "WHERE entity_a = ? AND entity_b = ? AND reinforcement <= 0",
+            deletes,
+        )
+        conn.executemany(
+            "UPDATE entity_cooccurrence SET weight = 0.0 "
+            "WHERE entity_a = ? AND entity_b = ?",
             deletes,
         )
 
@@ -278,7 +280,7 @@ def get_cooccurrence_stats(conn: sqlite3.Connection) -> dict:
     """
     row = conn.execute(
         "SELECT COUNT(*) AS pairs, COALESCE(SUM(weight), 0.0) AS total_weight, "
-        "COUNT(*) FILTER (WHERE reinforcement > 0) AS reinforced_pairs, "
+        "COALESCE(SUM(reinforcement > 0), 0) AS reinforced_pairs, "
         "COALESCE(SUM(reinforcement), 0.0) AS total_reinforcement "
         "FROM entity_cooccurrence"
     ).fetchone()

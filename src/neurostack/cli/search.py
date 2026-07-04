@@ -722,6 +722,8 @@ def cmd_stats(args):
             "triple_coverage": f"{triple_pct}%",
             "cooccurrence_pairs": cooc["pairs"],
             "cooccurrence_total_weight": cooc["total_weight"],
+            "cooccurrence_reinforced_pairs": cooc["reinforced_pairs"],
+            "cooccurrence_total_reinforcement": cooc["total_reinforcement"],
             "community_build": community,
         }
         print(json.dumps(output, indent=2, default=str))
@@ -749,7 +751,8 @@ def cmd_stats(args):
     )
     print(
         f"Co-occurrence: {cooc['pairs']} pairs"
-        f" ({cooc['total_weight']:.1f} total weight)"
+        f" ({cooc['total_weight']:.1f} total weight,"
+        f" {cooc['reinforced_pairs']} reinforced)"
     )
     if community["built"]:
         flag = " \033[33m[STALE]\033[0m" if community["stale"] else ""
