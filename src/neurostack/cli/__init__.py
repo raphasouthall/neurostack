@@ -807,6 +807,9 @@ def main():
     _skip_preflight = {
         "init", "install", "uninstall", "doctor", "status", "demo", "update",
         "setup-desktop", "setup-client", "bundle",
+        # export reads only the SQLite index — it must keep working when the
+        # vault dir is gone but the DB survives (the get-my-data-out case)
+        "export",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():

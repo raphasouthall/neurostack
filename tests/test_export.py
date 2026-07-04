@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
 """Tests for neurostack.export — JSON index export (issue #4)."""
 
 import argparse
@@ -111,3 +113,10 @@ def test_cmd_export_stdout_and_file(tmp_path, monkeypatch, capsys):
     cmd_export(args)
     data = json.loads(out_file.read_text())
     assert data[0]["triples"] == []
+    assert "Exported 1 notes" in capsys.readouterr().out
+
+    # --output into a directory that does not exist yet
+    nested = tmp_path / "missing" / "dir" / "export.json"
+    args = argparse.Namespace(include=None, output=str(nested))
+    cmd_export(args)
+    assert json.loads(nested.read_text())[0]["path"] == "a.md"
