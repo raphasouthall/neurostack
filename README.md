@@ -374,6 +374,7 @@ neurostack prediction-errors             # stale note detection
 neurostack backfill [summaries|triples|all]
 neurostack communities build             # rebuild topic clusters
 neurostack reembed-chunks                # re-embed all chunks
+neurostack export --include triples -o dump.json  # dump index data as JSON
 
 # Memories
 neurostack memories add "text" --type observation

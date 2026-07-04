@@ -67,6 +67,24 @@ def cmd_backfill(args):
         print(f"Memory embedding backfill: {n} memories (re-)embedded.")
 
 
+def cmd_export(args):
+    import json
+    import sys
+
+    from ..export import export_notes
+    from ..schema import DB_PATH, get_db
+    db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", DB_PATH))
+    conn = get_db(db_path)
+    include = set(args.include or [])
+    notes = export_notes(conn, include_triples="triples" in include)
+    text = json.dumps(notes, indent=2, default=str)
+    if args.output:
+        Path(args.output).write_text(text + "\n")
+        print(f"Exported {len(notes)} notes to {args.output}", file=sys.stderr)
+    else:
+        print(text)
+
+
 def cmd_watch(args):
     from ..watcher import run_watcher
     run_watcher(
