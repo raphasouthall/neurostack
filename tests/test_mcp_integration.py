@@ -68,9 +68,10 @@ def test_registry_registers_expected_tools(mcp_vault):
 
 
 def test_mcp_server_exposes_registry_tools(mcp_vault):
-    from neurostack.server import mcp  # noqa: F401 — module-level server builds
+    from neurostack.server import mcp
     from neurostack.tools.mcp_adapter import create_mcp_server
 
+    assert mcp is not None  # module-level server import builds cleanly
     server = create_mcp_server()
     tool_names = {t.name for t in asyncio.run(server.list_tools())}
     registry_names = {t.name for t in _registry().list_tools()}
@@ -86,6 +87,8 @@ def test_vault_search_keyword(mcp_vault):
     json.dumps(result)  # response must be serialisable over the wire
     paths = [r["path"] for r in result["results"]]
     assert any("predictive-coding" in p for p in paths)
+    for r in result["results"]:
+        assert {"path", "title", "score"} <= set(r), r
 
 
 def test_vault_stats_structure(mcp_vault):
