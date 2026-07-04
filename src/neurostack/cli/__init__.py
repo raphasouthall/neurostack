@@ -9,7 +9,7 @@ from pathlib import Path
 from .. import __version__
 from ..config import get_config
 from .api import cmd_api, cmd_bundle, cmd_serve
-from .index import cmd_backfill, cmd_index, cmd_reembed_chunks, cmd_watch
+from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
 from .memories import cmd_memories
 from .search import (
     cmd_ask,
@@ -381,6 +381,21 @@ def main():
              "(default: prune orphaned notes from the index)",
     )
     p.set_defaults(func=cmd_index)
+
+    # export (issue #4)
+    p = sub.add_parser(
+        "export",
+        help="Dump indexed notes (path, title, pagerank, summary) as JSON",
+    )
+    p.add_argument(
+        "--include", action="append", choices=["triples"], default=None,
+        help="Extra data to include per note (repeatable)",
+    )
+    p.add_argument(
+        "--output", "-o", default=None,
+        help="Write JSON to a file instead of stdout",
+    )
+    p.set_defaults(func=cmd_export)
 
     # search
     p = sub.add_parser("search", help="Search the vault")
@@ -792,6 +807,9 @@ def main():
     _skip_preflight = {
         "init", "install", "uninstall", "doctor", "status", "demo", "update",
         "setup-desktop", "setup-client", "bundle",
+        # export reads only the SQLite index — it must keep working when the
+        # vault dir is gone but the DB survives (the get-my-data-out case)
+        "export",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():

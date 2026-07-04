@@ -81,6 +81,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack index` | Full re-index. `--skip-summary`, `--skip-triples` |
 | `neurostack watch` | File watcher - auto-indexes on vault changes |
 | `neurostack reembed-chunks` | Re-embed all chunks with contextual text |
+| `neurostack export` | Dump indexed notes (path, title, pagerank, summary) as JSON. `--include triples`, `--output FILE` |
 | `neurostack backfill` | Backfill missing summaries and/or triples |
 | `neurostack folder-summaries` | Build folder-level summaries for context boosting |
 | `neurostack communities build` | Run attractor basin community detection |

@@ -2,6 +2,7 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """Indexing and maintenance CLI commands."""
 
+import json
 import os
 from pathlib import Path
 
@@ -65,6 +66,23 @@ def cmd_backfill(args):
         conn = get_db(DB_PATH)
         n = backfill_memory_embeddings(conn, embed_url=args.embed_url)
         print(f"Memory embedding backfill: {n} memories (re-)embedded.")
+
+
+def cmd_export(args):
+    from ..export import export_notes
+    from ..schema import DB_PATH, get_db
+    db_path = Path(os.environ.get("NEUROSTACK_DB_PATH", DB_PATH))
+    conn = get_db(db_path)
+    include = set(args.include or [])
+    notes = export_notes(conn, include_triples="triples" in include)
+    text = json.dumps(notes, indent=2, default=str)
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(text + "\n")
+        print(f"Exported {len(notes)} notes to {args.output}")
+    else:
+        print(text)
 
 
 def cmd_watch(args):
