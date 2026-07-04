@@ -27,6 +27,9 @@ def mcp_vault(tmp_path, tmp_vault, monkeypatch):
     db_dir = tmp_path / "db"
     monkeypatch.setenv("NEUROSTACK_VAULT_ROOT", str(tmp_vault))
     monkeypatch.setenv("NEUROSTACK_DB_DIR", str(db_dir))
+    # Unroutable embedder: keyword-mode tests must fail loudly, not fall back
+    # to a live Ollama leaked in from the developer's config.toml
+    monkeypatch.setenv("NEUROSTACK_EMBED_URL", "http://127.0.0.1:1")
     nsconfig._config = None
 
     from neurostack.chunker import parse_note
@@ -75,6 +78,7 @@ def test_mcp_server_exposes_registry_tools(mcp_vault):
     server = create_mcp_server()
     tool_names = {t.name for t in asyncio.run(server.list_tools())}
     registry_names = {t.name for t in _registry().list_tools()}
+    assert tool_names  # empty == empty must not pass
     assert tool_names == registry_names
 
 
