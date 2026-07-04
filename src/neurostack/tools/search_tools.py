@@ -449,6 +449,8 @@ def vault_stats() -> dict:
         },
         "cooccurrence_pairs": cooc_stats["pairs"],
         "cooccurrence_total_weight": cooc_stats["total_weight"],
+        "cooccurrence_reinforced_pairs": cooc_stats["reinforced_pairs"],
+        "cooccurrence_total_reinforcement": cooc_stats["total_reinforcement"],
         "memories": mem_stats,
     }
     return result

@@ -205,7 +205,7 @@ When enabled, searches are logged and a subsequent deliberate use of a surfaced 
 | `feedback_window_seconds` | `1800.0` | `NEUROSTACK_FEEDBACK_WINDOW_SECONDS` |
 | `feedback_log_retention` | `5000` | `NEUROSTACK_FEEDBACK_LOG_RETENTION` |
 
-Inspect accumulated feedback with `neurostack feedback`. The module is `src/neurostack/feedback.py`; data lives in the `search_log` and `search_feedback` tables (schema v18).
+Inspect accumulated feedback with `neurostack feedback`. The module is `src/neurostack/feedback.py`; data lives in the `search_log` and `search_feedback` tables (added in schema v18).
 
 ## Architecture
 
