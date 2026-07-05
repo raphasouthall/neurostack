@@ -124,6 +124,20 @@ def test_vault_search_max_tokens_truncates(mcp_vault):
     json.dumps(capped)
 
 
+def test_vault_search_max_tokens_applies_to_tiered_depth(mcp_vault):
+    # The budget must not silently no-op just because depth defaults to "auto".
+    capped = _registry().call(
+        "vault_search", query="prediction", mode="keyword", depth="auto",
+        max_tokens=1,
+    )
+    # auto falls back to chunk search in the fixture (no triples/summaries), so
+    # the content list is capped to one entry and truncation is flagged.
+    assert capped.get("truncated") is True
+    total = sum(len(capped.get(k, [])) for k in ("triples", "summaries", "chunks"))
+    assert total == 1
+    json.dumps(capped)
+
+
 def test_vault_stats_structure(mcp_vault):
     result = _registry().call("vault_stats")
     for key in ("notes", "chunks", "embedded", "summaries", "graph_edges",

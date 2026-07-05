@@ -315,10 +315,13 @@ def vault_read_file(path: str, offset: int = 0, limit: int | None = None) -> dic
     text = data.decode("utf-8")
 
     # Implicit-feedback loop (issue #66): opening a note is a deliberate use, so
-    # attribute it back to the search that surfaced it. Opt-in, non-blocking, and
-    # writes only to the index DB (not the vault) — the read stays read-only.
-    from ..feedback import capture_use
-    capture_use([path])
+    # attribute it back to the search that surfaced it. Only the first page
+    # (offset 0) counts as an open; continuation reads of the same note aren't a
+    # fresh use and must not inflate the signal. Opt-in, non-blocking, and writes
+    # only to the index DB (not the vault) — the read stays read-only.
+    if offset == 0:
+        from ..feedback import capture_use
+        capture_use([path])
 
     # Unbounded read: byte-for-byte the original response shape.
     if offset == 0 and limit is None:

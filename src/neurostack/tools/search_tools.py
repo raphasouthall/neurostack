@@ -113,11 +113,11 @@ def vault_search(
         workspace: Optional vault subdirectory prefix to restrict
             results (e.g. "work/acme-cloud")
         max_tokens: Optional size ceiling (~4 chars/token) on the returned
-            result list. Full-depth and reference results stop accumulating once
-            the estimate is hit; at least one result is always kept, and the
-            response carries "truncated": True when anything was dropped. The
-            tiered depths (triples/summaries/auto) are already compressed by
-            `depth`, so this budget does not apply to them.
+            results. Once the estimate is hit, results stop accumulating (at
+            least one is always kept) and the response carries "truncated": True.
+            `depth` is the primary footprint dial; max_tokens trims on top of it
+            across every depth and the reference list, so an explicit budget is
+            never a silent no-op.
         reference_only: If True, return a lean list of {path, score, snippet}
             with no summaries or bodies, plus a hint to fetch detail on demand
             via vault_read_file(path, offset, limit). Ignores `depth`. Lets an
@@ -162,6 +162,23 @@ def vault_search(
             embed_url=embed_url, context=context,
             workspace=workspace,
         )
+
+        if max_tokens is not None:
+            # Keep the budget meaningful whatever the depth (issue #62): trim the
+            # content lists against one shared ceiling so an explicit max_tokens
+            # never silently no-ops on the default depth="auto".
+            remaining = max_tokens
+            dropped = False
+            for key in ("triples", "summaries", "chunks"):
+                items = result.get(key)
+                if not items:
+                    continue
+                kept, used, trunc = trim_to_budget(items, remaining)
+                result[key] = kept
+                remaining = max(0, remaining - used)
+                dropped = dropped or trunc
+            if dropped:
+                result["truncated"] = True
 
         if depth in ("auto", "summaries"):
             memories = _search_memories_for_results(query, workspace, limit=3)
