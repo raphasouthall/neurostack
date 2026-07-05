@@ -612,104 +612,159 @@ def vault_prediction_errors(
     limit: int = 20,
     resolve: list[str] = None,
     workspace: str = None,
+    memory_id: int = None,
 ) -> dict:
-    """Return notes flagged as prediction errors — high semantic distance at retrieval time.
+    """Return prediction errors — note or memory signals that surprised at retrieval.
 
-    These are notes that "surprised" during retrieval (poor fit for the query that retrieved them),
-    signalling they may be outdated, miscategorised, or poorly linked.
-
-    Error types:
+    Note-centric (semantic distance between a note and the query that retrieved it):
     - low_overlap: cosine distance > 0.62 — note is semantically distant from what retrieved it
     - contextual_mismatch: note surfaced outside its expected domain context AND was only a
       weak fit (sim < 0.45) — a strong hit outside the context boost set is not a mismatch
+    Only notes that surprised >= 2 distinct retrieval events are surfaced.
 
-    Only notes that have surprised >= 2 distinct retrieval events are surfaced: a single
-    ad-hoc flag reflects query difficulty, not note health. Single-occurrence rows still
-    accumulate in the log toward that threshold.
+    Memory-centric (issue #38):
+    - memory_drift: an agent-written memory has drifted from the current content of the
+      notes it references (its embedding is far from those notes' chunks). Each row carries
+      the memory content so an agent can update_memory or forget it. No occurrence threshold —
+      the detector debounces to one row per (memory, note).
 
     Args:
-        error_type: Filter by type — "low_overlap" or "contextual_mismatch". None = all.
-        limit: Max errors to return (default 20).
+        error_type: Filter by type — "low_overlap", "contextual_mismatch", or
+            "memory_drift". None = all.
+        limit: Max errors to return per class (default 20).
         resolve: List of note paths to mark as resolved (clears their unresolved flags).
-        workspace: Optional vault subdirectory prefix to restrict
-            results (e.g. "work/acme-cloud")
+        workspace: Optional vault subdirectory prefix to restrict note results.
+        memory_id: Filter memory-drift rows to a single memory (implies memory rows only).
     """
+    import json
+
     from ..schema import DB_PATH, get_db
     from ..search import PREDICTION_ERROR_MIN_OCCURRENCES, _normalize_workspace
 
     conn = get_db(DB_PATH)
 
     if resolve:
+        # Only note-centric rows are resolved by path; memory drift is reconciled
+        # through the memory lifecycle (update/forget), not by note path.
         conn.execute(
             """
             UPDATE prediction_errors SET resolved_at = datetime('now')
-            WHERE note_path IN ({}) AND resolved_at IS NULL
+            WHERE note_path IN ({}) AND memory_id IS NULL AND resolved_at IS NULL
             """.format(",".join("?" * len(resolve))),
             resolve,
         )
         conn.commit()
         return {"resolved": len(resolve), "paths": resolve}
 
-    where = "WHERE resolved_at IS NULL"
-    params: list = []
-    if error_type:
-        where += " AND error_type = ?"
-        params.append(error_type)
-
     ws = _normalize_workspace(workspace)
-    if ws:
-        where += " AND note_path LIKE ? || '%'"
-        params.append(ws + "/")
+    results: list = []
+    total_notes = 0
 
-    rows = conn.execute(
-        f"""
-        SELECT note_path, error_type, context,
-               AVG(cosine_distance) as avg_distance,
-               COUNT(*) as occurrences,
-               MAX(detected_at) as last_seen,
-               MIN(query) as sample_query
-        FROM prediction_errors
-        {where}
-        GROUP BY note_path, error_type
-        HAVING COUNT(*) >= ?
-        ORDER BY occurrences DESC, avg_distance DESC
-        LIMIT ?
-        """,
-        params + [PREDICTION_ERROR_MIN_OCCURRENCES, limit],
-    ).fetchall()
+    # Note-centric errors (memory_id IS NULL), aggregated with the >=2 threshold.
+    if memory_id is None and error_type != "memory_drift":
+        where = "WHERE resolved_at IS NULL AND memory_id IS NULL"
+        params: list = []
+        if error_type:
+            where += " AND error_type = ?"
+            params.append(error_type)
+        if ws:
+            where += " AND note_path LIKE ? || '%'"
+            params.append(ws + "/")
 
-    results = [
-        {
-            "note_path": r["note_path"],
-            "error_type": r["error_type"],
-            "context": r["context"],
-            "avg_cosine_distance": round(r["avg_distance"], 3),
-            "occurrences": r["occurrences"],
-            "last_seen": r["last_seen"],
-            "sample_query": r["sample_query"],
-        }
-        for r in rows
-    ]
-
-    total_where = "WHERE resolved_at IS NULL"
-    total_params: list = []
-    if ws:
-        total_where += " AND note_path LIKE ? || '%'"
-        total_params.append(ws + "/")
-
-    total_unresolved = conn.execute(
-        f"""
-        SELECT COUNT(*) FROM (
-            SELECT note_path FROM prediction_errors {total_where}
+        rows = conn.execute(
+            f"""
+            SELECT note_path, error_type, context,
+                   AVG(cosine_distance) as avg_distance,
+                   COUNT(*) as occurrences,
+                   MAX(detected_at) as last_seen,
+                   MIN(query) as sample_query
+            FROM prediction_errors
+            {where}
             GROUP BY note_path, error_type
             HAVING COUNT(*) >= ?
+            ORDER BY occurrences DESC, avg_distance DESC
+            LIMIT ?
+            """,
+            params + [PREDICTION_ERROR_MIN_OCCURRENCES, limit],
+        ).fetchall()
+        results = [
+            {
+                "note_path": r["note_path"],
+                "error_type": r["error_type"],
+                "context": r["context"],
+                "avg_cosine_distance": round(r["avg_distance"], 3),
+                "occurrences": r["occurrences"],
+                "last_seen": r["last_seen"],
+                "sample_query": r["sample_query"],
+            }
+            for r in rows
+        ]
+
+        total_where = "WHERE resolved_at IS NULL AND memory_id IS NULL"
+        total_params: list = []
+        if ws:
+            total_where += " AND note_path LIKE ? || '%'"
+            total_params.append(ws + "/")
+        total_notes = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM (
+                SELECT note_path FROM prediction_errors {total_where}
+                GROUP BY note_path, error_type
+                HAVING COUNT(*) >= ?
+            )
+            """,
+            total_params + [PREDICTION_ERROR_MIN_OCCURRENCES],
+        ).fetchone()[0]
+
+    # Memory-centric drift rows (issue #38): one open row per (memory, note),
+    # no occurrence threshold, carrying the memory content to act on.
+    memory_errors: list = []
+    total_memories = 0
+    if memory_id is not None or error_type in (None, "memory_drift"):
+        mwhere = (
+            "WHERE pe.resolved_at IS NULL AND pe.memory_id IS NOT NULL"
+            " AND pe.error_type = 'memory_drift'"
         )
-        """,
-        total_params + [PREDICTION_ERROR_MIN_OCCURRENCES],
-    ).fetchone()[0]
+        mparams: list = []
+        if memory_id is not None:
+            mwhere += " AND pe.memory_id = ?"
+            mparams.append(memory_id)
+        total_memories = conn.execute(
+            f"SELECT COUNT(*) FROM prediction_errors pe {mwhere}", mparams
+        ).fetchone()[0]
+        mrows = conn.execute(
+            f"""
+            SELECT pe.memory_id, pe.note_path, pe.cosine_distance, pe.context,
+                   pe.detected_at, m.content, m.entity_type, m.tags, m.created_at
+            FROM prediction_errors pe
+            JOIN memories m ON m.memory_id = pe.memory_id
+            {mwhere}
+            ORDER BY pe.cosine_distance DESC
+            LIMIT ?
+            """,
+            mparams + [limit],
+        ).fetchall()
+        memory_errors = [
+            {
+                "error_type": "memory_drift",
+                "memory_id": r["memory_id"],
+                "note_path": r["note_path"],
+                "cosine_distance": round(r["cosine_distance"], 3),
+                "detected_at": r["detected_at"],
+                "context": r["context"],
+                "memory": {
+                    "content": r["content"],
+                    "entity_type": r["entity_type"],
+                    "tags": json.loads(r["tags"]) if r["tags"] else [],
+                    "created_at": r["created_at"],
+                },
+            }
+            for r in mrows
+        ]
 
     return {
-        "total_flagged_notes": total_unresolved,
-        "showing": len(results),
-        "errors": results,
+        "total_flagged_notes": total_notes,
+        "total_flagged_memories": total_memories,
+        "showing": len(results) + len(memory_errors),
+        "errors": results + memory_errors,
     }

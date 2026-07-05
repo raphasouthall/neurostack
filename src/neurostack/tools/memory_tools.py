@@ -236,6 +236,11 @@ def vault_memories(
         workspace=workspace, limit=limit, embed_url=_embed_url(),
     )
 
+    # Memory drift detection (issue #38): a retrieval is the natural moment to
+    # check whether these memories still match the notes they reference.
+    from ..memory_drift import check_memory_drift
+    check_memory_drift(conn, memories)
+
     output = []
     for m in memories:
         entry = {

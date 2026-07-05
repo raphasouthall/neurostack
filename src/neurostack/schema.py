@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -229,10 +229,13 @@ CREATE INDEX IF NOT EXISTS idx_search_feedback_time ON search_feedback(created_a
 
 -- Prediction error log: signal-driven vault maintenance
 -- Populated at retrieval time when cosine distance exceeds threshold.
--- error_type: 'low_overlap' | 'contextual_mismatch'
+-- error_type: 'low_overlap' | 'contextual_mismatch' (note-centric)
+--           | 'memory_drift' — a memory drifted from the notes it references
+--             (issue #38); such rows carry both note_path and memory_id.
 CREATE TABLE IF NOT EXISTS prediction_errors (
     error_id INTEGER PRIMARY KEY AUTOINCREMENT,
     note_path TEXT NOT NULL,
+    memory_id INTEGER REFERENCES memories(memory_id) ON DELETE CASCADE,
     query TEXT NOT NULL,
     cosine_distance REAL NOT NULL,
     error_type TEXT NOT NULL,
@@ -243,6 +246,8 @@ CREATE TABLE IF NOT EXISTS prediction_errors (
 
 CREATE INDEX IF NOT EXISTS idx_pred_errors_note ON prediction_errors(note_path);
 CREATE INDEX IF NOT EXISTS idx_pred_errors_type ON prediction_errors(error_type);
+CREATE INDEX IF NOT EXISTS idx_pred_errors_memory
+    ON prediction_errors(memory_id) WHERE memory_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved
     ON prediction_errors(resolved_at) WHERE resolved_at IS NULL;
 
@@ -1003,6 +1008,31 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (20)")
         conn.commit()
         log.info("Migration to v20 complete.")
+
+    if current < 21:
+        log.info(
+            "Migrating schema v20 -> v21: prediction_errors.memory_id "
+            "for memory drift (issue #38)..."
+        )
+        cols = {
+            r[1] for r in conn.execute(
+                "PRAGMA table_info(prediction_errors)"
+            ).fetchall()
+        }
+        if "memory_id" not in cols:
+            # ADD COLUMN keeps existing rows and their data intact — no rebuild.
+            # note_path stays NOT NULL: drift rows carry both note_path and memory_id.
+            conn.execute(
+                "ALTER TABLE prediction_errors ADD COLUMN memory_id INTEGER"
+                " REFERENCES memories(memory_id) ON DELETE CASCADE"
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pred_errors_memory"
+            " ON prediction_errors(memory_id) WHERE memory_id IS NOT NULL"
+        )
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (21)")
+        conn.commit()
+        log.info("Migration to v21 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:

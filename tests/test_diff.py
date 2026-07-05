@@ -114,17 +114,24 @@ def test_fresh_db_has_diff_snapshots(db):
     assert v >= 20
 
 
-def test_v19_to_v20_upgrade_path():
-    # The path that runs on the live LXC 122 DB (currently v19): the lazy
-    # migration must create diff_snapshots and bump the stamped version to 20.
+def test_v19_upgrade_creates_diff_snapshots():
+    # The path that runs on the live LXC 122 DB: the lazy migration must create
+    # diff_snapshots and run cleanly through to the current schema version.
     import sqlite3
 
-    from neurostack.schema import _run_migrations
+    from neurostack.schema import SCHEMA_VERSION, _run_migrations
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
     conn.execute("INSERT INTO schema_version VALUES (19)")
+    # A real v19 DB has prediction_errors (later migrations ALTER it), so seed it.
+    conn.execute(
+        "CREATE TABLE prediction_errors (error_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " note_path TEXT NOT NULL, query TEXT NOT NULL, cosine_distance REAL NOT NULL,"
+        " error_type TEXT NOT NULL, context TEXT,"
+        " detected_at TEXT NOT NULL DEFAULT (datetime('now')), resolved_at TEXT)"
+    )
     conn.commit()
     assert conn.execute(
         "SELECT name FROM sqlite_master WHERE name='diff_snapshots'"
@@ -137,5 +144,5 @@ def test_v19_to_v20_upgrade_path():
     ).fetchone() is not None
     assert conn.execute(
         "SELECT MAX(version) AS v FROM schema_version"
-    ).fetchone()["v"] == 20
+    ).fetchone()["v"] == SCHEMA_VERSION
 
