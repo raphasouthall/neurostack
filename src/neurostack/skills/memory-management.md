@@ -38,9 +38,21 @@ vault_memories(query="terraform", entity_type="decision", workspace="work/acme")
 ```
 
 ## Memory types guide
-- **decision**: Architectural or strategic choices made
-- **convention**: Patterns or rules established
-- **learning**: Insights discovered through experience
-- **bug**: Root causes and fixes found
-- **observation**: General observations (noisy, not written to vault)
-- **context**: Ephemeral context (credentials, URLs, config state)
+
+Pick by durability and intent. Defaulting everything to `observation` buries real
+insight in noise, so reach for a more specific type whenever one fits.
+
+- **decision**: An architectural or strategic choice made, and why ("chose X over Y because Z").
+- **convention**: A rule or pattern to always follow ("always run the full sync before restart").
+- **learning**: An insight discovered through experience — the durable takeaway, not the raw
+  event ("the strict all-terms match misses paraphrases; semantic similarity catches them").
+  Prefer this over `observation` whenever you've actually concluded something.
+- **bug**: A root cause and its fix, with concrete identifiers.
+- **context**: Ephemeral current-state that goes stale fast — credentials, endpoints, URLs, config
+  values, "X is currently at version N". Harvest gives these a 168h TTL by default. Not for
+  durable handoffs or long-lived facts; those aren't ephemeral state.
+- **observation**: A durable fact that isn't yet a synthesised insight. Use sparingly — if you can
+  phrase it as a learning or decision, do that. Raw observations are the noisiest, least useful bucket.
+
+When several related observations pile up, promote them into one consolidated `learning`
+(via `vault_update_memory`) rather than leaving a heap of near-duplicates.
