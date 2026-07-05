@@ -19,6 +19,8 @@ NeuroStack has multiple retrieval tools. Pick the right one:
 | vault_graph | Wiki-link neighborhood of a specific note | Cheap |
 | vault_related | Semantically similar notes | Moderate |
 | vault_memories | Search agent-written memories | Cheap |
+| vault_search(reference_only=True) | Broad scan — {path, score, snippet} only, no bodies | Very cheap |
+| vault_read_file(path, offset, limit) | Read a bounded slice of one note | Sized to `limit` |
 
 ## Decision tree
 
@@ -29,6 +31,16 @@ NeuroStack has multiple retrieval tools. Pick the right one:
 5. Need a cited answer? -> vault_ask
 6. Want to explore connections from a note? -> vault_graph
 7. Want similar notes? -> vault_related
+8. Many likely hits but you'll open only 1-2? -> vault_search(reference_only=True), then read the winner
+9. Context budget tight? -> add max_tokens=N to vault_search
+
+## Lean retrieval (cut context footprint)
+
+Every result lands in the caller's context window, so pull only what you need:
+
+- **Scan then fetch.** `vault_search(query, reference_only=True)` returns just `{path, score, snippet}` — no summaries or bodies — plus a fetch hint. Pick the 1-2 relevant paths, then `vault_summary(path)` for the gist or `vault_read_file(path, offset, limit)` for exact text.
+- **Budget a search.** `vault_search(query, max_tokens=N)` stops accumulating once ~N tokens (4 chars/token) are used, always keeps at least one result, and sets `truncated: true` when it clips. Applies across every depth. Use it in tight contexts (session bootstrap, autonomous loops).
+- **Page large notes.** `vault_read_file(path, offset, limit)` reads a slice and reports `size_chars`/`offset`/`truncated`. Read the first `limit` chars, then advance `offset` — don't dump a whole 50 KB note. The no-arg call still returns the full file.
 
 ## After retrieval: record what you used
 
