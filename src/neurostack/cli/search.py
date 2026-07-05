@@ -448,13 +448,22 @@ def cmd_graph_analysis(args):
 
 
 def cmd_diff(args):
+    import sys
+
     from ..diff import compute_diff, save_checkpoint
     from ..schema import DB_PATH, get_db
 
     conn = get_db(DB_PATH)
     result = compute_diff(conn, since=args.since, baseline=args.baseline)
-    if args.checkpoint and not args.since:
-        result["checkpoint"] = save_checkpoint(conn, baseline=args.baseline)
+    if args.checkpoint:
+        if args.since:
+            print(
+                "Note: --checkpoint is ignored in date mode (--since); "
+                "baselines apply to baseline mode only.",
+                file=sys.stderr,
+            )
+        else:
+            result["checkpoint"] = save_checkpoint(conn, baseline=args.baseline)
 
     if args.json:
         print(json.dumps(result, indent=2, default=str))
