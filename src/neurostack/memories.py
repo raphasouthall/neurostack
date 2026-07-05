@@ -256,6 +256,10 @@ def forget_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
     row = conn.execute(
         "SELECT file_path FROM memories WHERE memory_id = ?", (memory_id,)
     ).fetchone()
+    # Clear any memory_drift rows for this memory (issue #38). ON DELETE CASCADE
+    # on the FK also handles this; the explicit delete keeps it robust regardless
+    # of the foreign_keys pragma state.
+    conn.execute("DELETE FROM prediction_errors WHERE memory_id = ?", (memory_id,))
     cursor = conn.execute(
         "DELETE FROM memories WHERE memory_id = ?", (memory_id,)
     )
@@ -384,6 +388,11 @@ def update_memory(
     sql = f"UPDATE memories SET {', '.join(set_clauses)} WHERE memory_id = ?"
     params.append(memory_id)
     conn.execute(sql, params)
+
+    # Editing a memory IS reconciliation: its content just changed, so any open
+    # drift flag against the old content no longer holds (issue #38).
+    from .memory_drift import resolve_memory_drift
+    resolve_memory_drift(conn, memory_id)
     conn.commit()
 
     updated_row = conn.execute(
