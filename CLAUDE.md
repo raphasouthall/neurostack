@@ -121,7 +121,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 ## MCP Tools (24 tools)
 
 ### Search & Retrieval
-- `vault_search(query, top_k, mode, depth, context, workspace)` - Hybrid search with tiered depth
+- `vault_search(query, top_k, mode, depth, context, workspace, max_tokens, reference_only)` - Hybrid search with tiered depth; `max_tokens` caps full-depth/reference output, `reference_only` returns lean {path, score, snippet} + fetch hint (issue #62)
 - `vault_ask(question, top_k, workspace)` - RAG Q&A with citations
 - `vault_summary(path_or_query)` - Pre-computed note summaries
 - `vault_graph(note, depth, workspace)` - Wiki-link neighborhood with PageRank
@@ -149,7 +149,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 - `vault_session_end(session_id, summarize, auto_harvest)` - End session
 
 ### Vault Files (raw markdown CRUD over MCP)
-- `vault_read_file(path)` - Read a .md file under vault_root
+- `vault_read_file(path, offset, limit)` - Read a .md file under vault_root; `offset`/`limit` (characters) page through large notes and report `truncated` (issue #62)
 - `vault_list_files(directory, pattern, recursive)` - List .md files (hidden segments excluded)
 - `vault_write_file(path, content, commit_message)` - Create/overwrite a .md file; commits + pushes origin/main. Hard-rejects writes without required frontmatter (`date`, `tags`, `type`). On push conflict: `git pull --rebase --autostash` + retry once, then rollback.
 - `vault_delete_file(path, commit_message)` - Delete a .md file; commits + pushes origin/main

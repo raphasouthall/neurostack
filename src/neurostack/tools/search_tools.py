@@ -95,6 +95,8 @@ def vault_search(
     depth: str = "auto",
     context: str = None,
     workspace: str = None,
+    max_tokens: int = None,
+    reference_only: bool = False,
 ) -> dict:
     """Search the vault with tiered retrieval depth.
 
@@ -110,11 +112,47 @@ def vault_search(
         context: Optional project/domain context for boosting
         workspace: Optional vault subdirectory prefix to restrict
             results (e.g. "work/acme-cloud")
+        max_tokens: Optional size ceiling (~4 chars/token) on the returned
+            results. Once the estimate is hit, results stop accumulating (at
+            least one is always kept) and the response carries "truncated": True.
+            `depth` is the primary footprint dial; max_tokens trims on top of it
+            across every depth and the reference list, so an explicit budget is
+            never a silent no-op.
+        reference_only: If True, return a lean list of {path, score, snippet}
+            with no summaries or bodies, plus a hint to fetch detail on demand
+            via vault_read_file(path, offset, limit). Ignores `depth`. Lets an
+            agent scan cheaply, pick a path, then do a bounded read.
 
     Use "triples" for quick factual lookups, "summaries" for overview,
     "full" when you need actual content, "auto" to let the system decide.
     """
+    from ..budget import trim_to_budget
+
     _, embed_url = _cfg()
+
+    # Lean reference mode (issue #62): IDs + snippets only, fetch bodies on demand.
+    if reference_only:
+        from ..search import hybrid_search
+
+        results = hybrid_search(
+            query, top_k=top_k, mode=mode,
+            embed_url=embed_url, context=context,
+            workspace=workspace,
+        )
+        refs = [
+            {"path": r.note_path, "score": round(r.score, 4), "snippet": r.snippet}
+            for r in results
+        ]
+        kept, _, truncated = trim_to_budget(refs, max_tokens)
+        result = {
+            "results": kept,
+            "reference_only": True,
+            "hint": "Reference mode: fetch a chosen path with "
+                    "vault_read_file(path, offset, limit) or vault_summary(path).",
+        }
+        if truncated:
+            result["truncated"] = True
+        return result
 
     if depth in ("triples", "summaries", "auto"):
         from ..search import tiered_search
@@ -124,6 +162,23 @@ def vault_search(
             embed_url=embed_url, context=context,
             workspace=workspace,
         )
+
+        if max_tokens is not None:
+            # Keep the budget meaningful whatever the depth (issue #62): trim the
+            # content lists against one shared ceiling so an explicit max_tokens
+            # never silently no-ops on the default depth="auto".
+            remaining = max_tokens
+            dropped = False
+            for key in ("triples", "summaries", "chunks"):
+                items = result.get(key)
+                if not items:
+                    continue
+                kept, used, trunc = trim_to_budget(items, remaining)
+                result[key] = kept
+                remaining = max(0, remaining - used)
+                dropped = dropped or trunc
+            if dropped:
+                result["truncated"] = True
 
         if depth in ("auto", "summaries"):
             memories = _search_memories_for_results(query, workspace, limit=3)
@@ -154,7 +209,10 @@ def vault_search(
             entry["summary"] = r.summary
         output.append(entry)
 
-    result = {"results": output}
+    kept, _, truncated = trim_to_budget(output, max_tokens)
+    result = {"results": kept}
+    if truncated:
+        result["truncated"] = True
 
     memories = _search_memories_for_results(query, workspace, limit=3)
     if memories:

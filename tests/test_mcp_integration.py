@@ -95,6 +95,49 @@ def test_vault_search_keyword(mcp_vault):
         assert {"path", "title", "score"} <= set(r), r
 
 
+def test_vault_search_reference_only(mcp_vault):
+    # Issue #62: reference mode returns lean {path, score, snippet} + a fetch hint.
+    result = _registry().call(
+        "vault_search", query="prediction", mode="keyword", reference_only=True,
+    )
+    assert result["reference_only"] is True
+    assert "vault_read_file" in result["hint"]
+    assert result["results"], "reference search should surface at least one path"
+    for r in result["results"]:
+        assert set(r) == {"path", "score", "snippet"}, r
+    json.dumps(result)
+
+
+def test_vault_search_max_tokens_truncates(mcp_vault):
+    # A generous budget keeps every hit; a 1-token budget keeps exactly one.
+    full = _registry().call(
+        "vault_search", query="prediction", mode="keyword", depth="full",
+    )
+    assert len(full["results"]) >= 2, "need >1 hit to prove truncation"
+
+    capped = _registry().call(
+        "vault_search", query="prediction", mode="keyword", depth="full",
+        max_tokens=1,
+    )
+    assert len(capped["results"]) == 1  # at least one always kept
+    assert capped["truncated"] is True
+    json.dumps(capped)
+
+
+def test_vault_search_max_tokens_applies_to_tiered_depth(mcp_vault):
+    # The budget must not silently no-op just because depth defaults to "auto".
+    capped = _registry().call(
+        "vault_search", query="prediction", mode="keyword", depth="auto",
+        max_tokens=1,
+    )
+    # auto falls back to chunk search in the fixture (no triples/summaries), so
+    # the content list is capped to one entry and truncation is flagged.
+    assert capped.get("truncated") is True
+    total = sum(len(capped.get(k, [])) for k in ("triples", "summaries", "chunks"))
+    assert total == 1
+    json.dumps(capped)
+
+
 def test_vault_stats_structure(mcp_vault):
     result = _registry().call("vault_stats")
     for key in ("notes", "chunks", "embedded", "summaries", "graph_edges",
