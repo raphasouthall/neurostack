@@ -119,7 +119,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack serve` | Start MCP server. `--transport stdio\|sse\|http`, `--host`, `--port` |
 | `neurostack api` | Start OpenAI-compatible HTTP API. `--host`, `--port` |
 
-## MCP Tools (24 tools)
+## MCP Tools (25 tools)
 
 ### Search & Retrieval
 - `vault_search(query, top_k, mode, depth, context, workspace, max_tokens, reference_only)` - Hybrid search with tiered depth; `max_tokens` caps full-depth/reference output, `reference_only` returns lean {path, score, snippet} + fetch hint (issue #62)
