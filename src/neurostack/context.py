@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
+
+from .budget import estimate_tokens
 
 log = logging.getLogger("neurostack")
 
@@ -34,7 +35,8 @@ def build_vault_context(
 
     sections: dict = {}
     tokens_used = 0
-    # Rough estimate: 1 token ~ 4 chars
+    # Token cost is estimated via budget.estimate_tokens (~4 chars/token) so this
+    # allocator and vault_search agree on how big a result is (issue #62).
 
     # 1. Relevant memories (budget: ~40% of total)
     if include_memories:
@@ -57,7 +59,7 @@ def build_vault_context(
                     "tags": m.tags,
                     "created_at": m.created_at,
                 }
-                entry_tokens = len(json.dumps(entry)) // 4
+                entry_tokens = estimate_tokens(entry)
                 if tokens_used + entry_tokens > token_budget:
                     break
                 mem_entries.append(entry)
@@ -87,12 +89,12 @@ def build_vault_context(
                     "o": t.object,
                     "note": t.note_path,
                 }
-                entry_tokens = len(json.dumps(entry)) // 4
+                entry_tokens = estimate_tokens(entry)
                 if tokens_used + entry_tokens > token_budget:
                     break
                 triple_entries.append(entry)
                 tokens_used += entry_tokens
-                if sum(len(json.dumps(e)) // 4 for e in triple_entries) >= triple_budget:
+                if sum(estimate_tokens(e) for e in triple_entries) >= triple_budget:
                     break
             if triple_entries:
                 sections["triples"] = triple_entries
@@ -116,12 +118,12 @@ def build_vault_context(
                 "summary": r.summary or r.snippet[:200],
                 "score": round(r.score, 4),
             }
-            entry_tokens = len(json.dumps(entry)) // 4
+            entry_tokens = estimate_tokens(entry)
             if tokens_used + entry_tokens > token_budget:
                 break
             summary_entries.append(entry)
             tokens_used += entry_tokens
-            if sum(len(json.dumps(e)) // 4 for e in summary_entries) >= summary_budget:
+            if sum(estimate_tokens(e) for e in summary_entries) >= summary_budget:
                 break
         if summary_entries:
             sections["summaries"] = summary_entries
@@ -143,7 +145,7 @@ def build_vault_context(
                     "memory_count": s["memory_count"],
                 }
                 session_entries.append(entry)
-            entry_tokens = len(json.dumps(session_entries)) // 4
+            entry_tokens = estimate_tokens(session_entries)
             if tokens_used + entry_tokens <= token_budget:
                 sections["session_history"] = session_entries
                 tokens_used += entry_tokens

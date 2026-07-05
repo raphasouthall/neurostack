@@ -278,13 +278,22 @@ def _release_vault_lock(fh) -> None:
 
 
 @registry.tool(tags=["vault-files", "read"], annotations=_READ_ONLY)
-def vault_read_file(path: str) -> dict:
+def vault_read_file(path: str, offset: int = 0, limit: int | None = None) -> dict:
     """Read a markdown file from the vault.
+
+    By default returns the whole file. For a large note, pass `offset` and/or
+    `limit` (both measured in characters of the decoded text) to read a bounded
+    slice and page through it instead of pulling the whole body into context —
+    the footprint fix behind lean reference mode (issue #62). When a bound is
+    applied the result also carries `size_chars`, the `offset` used, and
+    `truncated` (True when content remains past the returned slice).
 
     Args:
         path: Relative path under vault_root (e.g. "home/projects/foo.md").
               Must end in .md. Absolute paths, '..', and dot-prefixed
               segments (.git, .obsidian, .trash, etc.) are rejected.
+        offset: Character offset to start reading from (default 0).
+        limit: Maximum characters to return (default None = read to the end).
     """
     vault_root = _vault_root()
     try:
@@ -295,19 +304,45 @@ def vault_read_file(path: str) -> dict:
     if not abs_path.is_file():
         return {"path": path, "exists": False, "size_bytes": 0, "content": ""}
 
+    if offset < 0 or (limit is not None and limit < 0):
+        return {
+            "path": path,
+            "exists": True,
+            "error": "offset and limit must be non-negative",
+        }
+
     data = abs_path.read_bytes()
+    text = data.decode("utf-8")
 
     # Implicit-feedback loop (issue #66): opening a note is a deliberate use, so
-    # attribute it back to the search that surfaced it. Opt-in, non-blocking, and
-    # writes only to the index DB (not the vault) — the read stays read-only.
-    from ..feedback import capture_use
-    capture_use([path])
+    # attribute it back to the search that surfaced it. Only the first page
+    # (offset 0) counts as an open; continuation reads of the same note aren't a
+    # fresh use and must not inflate the signal. Opt-in, non-blocking, and writes
+    # only to the index DB (not the vault) — the read stays read-only.
+    if offset == 0:
+        from ..feedback import capture_use
+        capture_use([path])
 
+    # Unbounded read: byte-for-byte the original response shape.
+    if offset == 0 and limit is None:
+        return {
+            "path": path,
+            "exists": True,
+            "size_bytes": len(data),
+            "content": text,
+        }
+
+    total_chars = len(text)
+    start = min(offset, total_chars)
+    end = total_chars if limit is None else min(start + limit, total_chars)
     return {
         "path": path,
         "exists": True,
         "size_bytes": len(data),
-        "content": data.decode("utf-8"),
+        "size_chars": total_chars,
+        "offset": start,
+        "content": text[start:end],
+        "truncated": end < total_chars,
     }
 
 
