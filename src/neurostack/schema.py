@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -98,6 +98,17 @@ CREATE TABLE IF NOT EXISTS graph_stats (
     in_degree INTEGER DEFAULT 0,
     out_degree INTEGER DEFAULT 0,
     pagerank REAL DEFAULT 0.0
+);
+
+-- Diff baselines: named snapshots of {path -> content_hash} for the change
+-- feed (issue #11). additions/deletions are only recoverable by comparing the
+-- current index against a stored baseline (notes has no created_at, hard deletes).
+CREATE TABLE IF NOT EXISTS diff_snapshots (
+    baseline TEXT NOT NULL,
+    path TEXT NOT NULL,
+    content_hash TEXT,
+    saved_at TEXT NOT NULL,
+    PRIMARY KEY (baseline, path)
 );
 
 -- Knowledge graph triples (Phase 2: structured encoding)
@@ -981,6 +992,17 @@ def _run_migrations(conn: sqlite3.Connection):
         )
         conn.commit()
         log.info("Migration to v19 complete.")
+
+    if current < 20:
+        log.info("Migrating schema v19 -> v20: adding diff_snapshots (issue #11)...")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS diff_snapshots ("
+            " baseline TEXT NOT NULL, path TEXT NOT NULL, content_hash TEXT,"
+            " saved_at TEXT NOT NULL, PRIMARY KEY (baseline, path))"
+        )
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (20)")
+        conn.commit()
+        log.info("Migration to v20 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
