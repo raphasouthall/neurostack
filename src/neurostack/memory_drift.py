@@ -31,9 +31,6 @@ import sqlite3
 # Detection takes the MAX similarity across a note's chunks, so drift only fires
 # when the memory is far from every chunk — conservative by design.
 DRIFT_THRESHOLD = 0.40
-# Skip re-inserting a drift row for the same (memory, note) seen this recently;
-# refresh the existing row instead so hot retrievals don't flood the log.
-DRIFT_DEBOUNCE_HOURS = 24
 
 
 def detect_memory_drift(
@@ -42,13 +39,14 @@ def detect_memory_drift(
     content: str,
     embedding,
     threshold: float = DRIFT_THRESHOLD,
-    debounce_hours: int = DRIFT_DEBOUNCE_HOURS,
+    link_index=None,
 ) -> list[dict]:
     """Detect drift of one memory from the notes it wiki-links.
 
-    `embedding` is the memory's stored embedding (numpy array). Returns the list
-    of drift records written/refreshed (for observability); empty when the
-    memory has no embedding, no resolvable links, or no drift.
+    `embedding` is the memory's stored embedding (numpy array). Pass `link_index`
+    (from graph._build_link_index) to reuse one index across a batch of memories.
+    Returns the drift records written/refreshed; empty when the memory has no
+    embedding, no resolvable links, or no drift.
     """
     if embedding is None or not content:
         return []
@@ -60,15 +58,17 @@ def detect_memory_drift(
     if not links:
         return []
 
-    all_paths = [r["path"] for r in conn.execute("SELECT path FROM notes")]
-    if not all_paths:
-        return []
-    index = _build_link_index(all_paths)
+    all_paths: list = []
+    if link_index is None:
+        all_paths = [r["path"] for r in conn.execute("SELECT path FROM notes")]
+        if not all_paths:
+            return []
+        link_index = _build_link_index(all_paths)
 
     resolved: list[tuple[str, str]] = []
     seen: set[str] = set()
     for link in links:
-        path = resolve_wiki_link(link, all_paths, _link_index=index)
+        path = resolve_wiki_link(link, all_paths, _link_index=link_index)
         if path and path not in seen:
             seen.add(path)
             resolved.append((link, path))
@@ -94,7 +94,7 @@ def detect_memory_drift(
         if distance <= threshold:
             continue
         context = json.dumps({"wiki_link": link, "max_sim": round(max_sim, 4)})
-        _write_drift(conn, memory_id, note_path, distance, context, debounce_hours)
+        _write_drift(conn, memory_id, note_path, distance, context)
         written.append(
             {"memory_id": memory_id, "note_path": note_path,
              "cosine_distance": round(distance, 4)}
@@ -108,17 +108,16 @@ def _write_drift(
     note_path: str,
     distance: float,
     context: str,
-    debounce_hours: int,
 ) -> None:
-    """Insert a memory_drift row, or refresh an existing unresolved one for the
-    same (memory, note) within the debounce window (keeping the strongest signal)."""
+    """Keep exactly one open drift row per (memory, note): refresh the existing
+    unresolved row with the stronger signal, or insert the first one. A new open
+    row is only created after the prior one is resolved (a genuinely new drift)."""
     existing = conn.execute(
         "SELECT error_id, cosine_distance FROM prediction_errors"
         " WHERE memory_id = ? AND note_path = ? AND error_type = 'memory_drift'"
         "   AND resolved_at IS NULL"
-        "   AND detected_at > datetime('now', ?)"
         " ORDER BY detected_at DESC LIMIT 1",
-        (memory_id, note_path, f"-{int(debounce_hours)} hours"),
+        (memory_id, note_path),
     ).fetchone()
 
     if existing:
@@ -143,7 +142,8 @@ def _write_drift(
 def check_memory_drift(conn: sqlite3.Connection, memories) -> None:
     """Run drift detection for a batch of just-retrieved memories. Non-blocking:
     any failure (no numpy in lite mode, embedder blobs absent, etc.) is swallowed
-    so retrieval is never disrupted."""
+    so retrieval is never disrupted. The wiki-link index is built once and reused
+    across the batch."""
     try:
         ids = [m.memory_id for m in memories]
         if not ids:
@@ -156,12 +156,19 @@ def check_memory_drift(conn: sqlite3.Connection, memories) -> None:
         ).fetchall()
         if not rows:
             return
+
         from .embedder import blob_to_embedding
+        from .graph import _build_link_index
+
+        all_paths = [r["path"] for r in conn.execute("SELECT path FROM notes")]
+        if not all_paths:
+            return
+        link_index = _build_link_index(all_paths)
 
         for r in rows:
             detect_memory_drift(
                 conn, r["memory_id"], r["content"],
-                blob_to_embedding(r["embedding"]),
+                blob_to_embedding(r["embedding"]), link_index=link_index,
             )
     except Exception:
         pass  # drift detection must never disrupt retrieval

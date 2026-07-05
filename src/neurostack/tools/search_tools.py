@@ -644,10 +644,12 @@ def vault_prediction_errors(
     conn = get_db(DB_PATH)
 
     if resolve:
+        # Only note-centric rows are resolved by path; memory drift is reconciled
+        # through the memory lifecycle (update/forget), not by note path.
         conn.execute(
             """
             UPDATE prediction_errors SET resolved_at = datetime('now')
-            WHERE note_path IN ({}) AND resolved_at IS NULL
+            WHERE note_path IN ({}) AND memory_id IS NULL AND resolved_at IS NULL
             """.format(",".join("?" * len(resolve))),
             resolve,
         )
@@ -714,9 +716,10 @@ def vault_prediction_errors(
             total_params + [PREDICTION_ERROR_MIN_OCCURRENCES],
         ).fetchone()[0]
 
-    # Memory-centric drift rows (issue #38): one debounced row per (memory, note),
+    # Memory-centric drift rows (issue #38): one open row per (memory, note),
     # no occurrence threshold, carrying the memory content to act on.
     memory_errors: list = []
+    total_memories = 0
     if memory_id is not None or error_type in (None, "memory_drift"):
         mwhere = (
             "WHERE pe.resolved_at IS NULL AND pe.memory_id IS NOT NULL"
@@ -726,6 +729,9 @@ def vault_prediction_errors(
         if memory_id is not None:
             mwhere += " AND pe.memory_id = ?"
             mparams.append(memory_id)
+        total_memories = conn.execute(
+            f"SELECT COUNT(*) FROM prediction_errors pe {mwhere}", mparams
+        ).fetchone()[0]
         mrows = conn.execute(
             f"""
             SELECT pe.memory_id, pe.note_path, pe.cosine_distance, pe.context,
@@ -758,7 +764,7 @@ def vault_prediction_errors(
 
     return {
         "total_flagged_notes": total_notes,
-        "total_flagged_memories": len(memory_errors),
+        "total_flagged_memories": total_memories,
         "showing": len(results) + len(memory_errors),
         "errors": results + memory_errors,
     }

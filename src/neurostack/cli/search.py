@@ -861,7 +861,7 @@ def cmd_prediction_errors(args):
             "UPDATE prediction_errors"
             " SET resolved_at = datetime('now')"
             f" WHERE note_path IN ({placeholders})"
-            " AND resolved_at IS NULL",
+            " AND memory_id IS NULL AND resolved_at IS NULL",
             paths,
         )
         conn.commit()
@@ -871,7 +871,9 @@ def cmd_prediction_errors(args):
         print(f"Resolved {len(paths)} note(s).")
         return
 
-    where = "WHERE resolved_at IS NULL"
+    # Note-centric only: memory_drift rows (memory_id set) are surfaced by the
+    # vault_prediction_errors MCP tool, not this aggregated note view (issue #38).
+    where = "WHERE resolved_at IS NULL AND memory_id IS NULL"
     params = []
     if args.type:
         where += " AND error_type = ?"
@@ -899,7 +901,7 @@ def cmd_prediction_errors(args):
         params + [PREDICTION_ERROR_MIN_OCCURRENCES, args.limit],
     ).fetchall()
 
-    total_where = "WHERE resolved_at IS NULL"
+    total_where = "WHERE resolved_at IS NULL AND memory_id IS NULL"
     total_params = []
     if ws:
         total_where += " AND note_path LIKE ? || '%'"

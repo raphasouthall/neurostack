@@ -389,10 +389,12 @@ def update_memory(
     params.append(memory_id)
     conn.execute(sql, params)
 
-    # Editing a memory IS reconciliation: its content just changed, so any open
-    # drift flag against the old content no longer holds (issue #38).
-    from .memory_drift import resolve_memory_drift
-    resolve_memory_drift(conn, memory_id)
+    # A content edit changes the memory's embedding, so any open drift flag
+    # against the old content no longer holds — reconcile it (issue #38). A
+    # tags/TTL/workspace-only edit leaves the embedding (and the drift) intact.
+    if content is not None:
+        from .memory_drift import resolve_memory_drift
+        resolve_memory_drift(conn, memory_id)
     conn.commit()
 
     updated_row = conn.execute(

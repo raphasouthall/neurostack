@@ -128,15 +128,55 @@ class TestResolutionAndLifecycle:
         db.commit()
         assert _unresolved_count(db) == 0
 
-    def test_update_memory_resolves_drift(self, db):
+    def test_tags_only_update_keeps_drift(self, db):
+        # A tags-only edit leaves the embedding unchanged, so the drift still
+        # holds and must NOT be resolved.
         from neurostack.memories import update_memory
 
         _add_note(db, "work/project.md", "X was resolved.", _vec(1, 0, 0, 0))
         mid = _add_memory(db, CONTENT, _vec(0, 1, 0, 0))
         detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0))
-        # tags-only update → no re-embed (no embedder needed) but still reconciles
-        update_memory(db, mid, tags=["done"])
+        update_memory(db, mid, tags=["seen"])
+        assert _unresolved_count(db) == 1
+
+    def test_content_update_resolves_drift(self, db, monkeypatch):
+        # A content edit re-embeds the memory, so the drift is reconciled.
+        from neurostack import embedder
+        from neurostack.memories import update_memory
+
+        monkeypatch.setattr(embedder, "get_embedding",
+                            lambda *a, **k: _vec(1, 0, 0, 0))
+        _add_note(db, "work/project.md", "X was resolved.", _vec(1, 0, 0, 0))
+        mid = _add_memory(db, CONTENT, _vec(0, 1, 0, 0))
+        detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0))
+        update_memory(db, mid, content="X was resolved.")
         assert _unresolved_count(db) == 0
+
+    def test_stronger_signal_updates_in_place(self, db):
+        _add_note(db, "work/project.md", "X was resolved.", _vec(1, 0, 0, 0))
+        mid = _add_memory(db, CONTENT, _vec(0, 1, 0, 0))
+        detect_memory_drift(db, mid, CONTENT, _vec(0.5, 0.866, 0, 0))  # dist ~0.5
+        d1 = db.execute(
+            "SELECT cosine_distance FROM prediction_errors"
+        ).fetchone()["cosine_distance"]
+        detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0))  # dist 1.0, stronger
+        assert _drift_count(db) == 1  # updated in place, no duplicate
+        d2 = db.execute(
+            "SELECT cosine_distance FROM prediction_errors"
+        ).fetchone()["cosine_distance"]
+        assert d2 > d1
+
+    def test_new_open_row_after_resolution(self, db):
+        # Dedup only suppresses a second OPEN row; once resolved, a genuinely new
+        # drift event opens a fresh row.
+        _add_note(db, "work/project.md", "X was resolved.", _vec(1, 0, 0, 0))
+        mid = _add_memory(db, CONTENT, _vec(0, 1, 0, 0))
+        detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0))
+        resolve_memory_drift(db, mid)
+        db.commit()
+        detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0))
+        assert _unresolved_count(db) == 1  # a fresh open row
+        assert _drift_count(db) == 2       # one resolved + one open
 
     def test_forget_memory_cleans_drift(self, db):
         from neurostack.memories import forget_memory
