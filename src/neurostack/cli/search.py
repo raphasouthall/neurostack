@@ -447,6 +447,56 @@ def cmd_graph_analysis(args):
         print("   (none)")
 
 
+def cmd_diff(args):
+    import sys
+
+    from ..diff import compute_diff, save_checkpoint
+    from ..schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    result = compute_diff(conn, since=args.since, baseline=args.baseline)
+    if args.checkpoint:
+        if args.since:
+            print(
+                "Note: --checkpoint is ignored in date mode (--since); "
+                "baselines apply to baseline mode only.",
+                file=sys.stderr,
+            )
+        else:
+            result["checkpoint"] = save_checkpoint(conn, baseline=args.baseline)
+
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+        return
+
+    if result["mode"] == "since_date":
+        print(f"\nChanged since {result['since']} ({result['changed_count']}):")
+        for c in result["changed"]:
+            print(f"   ~ {c['title']} ({c['path']})  {c['updated_at']}")
+        print("   (date mode: additions + modifications combined; "
+              "deletions need a baseline)")
+        return
+
+    if not result["has_baseline"]:
+        print(f"\nNo baseline '{result['baseline']}' saved yet — "
+              f"everything reads as new. Run with --checkpoint to set one.")
+    else:
+        print(f"\nChanges since baseline '{result['baseline']}' "
+              f"(saved {result['baseline_saved_at']}):")
+    print(f"   + {result['added_count']} added, "
+          f"~ {result['modified_count']} modified, "
+          f"- {result['deleted_count']} deleted")
+    for a in result["added"]:
+        print(f"   + {a['title']} ({a['path']})")
+    for m in result["modified"]:
+        print(f"   ~ {m['title']} ({m['path']})")
+    for d in result["deleted"]:
+        print(f"   - {d['path']}")
+    if result.get("checkpoint"):
+        ck = result["checkpoint"]
+        print(f"\nCheckpoint saved: {ck['notes']} notes @ {ck['saved_at']}")
+
+
 def cmd_related(args):
     from ..related import find_related
     results = find_related(

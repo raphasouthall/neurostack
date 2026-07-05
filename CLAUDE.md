@@ -50,6 +50,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack summary "note.md"` | Get pre-computed AI summary of a note |
 | `neurostack graph "note.md"` | Wiki-link neighborhood with PageRank scores. `--depth N` |
 | `neurostack graph-analysis` | Structural gaps (related but unlinked) + bridge notes. `--top-k N`, `--min-shared N` |
+| `neurostack diff` | Change feed since a baseline or date. `--since DATE`, `--baseline NAME`, `--checkpoint` |
 | `neurostack related "note.md"` | Find semantically similar notes by embedding distance |
 | `neurostack communities query "question"` | GraphRAG global queries across topic clusters |
 | `neurostack context "task description"` | Assemble task-scoped context for session recovery |
@@ -119,7 +120,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack serve` | Start MCP server. `--transport stdio\|sse\|http`, `--host`, `--port` |
 | `neurostack api` | Start OpenAI-compatible HTTP API. `--host`, `--port` |
 
-## MCP Tools (25 tools)
+## MCP Tools (27 tools)
 
 ### Search & Retrieval
 - `vault_search(query, top_k, mode, depth, context, workspace, max_tokens, reference_only)` - Hybrid search with tiered depth; `max_tokens` caps full-depth/reference output, `reference_only` returns lean {path, score, snippet} + fetch hint (issue #62)
@@ -135,6 +136,8 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 - `vault_context(task, token_budget, workspace, include_memories, include_triples)` - Task-scoped context recovery
 - `session_brief(workspace)` - Compact session briefing
 - `vault_stats()` - Index health
+- `vault_diff(since, baseline)` - Change feed: added/modified/deleted notes vs a named baseline, or notes changed since a date (issue #11)
+- `vault_checkpoint(baseline)` - Save current vault state as a named diff baseline
 - `vault_record_usage(note_paths)` - Track note hotness
 - `vault_prediction_errors(error_type, limit, resolve, workspace)` - Stale note detection
 

@@ -465,6 +465,46 @@ def vault_communities(
     return result
 
 
+@registry.tool(tags=["search", "diff"], annotations=_READ_ONLY)
+def vault_diff(since: str = None, baseline: str = "default") -> dict:
+    """Show what changed in the vault: additions, modifications, deletions.
+
+    Two modes:
+    - Baseline (default): diff the current index against a named stored baseline
+      (saved via vault_checkpoint). Reports added / modified / deleted notes —
+      deletions and additions are only visible this way. `has_baseline` is False
+      until you checkpoint at least once (until then every note reads as added).
+    - Date (`since` given): notes with `updated_at` after an ISO date/datetime.
+      Combines additions and modifications; cannot surface deletions.
+
+    Args:
+        since: Optional ISO date/datetime (e.g. "2026-07-01") to enable date mode.
+        baseline: Named baseline to diff against in baseline mode (default "default").
+    """
+    from ..diff import compute_diff
+    from ..schema import DB_PATH, get_db
+
+    return compute_diff(get_db(DB_PATH), since=since, baseline=baseline)
+
+
+@registry.tool(tags=["search", "diff"], annotations=_WRITE_ADDITIVE)
+def vault_checkpoint(baseline: str = "default") -> dict:
+    """Record the current vault state as a named diff baseline.
+
+    Saves `{path -> content_hash}` for every indexed note under `baseline`,
+    overwriting any previous snapshot of that name. A later vault_diff(baseline=…)
+    then reports what changed since this checkpoint. Use distinct names for
+    independent cursors (e.g. one per autonomous loop).
+
+    Args:
+        baseline: Baseline name to save under (default "default").
+    """
+    from ..diff import save_checkpoint
+    from ..schema import DB_PATH, get_db
+
+    return save_checkpoint(get_db(DB_PATH), baseline=baseline)
+
+
 @registry.tool(tags=["search", "stats"], annotations=_READ_ONLY)
 def vault_stats() -> dict:
     """Get index health: note count, embedding coverage, graph stats, triple stats."""
