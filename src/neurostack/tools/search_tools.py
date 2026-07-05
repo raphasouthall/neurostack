@@ -342,6 +342,32 @@ def vault_graph(note: str, depth: int = 1, workspace: str = None) -> dict:
     }
 
 
+@registry.tool(tags=["search", "graph"], annotations=_READ_ONLY)
+def vault_graph_analysis(top_k: int = 10, min_shared: int = 2) -> dict:
+    """Find structural gaps and bridge notes in the wiki-link graph.
+
+    Pure structural analysis of the link graph — no embeddings, no LLM:
+    - `gaps`: unlinked note pairs that share many neighbours, ranked by
+      Adamic-Adar (rare shared neighbours count for more). These are candidate
+      links worth adding — notes that discuss overlapping topics but aren't
+      connected.
+    - `bridges`: notes that hold the graph together, ranked by betweenness
+      centrality. Each flags whether removing it fragments the graph (an
+      articulation point) and into how many pieces — the notes whose loss would
+      most isolate parts of the vault.
+    - `stats`: note count, link count, connected components, isolated notes.
+
+    Args:
+        top_k: Max gaps and max bridges to return (default 10 each).
+        min_shared: Minimum shared neighbours for a gap candidate (default 2).
+    """
+    from ..graph_analysis import analyze_graph
+    from ..schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    return analyze_graph(conn, top_k=top_k, min_shared=min_shared)
+
+
 @registry.tool(tags=["search", "semantic"], annotations=_READ_ONLY)
 def vault_related(note: str, top_k: int = 10, workspace: str = None) -> dict:
     """Find semantically related notes using embedding similarity.

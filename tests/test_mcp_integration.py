@@ -138,6 +138,16 @@ def test_vault_search_max_tokens_applies_to_tiered_depth(mcp_vault):
     json.dumps(capped)
 
 
+def test_vault_graph_analysis_structure(mcp_vault):
+    # Issue #12: gaps + bridges + stats, JSON-serialisable over the wire.
+    result = _registry().call("vault_graph_analysis", top_k=5)
+    assert set(result) == {"stats", "gaps", "bridges"}
+    assert {"notes", "edges", "components", "isolated"} <= set(result["stats"])
+    assert isinstance(result["gaps"], list)
+    assert isinstance(result["bridges"], list)
+    json.dumps(result)
+
+
 def test_vault_stats_structure(mcp_vault):
     result = _registry().call("vault_stats")
     for key in ("notes", "chunks", "embedded", "summaries", "graph_edges",
