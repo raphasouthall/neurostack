@@ -542,8 +542,37 @@ def _extract_tags(text: str) -> list[str]:
     return sorted(tags)[:5]
 
 
-def _is_duplicate(conn, content: str, entity_type: str) -> bool:
-    """Check if a substantially similar memory already exists via FTS5."""
+# Cosine similarity at/above which two same-type memories are treated as
+# duplicates during harvest (issue #36).
+DEDUP_COSINE_THRESHOLD = 0.88
+
+
+def _is_duplicate(
+    conn, content: str, entity_type: str, embed_url: str | None = None
+) -> bool:
+    """True if a substantially similar memory already exists.
+
+    Prefers semantic (cosine) similarity so paraphrases with different wording
+    are caught — FTS5's strict all-terms match lets "three Harrods supply-chain
+    paraphrases" through as distinct (issue #36). Keeps the FTS5 keyword floor as
+    a fallback so dedup still works when embeddings are unavailable (lite mode /
+    embedder down) rather than silently switching off.
+    """
+    try:
+        from .memories import find_similar_memories
+
+        if find_similar_memories(
+            conn, content, entity_type=entity_type,
+            threshold=DEDUP_COSINE_THRESHOLD, limit=1, embed_url=embed_url,
+        ):
+            return True
+    except Exception:
+        pass
+    return _fts_duplicate(conn, content, entity_type)
+
+
+def _fts_duplicate(conn, content: str, entity_type: str) -> bool:
+    """FTS5 keyword-overlap duplicate check — the pre-cosine floor."""
     words = re.findall(r"\b\w{4,}\b", content.lower())
     if not words:
         return False
@@ -763,7 +792,7 @@ def harvest_sessions(
             record = {"content": summary, "entity_type": etype, "tags": tags,
                       "ttl_hours": ttl, "provider": session.provider}
 
-            if _is_duplicate(conn, summary, etype):
+            if _is_duplicate(conn, summary, etype, embed_url=url):
                 record["status"] = "skipped (duplicate)"
                 skipped.append(record)
                 continue
