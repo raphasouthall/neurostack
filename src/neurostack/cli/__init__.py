@@ -22,6 +22,7 @@ from .search import (
     cmd_feedback,
     cmd_folder_summaries,
     cmd_graph,
+    cmd_graph_analysis,
     cmd_prediction_errors,
     cmd_record_usage,
     cmd_related,
@@ -561,6 +562,18 @@ def main():
         "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_graph)
+
+    # graph-analysis
+    p = sub.add_parser(
+        "graph-analysis",
+        help="Structural gaps (unlinked but related) and bridge notes",
+    )
+    p.add_argument("--top-k", type=int, default=10, help="Max gaps and bridges")
+    p.add_argument(
+        "--min-shared", type=int, default=2,
+        help="Minimum shared neighbours for a gap candidate",
+    )
+    p.set_defaults(func=cmd_graph_analysis)
 
     # related
     p = sub.add_parser("related", help="Find semantically related notes")
