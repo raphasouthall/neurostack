@@ -554,9 +554,11 @@ def _is_duplicate(
 
     Prefers semantic (cosine) similarity so paraphrases with different wording
     are caught — FTS5's strict all-terms match lets "three Harrods supply-chain
-    paraphrases" through as distinct (issue #36). Keeps the FTS5 keyword floor as
-    a fallback so dedup still works when embeddings are unavailable (lite mode /
-    embedder down) rather than silently switching off.
+    paraphrases" through as distinct (issue #36). The FTS5 keyword match stays as
+    a floor: it runs whenever the cosine check doesn't flag a duplicate — both
+    when embeddings are unavailable (lite mode / embedder down) and when a
+    keyword-overlapping pair falls below the cosine threshold — so dedup never
+    silently switches off.
     """
     try:
         from .memories import find_similar_memories
