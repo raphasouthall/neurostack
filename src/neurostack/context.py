@@ -48,6 +48,9 @@ def build_vault_context(
                 conn, query=task, workspace=workspace,
                 limit=10, embed_url=url,
             )
+            # Memory drift detection (issue #38), non-blocking.
+            from .memory_drift import check_memory_drift
+            check_memory_drift(conn, memories)
             mem_entries = []
             for m in memories:
                 if m.score and m.score < 0.3:

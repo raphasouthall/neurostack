@@ -196,7 +196,9 @@ def test_vault_prediction_errors_structure(mcp_vault):
 
     result = _registry().call("vault_prediction_errors")
 
-    assert set(result) == {"total_flagged_notes", "showing", "errors"}
+    assert set(result) == {
+        "total_flagged_notes", "total_flagged_memories", "showing", "errors"
+    }
     assert result["total_flagged_notes"] == 1
     assert result["showing"] == 1
     err = result["errors"][0]

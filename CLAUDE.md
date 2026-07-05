@@ -139,7 +139,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 - `vault_diff(since, baseline)` - Change feed: added/modified/deleted notes vs a named baseline, or notes changed since a date (issue #11)
 - `vault_checkpoint(baseline)` - Save current vault state as a named diff baseline
 - `vault_record_usage(note_paths)` - Track note hotness
-- `vault_prediction_errors(error_type, limit, resolve, workspace)` - Stale note detection
+- `vault_prediction_errors(error_type, limit, resolve, workspace, memory_id)` - Stale-note detection + memory drift: memories that no longer match the notes they reference (`error_type="memory_drift"`, issue #38)
 
 ### Memories
 - `vault_remember(content, tags, entity_type, source_agent, workspace, ttl_hours, session_id)` - Save memory
