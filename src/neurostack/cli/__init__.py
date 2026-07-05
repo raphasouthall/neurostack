@@ -18,6 +18,7 @@ from .search import (
     cmd_context,
     cmd_cooccurrence,
     cmd_decay,
+    cmd_diff,
     cmd_eval,
     cmd_feedback,
     cmd_folder_summaries,
@@ -562,6 +563,23 @@ def main():
         "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_graph)
+
+    # diff
+    p = sub.add_parser(
+        "diff", help="Show vault changes since a baseline or a date"
+    )
+    p.add_argument(
+        "--since", default=None,
+        help="ISO date/datetime; date mode (added + modified, no deletions)",
+    )
+    p.add_argument(
+        "--baseline", default="default", help="Named baseline to diff against"
+    )
+    p.add_argument(
+        "--checkpoint", action="store_true",
+        help="Save current state as the baseline after diffing",
+    )
+    p.set_defaults(func=cmd_diff)
 
     # graph-analysis
     p = sub.add_parser(

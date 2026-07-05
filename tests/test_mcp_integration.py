@@ -138,6 +138,23 @@ def test_vault_search_max_tokens_applies_to_tiered_depth(mcp_vault):
     json.dumps(capped)
 
 
+def test_vault_diff_and_checkpoint(mcp_vault):
+    # Issue #11: no baseline → all added; checkpoint → next diff is clean.
+    reg = _registry()
+    d0 = reg.call("vault_diff")
+    assert d0["mode"] == "baseline"
+    assert d0["has_baseline"] is False
+    assert d0["added_count"] == 4  # fixture vault: 3 notes + index.md
+
+    ck = reg.call("vault_checkpoint")
+    assert ck["notes"] == 4
+
+    d1 = reg.call("vault_diff")
+    assert d1["has_baseline"] is True
+    assert d1["added_count"] == d1["modified_count"] == d1["deleted_count"] == 0
+    json.dumps(d1)
+
+
 def test_vault_graph_analysis_structure(mcp_vault):
     # Issue #12: gaps + bridges + stats, JSON-serialisable over the wire.
     result = _registry().call("vault_graph_analysis", top_k=5)
