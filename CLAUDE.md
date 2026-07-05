@@ -49,6 +49,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack triples "query"` | Search knowledge graph triples (subject-predicate-object facts) |
 | `neurostack summary "note.md"` | Get pre-computed AI summary of a note |
 | `neurostack graph "note.md"` | Wiki-link neighborhood with PageRank scores. `--depth N` |
+| `neurostack graph-analysis` | Structural gaps (related but unlinked) + bridge notes. `--top-k N`, `--min-shared N` |
 | `neurostack related "note.md"` | Find semantically similar notes by embedding distance |
 | `neurostack communities query "question"` | GraphRAG global queries across topic clusters |
 | `neurostack context "task description"` | Assemble task-scoped context for session recovery |
@@ -125,6 +126,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 - `vault_ask(question, top_k, workspace)` - RAG Q&A with citations
 - `vault_summary(path_or_query)` - Pre-computed note summaries
 - `vault_graph(note, depth, workspace)` - Wiki-link neighborhood with PageRank
+- `vault_graph_analysis(top_k, min_shared)` - Structural gaps (unlinked but related pairs) + bridge notes (betweenness/articulation points) over the link graph (issue #12)
 - `vault_related(note, top_k, workspace)` - Semantically similar notes
 - `vault_triples(query, top_k, mode, workspace)` - Knowledge graph triples
 - `vault_communities(query, top_k, level, map_reduce, workspace)` - GraphRAG global queries

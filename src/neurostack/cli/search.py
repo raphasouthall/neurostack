@@ -411,6 +411,42 @@ def cmd_graph(args):
                 print(f"     {n.summary[:100]}")
 
 
+def cmd_graph_analysis(args):
+    from ..graph_analysis import analyze_graph
+    from ..schema import DB_PATH, get_db
+
+    result = analyze_graph(
+        get_db(DB_PATH), top_k=args.top_k, min_shared=args.min_shared
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+        return
+
+    s = result["stats"]
+    print(
+        f"\nGraph: {s['notes']} notes, {s['edges']} links, "
+        f"{s['components']} components, {s['isolated']} isolated"
+    )
+
+    gaps = result["gaps"]
+    print(f"\n\U0001f573️  Gaps — related but unlinked (top {len(gaps)}):")
+    for g in gaps:
+        print(
+            f"   {g['a_title']} ↔ {g['b_title']}  "
+            f"(shared {g['shared_neighbors']}, score {g['score']})"
+        )
+    if not gaps:
+        print("   (none)")
+
+    bridges = result["bridges"]
+    print(f"\n\U0001f309 Bridges — hold the graph together (top {len(bridges)}):")
+    for b in bridges:
+        tag = f"  [cut → {b['fragments_if_removed']} pieces]" if b["articulation"] else ""
+        print(f"   {b['title']}  (betweenness {b['betweenness']}){tag}")
+    if not bridges:
+        print("   (none)")
+
+
 def cmd_related(args):
     from ..related import find_related
     results = find_related(
