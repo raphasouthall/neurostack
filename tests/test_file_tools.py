@@ -145,6 +145,62 @@ class TestReadFile:
         assert result["exists"] is False
         assert "error" in result
 
+    def test_unbounded_read_has_no_paging_keys(self, tmp_vault_repo):
+        # Issue #62: the default call must stay byte-for-byte unchanged.
+        target = tmp_vault_repo / "home" / "note.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("hello world\n")
+        result = vault_read_file(path="home/note.md")
+        assert set(result) == {"path", "exists", "size_bytes", "content"}
+
+    def test_bounded_read_offset_and_limit(self, tmp_vault_repo):
+        target = tmp_vault_repo / "home" / "big.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("0123456789")
+        result = vault_read_file(path="home/big.md", offset=2, limit=3)
+        assert result["content"] == "234"
+        assert result["offset"] == 2
+        assert result["size_chars"] == 10
+        assert result["size_bytes"] == 10
+        assert result["truncated"] is True
+
+    def test_bounded_read_to_end_not_truncated(self, tmp_vault_repo):
+        target = tmp_vault_repo / "home" / "big.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("0123456789")
+        result = vault_read_file(path="home/big.md", offset=7, limit=100)
+        assert result["content"] == "789"
+        assert result["truncated"] is False
+
+    def test_bounded_read_pages_reassemble_to_whole(self, tmp_vault_repo):
+        body = "".join(str(i % 10) for i in range(250))
+        target = tmp_vault_repo / "home" / "long.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(body)
+        pages, offset = [], 0
+        while True:
+            page = vault_read_file(path="home/long.md", offset=offset, limit=100)
+            pages.append(page["content"])
+            if not page["truncated"]:
+                break
+            offset += len(page["content"])
+        assert "".join(pages) == body
+
+    def test_negative_params_rejected(self, tmp_vault_repo):
+        target = tmp_vault_repo / "home" / "note.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("hello")
+        assert "error" in vault_read_file(path="home/note.md", offset=-1)
+        assert "error" in vault_read_file(path="home/note.md", limit=-5)
+
+    def test_offset_past_end_returns_empty(self, tmp_vault_repo):
+        target = tmp_vault_repo / "home" / "note.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("short")
+        result = vault_read_file(path="home/note.md", offset=999)
+        assert result["content"] == ""
+        assert result["truncated"] is False
+
 
 # --------------------------- vault_list_files --------------------------------
 
