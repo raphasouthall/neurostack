@@ -21,6 +21,8 @@ NeuroStack has multiple retrieval tools. Pick the right one:
 | vault_memories | Search agent-written memories | Cheap |
 | vault_search(reference_only=True) | Broad scan — {path, score, snippet} only, no bodies | Very cheap |
 | vault_read_file(path, offset, limit) | Read a bounded slice of one note | Sized to `limit` |
+| vault_graph_analysis(top_k) | Structural gaps (unlinked but related) + bridge notes | Moderate |
+| vault_diff(since, baseline) / vault_checkpoint | What changed since a baseline or date | Cheap |
 
 ## Decision tree
 
@@ -33,6 +35,8 @@ NeuroStack has multiple retrieval tools. Pick the right one:
 7. Want similar notes? -> vault_related
 8. Many likely hits but you'll open only 1-2? -> vault_search(reference_only=True), then read the winner
 9. Context budget tight? -> add max_tokens=N to vault_search
+10. Curating the graph (what should be linked, what's a fragile hub)? -> vault_graph_analysis
+11. Orienting at session start / resuming a loop (what changed)? -> vault_diff since your last vault_checkpoint
 
 ## Lean retrieval (cut context footprint)
 
