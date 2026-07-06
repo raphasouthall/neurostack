@@ -11,11 +11,29 @@ vault_stats()
 ```
 Shows note count, chunk count, memory count, embedding coverage.
 
-## Find retrieval issues
+## Find retrieval issues + drifted memories
 ```
 vault_prediction_errors()
+vault_prediction_errors(error_type="memory_drift")
 ```
-Notes that were retrieved but had low semantic relevance - may need updating or re-indexing.
+Note-centric rows: notes retrieved with low semantic relevance — may need updating or re-indexing.
+Memory drift (issue #38): agent-written memories that no longer match the notes they reference
+(e.g. a memory says "X is a blocker" but the note now records X as done). Reconcile by
+`vault_update_memory` (edit the content) or `vault_forget`.
+
+## Find structural gaps + fragile hubs
+```
+vault_graph_analysis(top_k=10)
+```
+Gaps: note pairs that share many neighbours but aren't linked — candidate links to add.
+Bridges: hub notes whose removal fragments the graph (articulation points) — the load-bearing
+connectors worth protecting or reinforcing.
+
+## See what changed since last audit
+```
+vault_checkpoint(baseline="audit")   # once, to set a marker
+vault_diff(baseline="audit")          # later, to see added/modified/deleted notes since
+```
 
 ## Check what's stale
 ```
