@@ -10,6 +10,42 @@ from pathlib import Path
 def cmd_index(args):
     from ..schema import DB_PATH, get_db
     from ..watcher import full_index
+    vault_root = Path(args.vault)
+
+    # Incremental: index only the notes git says changed since the given ref, and
+    # skip the whole-vault global rebuild. Falls back to a full index if git can't
+    # resolve the ref (e.g. a fresh clone with no matching history).
+    changed_since = getattr(args, "changed_since", None)
+    if changed_since:
+        import subprocess
+
+        from ..watcher import incremental_index
+
+        def _git_files(diff_filter):
+            return subprocess.run(
+                ["git", "-C", str(vault_root), "diff", "--name-only",
+                 f"--diff-filter={diff_filter}", changed_since, "HEAD", "--", "*.md"],
+                capture_output=True, text=True,
+            )
+
+        r_changed = _git_files("ACMR")
+        if r_changed.returncode != 0:
+            print(f"  changed-since: git diff failed ({r_changed.stderr.strip()}); "
+                  "falling back to a full index.")
+        else:
+            r_deleted = _git_files("D")
+            changed = [vault_root / p for p in r_changed.stdout.split("\n") if p.strip()]
+            deleted = [p for p in r_deleted.stdout.split("\n") if p.strip()]
+            n, d = incremental_index(
+                changed, deleted, vault_root=vault_root,
+                embed_url=args.embed_url, summarize_url=args.summarize_url,
+                skip_summary=args.skip_summary, skip_triples=args.skip_triples,
+            )
+            print(f"Incremental index (since {changed_since}): "
+                  f"{n} note(s) updated, {d} removed. "
+                  "Global graph/co-occurrence/vec rebuild deferred to the next full index.")
+            return
+
     pruned = full_index(
         vault_root=Path(args.vault),
         embed_url=args.embed_url,

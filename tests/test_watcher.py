@@ -252,3 +252,70 @@ class TestReindexPreservesNoteMetadata:
             "SELECT content FROM chunks WHERE note_path='n.md'"
         ).fetchall()
         assert any("EDITED" in c["content"] for c in chunks)
+
+
+class TestIncrementalIndex:
+    """incremental_index processes only the changed/deleted notes and skips the
+    whole-vault global rebuild (graph/co-occurrence/vec) — the cheap path brain-sync
+    uses so a small sync doesn't reindex the entire vault."""
+
+    def _write(self, path, body):
+        path.write_text(
+            "---\ndate: 2026-01-01\ntags: [x]\ntype: permanent\n---\n\n# N\n\n" + body + "\n"
+        )
+
+    def test_indexes_changed_deletes_removed_skips_globals(
+        self, in_memory_db, tmp_path, monkeypatch
+    ):
+        import neurostack.watcher as w
+
+        # No real embedder needed to prove routing/CRUD behaviour.
+        monkeypatch.setattr(w, "get_embeddings_batch", lambda texts, **k: [None] * len(texts))
+        conn = in_memory_db
+
+        # A note already in the index that the sync will delete.
+        gone = tmp_path / "gone.md"
+        self._write(gone, "obsolete body")
+        w.index_single_note(gone, tmp_path, conn, skip_summary=True, skip_triples=True)
+        assert conn.execute("SELECT 1 FROM notes WHERE path='gone.md'").fetchone()
+
+        # A new/changed note on disk that incremental_index should pick up.
+        changed = tmp_path / "changed.md"
+        self._write(changed, "fresh body content")
+
+        n_indexed, n_deleted = w.incremental_index(
+            [changed], deleted=["gone.md"], vault_root=tmp_path,
+            skip_summary=True, skip_triples=True, conn=conn,
+        )
+
+        assert (n_indexed, n_deleted) == (1, 1)
+        # changed note indexed, with chunks
+        assert conn.execute("SELECT 1 FROM notes WHERE path='changed.md'").fetchone()
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM chunks WHERE note_path='changed.md'"
+        ).fetchone()["c"] > 0
+        # deleted note removed, and the FK cascade dropped its chunks
+        assert conn.execute("SELECT 1 FROM notes WHERE path='gone.md'").fetchone() is None
+        assert conn.execute(
+            "SELECT COUNT(*) c FROM chunks WHERE note_path='gone.md'"
+        ).fetchone()["c"] == 0
+        # globals deliberately deferred: no wiki-link graph was rebuilt this run
+        assert conn.execute("SELECT COUNT(*) c FROM graph_edges").fetchone()["c"] == 0
+
+    def test_unchanged_note_is_a_noop(self, in_memory_db, tmp_path, monkeypatch):
+        import neurostack.watcher as w
+
+        monkeypatch.setattr(w, "get_embeddings_batch", lambda texts, **k: [None] * len(texts))
+        conn = in_memory_db
+        note = tmp_path / "n.md"
+        self._write(note, "stable body")
+        w.index_single_note(note, tmp_path, conn, skip_summary=True, skip_triples=True)
+        before = conn.execute("SELECT updated_at FROM notes WHERE path='n.md'").fetchone()[0]
+
+        # Re-run over the same unchanged file: content-hash short-circuit → no rewrite.
+        n_indexed, n_deleted = w.incremental_index(
+            [note], vault_root=tmp_path, skip_summary=True, skip_triples=True, conn=conn,
+        )
+        after = conn.execute("SELECT updated_at FROM notes WHERE path='n.md'").fetchone()[0]
+        assert n_indexed == 1 and n_deleted == 0
+        assert before == after, "unchanged note must not be rewritten"
