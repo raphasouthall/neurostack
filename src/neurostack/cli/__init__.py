@@ -382,6 +382,12 @@ def main():
         help="Keep notes whose files were deleted from disk "
              "(default: prune orphaned notes from the index)",
     )
+    p.add_argument(
+        "--changed-since", default=None, metavar="GIT_REF",
+        help="Incremental: index only .md files changed since this git ref (in the "
+             "vault repo), skipping the global graph/co-occurrence/vec rebuild. Much "
+             "cheaper for a small sync; falls back to a full index if the ref is invalid.",
+    )
     p.set_defaults(func=cmd_index)
 
     # export (issue #4)
