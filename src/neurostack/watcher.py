@@ -788,6 +788,70 @@ def full_index(
     return pruned
 
 
+def incremental_index(
+    changed: list[Path],
+    deleted: list[str] | None = None,
+    vault_root: Path | None = None,
+    embed_url: str = None,
+    summarize_url: str = None,
+    skip_summary: bool = False,
+    skip_triples: bool = False,
+    conn=None,
+):
+    """Index only the given changed notes and drop the deleted ones, skipping the
+    whole-vault global rebuild.
+
+    ``full_index`` re-embeds only changed notes, but then unconditionally rebuilds the
+    globals: the wiki-link graph + PageRank, co-occurrence (which can be millions of
+    entity pairs), and the sqlite-vec index (every chunk + triple). Those are O(vault)
+    and dominate cost and memory on a small change, which is what makes a routine
+    ``brain-sync`` pull of a few edited notes reindex the whole vault and, on a
+    memory-tight host, OOM.
+
+    This path runs ``index_single_note`` per changed note instead — itself incremental
+    (content-hash short-circuit, per-chunk vec upsert) — plus targeted deletes. It
+    deliberately does NOT touch co-occurrence, PageRank, the graph, or the vec rebuild;
+    a periodic full ``neurostack index`` refreshes those. FTS5 and per-note semantic
+    search stay correct for changed notes immediately; only graph/co-occurrence-derived
+    boosts lag until the next full index.
+
+    Returns ``(n_indexed, n_deleted)``.
+    """
+    vault_root = vault_root or _vault_root()
+    embed_url = embed_url or get_config().embed_url
+    summarize_url = summarize_url or get_config().llm_url
+    if conn is None:
+        conn = get_db(DB_PATH)
+    _has_vec = has_vec_index(conn)
+
+    n_deleted = 0
+    for rel in deleted or []:
+        # Clear vec entries before the row cascade drops the chunks they point at.
+        if _has_vec:
+            delete_chunk_vecs(conn, rel)
+        conn.execute("DELETE FROM notes WHERE path = ?", (rel,))
+        n_deleted += 1
+    if n_deleted:
+        conn.commit()
+
+    n_indexed = 0
+    for path in changed:
+        try:
+            index_single_note(
+                path, vault_root, conn,
+                embed_url, summarize_url, skip_summary, skip_triples,
+            )
+            n_indexed += 1
+        except Exception as e:
+            log.error(f"Error indexing {path}: {e}")
+
+    log.info(
+        f"Incremental index: {n_indexed} note(s) indexed, {n_deleted} removed "
+        "(global graph/co-occurrence/vec rebuild deferred to the next full index)."
+    )
+    return n_indexed, n_deleted
+
+
 def backfill_summaries(
     vault_root: Path | None = None,
     summarize_url: str = None,
