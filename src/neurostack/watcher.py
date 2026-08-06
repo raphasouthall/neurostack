@@ -146,139 +146,52 @@ def index_single_note(
     skip_summary: bool = False,
     skip_triples: bool = False,
 ):
-    """Index a single note: parse, embed, summarize, extract triples."""
+    """Index a single note: parse, embed, summarize, extract triples.
+
+    All network work (summary, embeddings, triple extraction) happens in
+    ``_prepare_note`` BEFORE the first write statement, then ``_write_note_results``
+    flushes it in one short transaction.
+
+    Ordering matters for concurrency, not just tidiness. Python's sqlite3 opens a
+    deferred write transaction on the first DML statement, and SQLite allows one
+    writer at a time. The previous version wrote the ``notes`` row first and only
+    then called out to Ollama for the summary, the chunk embeddings and the triple
+    extraction — so the write lock was held for the full LLM round-trip of every
+    note. A ``brain-sync`` reindex of a handful of notes therefore held the lock
+    for minutes on end and every other client (a second agent calling
+    ``vault_record_usage`` or ``vault_remember``) blocked until ``busy_timeout``
+    expired and raised "database is locked". Keep the network calls outside the
+    transaction.
+    """
     embed_url = embed_url or get_config().embed_url
     summarize_url = summarize_url or get_config().llm_url
-    parsed = parse_note(path, vault_root)
 
-    # Check if content changed
-    existing = conn.execute(
-        "SELECT content_hash FROM notes WHERE path = ?", (parsed.path,)
+    rel_path = str(path.relative_to(vault_root))
+
+    # Reads only — no transaction is opened by these.
+    row = conn.execute(
+        "SELECT content_hash FROM notes WHERE path = ?", (rel_path,)
     ).fetchone()
+    existing_hashes = {rel_path: row["content_hash"]} if row else {}
 
-    if existing and existing["content_hash"] == parsed.content_hash:
+    existing_summary = None
+    if skip_summary:
+        sum_row = conn.execute(
+            "SELECT summary_text FROM summaries WHERE note_path = ?", (rel_path,)
+        ).fetchone()
+        if sum_row:
+            existing_summary = sum_row["summary_text"]
+
+    _has_vec = has_vec_index(conn)
+
+    result = _prepare_note(
+        path, vault_root, embed_url, summarize_url,
+        skip_summary, skip_triples, existing_hashes, existing_summary,
+    )
+    if result is None:
         return  # No change
 
-    now = datetime.now(timezone.utc).isoformat()
-
-    frontmatter_json = json.dumps(parsed.frontmatter, default=str)
-
-    # Update the note row IN PLACE. Deliberately not INSERT OR REPLACE: with
-    # foreign_keys=ON, REPLACE deletes the existing row first, which cascades to
-    # note_metadata (ON DELETE CASCADE) and wipes its status/date_added BEFORE
-    # the upsert below can preserve them — a reindex of a changed note silently
-    # reset dormant->active and bumped date_added. ON CONFLICT UPDATE keeps the
-    # row so the cascade never fires. Chunks/summaries/triples are cleared
-    # explicitly further down, so nothing relied on the REPLACE cascade.
-    conn.execute(
-        """INSERT INTO notes (path, title, frontmatter, content_hash, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(path) DO UPDATE SET
-             title = excluded.title,
-             frontmatter = excluded.frontmatter,
-             content_hash = excluded.content_hash,
-             updated_at = excluded.updated_at""",
-        (parsed.path, parsed.title, frontmatter_json, parsed.content_hash, now),
-    )
-
-    # Upsert note_metadata: frontmatter-owned fields sync on every
-    # re-index; status and date_added are preserved (status is managed
-    # by the excitability decay system, date_added is immutable).
-    fm = parsed.frontmatter or {}
-    conn.execute(
-        "INSERT INTO note_metadata"
-        " (note_path, status, tags, note_type, date_added)"
-        " VALUES (?, ?, ?, ?, ?)"
-        " ON CONFLICT(note_path) DO UPDATE SET"
-        "  tags = excluded.tags,"
-        "  note_type = excluded.note_type",
-        (
-            parsed.path,
-            fm.get("status", "active"),
-            json.dumps(fm.get("tags", [])),
-            fm.get("type", "permanent"),
-            fm.get("date", now[:10]),
-        ),
-    )
-
-    # Generate summary first so it can be used as embedding context
-    summary = None
-    if not skip_summary:
-        full_content = "\n\n".join(c.content for c in parsed.chunks)
-        try:
-            summary = summarize_note(parsed.title, full_content, base_url=summarize_url)
-            conn.execute(
-                "INSERT OR REPLACE INTO summaries"
-                " (note_path, summary_text,"
-                " content_hash, updated_at)"
-                " VALUES (?, ?, ?, ?)",
-                (parsed.path, summary,
-                 parsed.content_hash, now),
-            )
-        except Exception as e:
-            log.warning(f"Summary failed for {parsed.path}: {e}")
-    else:
-        # Use existing summary for embedding context even when skipping regeneration
-        existing_sum = conn.execute(
-            "SELECT summary_text FROM summaries WHERE note_path = ?", (parsed.path,)
-        ).fetchone()
-        if existing_sum:
-            summary = existing_sum["summary_text"]
-
-    # Delete old chunks (and their vec index entries)
-    _has_vec = has_vec_index(conn)
-    if _has_vec:
-        delete_chunk_vecs(conn, parsed.path)
-    conn.execute("DELETE FROM chunks WHERE note_path = ?", (parsed.path,))
-
-    # Insert new chunks with contextual embeddings
-    if parsed.chunks:
-        texts = [
-            build_chunk_context(parsed.title, frontmatter_json, summary, c.content)
-            for c in parsed.chunks
-        ]
-        if HAS_NUMPY:
-            try:
-                embeddings = get_embeddings_batch(texts, base_url=embed_url)
-            except Exception as e:
-                log.warning(f"Embedding failed for {parsed.path}: {e}")
-                embeddings = [None] * len(texts)
-        else:
-            embeddings = [None] * len(texts)
-
-        for i, chunk in enumerate(parsed.chunks):
-            emb_blob = embedding_to_blob(embeddings[i]) if embeddings[i] is not None else None
-            conn.execute(
-                "INSERT INTO chunks"
-                " (note_path, heading_path, content,"
-                " content_hash, position, embedding)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    parsed.path,
-                    chunk.heading_path,
-                    chunk.content,
-                    hashlib.sha256(chunk.content.encode()).hexdigest()[:16],
-                    chunk.position,
-                    emb_blob,
-                ),
-            )
-            # Populate sqlite-vec index
-            if _has_vec and emb_blob:
-                chunk_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-                upsert_chunk_vec(conn, chunk_id, emb_blob)
-
-    # Extract triples
-    if not skip_triples:
-        full_content = "\n\n".join(c.content for c in parsed.chunks)
-        try:
-            _index_triples_for_note(
-                parsed.path, parsed.title, full_content,
-                parsed.content_hash, now, conn, embed_url, summarize_url,
-            )
-        except Exception as e:
-            log.warning(f"Triple extraction failed for {parsed.path}: {e}")
-
-    conn.commit()
+    _write_note_results(conn, result, _has_vec)
 
 
 # Hours to wait before the Nth triple-extraction retry. After the list is
@@ -406,12 +319,17 @@ def _prepare_note(
     skip_summary: bool,
     skip_triples: bool,
     existing_hashes: dict[str, str],
+    existing_summary: str | None = None,
 ) -> dict | None:
     """Prepare a note for indexing (network/CPU-bound, no DB writes).
 
     Thread-safe: does parsing, summarization, embedding, and triple extraction
     without touching the database. Returns a dict of results to be written by
     the main thread, or None if the note hasn't changed.
+
+    ``existing_summary`` is only consulted when ``skip_summary`` is set: the old
+    summary still makes useful embedding context even when we are not
+    regenerating it. Callers that have no cheap way to look it up pass None.
     """
     parsed = parse_note(path, vault_root)
 
@@ -424,7 +342,7 @@ def _prepare_note(
     full_content = "\n\n".join(c.content for c in parsed.chunks)
 
     # Generate summary (LLM call)
-    summary = None
+    summary = existing_summary if skip_summary else None
     if not skip_summary and full_content:
         try:
             summary = summarize_note(parsed.title, full_content, base_url=summarize_url)
@@ -472,6 +390,10 @@ def _prepare_note(
         "now": now,
         "frontmatter_json": frontmatter_json,
         "summary": summary,
+        # A summary carried over from the DB is context for the embeddings only —
+        # rewriting it would stamp the new content_hash onto stale text and hide
+        # the note from backfill_stale_summaries.
+        "summary_is_new": not skip_summary,
         "chunk_embeddings": chunk_embeddings,
         "triples": triples,
         "triple_embeddings": triple_embeddings,
@@ -523,7 +445,7 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
     )
 
     # Write summary
-    if summary:
+    if summary and result.get("summary_is_new", True):
         conn.execute(
             "INSERT OR REPLACE INTO summaries"
             " (note_path, summary_text, content_hash, updated_at)"
