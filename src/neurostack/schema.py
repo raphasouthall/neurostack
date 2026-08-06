@@ -1045,6 +1045,12 @@ def get_db(db_path: Path | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=60000")  # Wait up to 60s for locks
+    # Truncate the WAL back to 64MB after each checkpoint. The default (-1) never
+    # shrinks the file, so the one big transaction in the nightly full index — the
+    # vec index rebuild writes every chunk and triple vector before it commits —
+    # sets a high-water mark the WAL keeps forever. Checkpointing still works; the
+    # file just stayed at 313MB against a 2.3GB DB.
+    conn.execute("PRAGMA journal_size_limit=67108864")
     conn.row_factory = sqlite3.Row
 
     # Check if schema exists
