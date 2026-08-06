@@ -319,3 +319,70 @@ class TestIncrementalIndex:
         after = conn.execute("SELECT updated_at FROM notes WHERE path='n.md'").fetchone()[0]
         assert n_indexed == 1 and n_deleted == 0
         assert before == after, "unchanged note must not be rewritten"
+
+
+class TestIndexerDoesNotHoldWriteLock:
+    """The indexer must not hold the SQLite write lock while it waits on Ollama.
+
+    SQLite allows one writer at a time. index_single_note used to write the notes
+    row first and only then call out for the summary/embeddings/triples, so the
+    lock stayed held for the whole LLM round-trip of every note. Concurrent
+    clients — a second agent calling vault_record_usage while brain-sync reindexes
+    a push — blocked until busy_timeout expired and got "database is locked".
+    """
+
+    def _write(self, path, body):
+        path.write_text(
+            "---\ndate: 2026-01-01\ntags: [x]\ntype: permanent\n---\n\n# N\n\n" + body + "\n"
+        )
+
+    def test_other_writer_is_not_blocked_during_llm_calls(self, tmp_path, monkeypatch):
+        import sqlite3
+
+        import neurostack.watcher as w
+        from neurostack.schema import get_db
+
+        db_path = tmp_path / "ns.db"
+        conn = get_db(db_path)
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        note = vault / "n.md"
+        self._write(note, "body that needs summarising")
+
+        outcome = {}
+
+        def _competing_write():
+            """Simulate another agent writing mid-index, with a short patience."""
+            other = sqlite3.connect(str(db_path), timeout=1.0)
+            other.execute("PRAGMA busy_timeout=1000")
+            try:
+                other.execute(
+                    "INSERT INTO notes (path, title, frontmatter, content_hash, updated_at)"
+                    " VALUES ('other.md', 'Other', '{}', 'h', '2026-01-01T00:00:00Z')"
+                )
+                other.commit()
+                outcome["blocked"] = False
+            except sqlite3.OperationalError as e:
+                outcome["blocked"] = True
+                outcome["error"] = str(e)
+            finally:
+                other.close()
+
+        def fake_summarize(title, content, **kwargs):
+            # Stands in for the slow Ollama call: whatever lock state the indexer
+            # is in right now is what a concurrent agent would meet.
+            _competing_write()
+            return "a summary"
+
+        monkeypatch.setattr(w, "summarize_note", fake_summarize)
+        monkeypatch.setattr(w, "get_embeddings_batch", lambda texts, **k: [None] * len(texts))
+
+        w.index_single_note(note, vault, conn, skip_triples=True)
+
+        assert outcome.get("blocked") is False, (
+            f"another writer was locked out during the LLM call: {outcome.get('error')}"
+        )
+        # And the indexer's own work still landed.
+        assert conn.execute("SELECT 1 FROM notes WHERE path='n.md'").fetchone()
+        conn.close()
