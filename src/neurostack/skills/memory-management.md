@@ -31,6 +31,9 @@ Keeps the longer content, unions tags, picks the more specific entity_type.
 ```
 vault_forget(memory_id=42)
 ```
+Deletion archives, never destroys: the row leaves search/ranking but stays in
+`memories_archive`. Recover with `neurostack memories restore 42` (CLI); browse
+the archive with `neurostack memories archived`.
 
 ## Search memories
 ```

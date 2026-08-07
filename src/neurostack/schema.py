@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -308,6 +308,33 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(rowid, content)
         VALUES (new.memory_id, new.content);
 END;
+
+-- Archived memories (issue #90): every delete path (forget, merge-source,
+-- TTL expiry, prune) moves the row here instead of destroying it. Archived
+-- rows are invisible to search/FTS/drift by construction — this table has no
+-- FTS index and no embedding — but stay greppable and restorable forever.
+CREATE TABLE IF NOT EXISTS memories_archive (
+    memory_id INTEGER PRIMARY KEY,
+    content TEXT NOT NULL,
+    tags JSON,
+    entity_type TEXT NOT NULL DEFAULT 'observation',
+    source_agent TEXT,
+    workspace TEXT,
+    session_id INTEGER,
+    updated_at TEXT,
+    revision_count INTEGER NOT NULL DEFAULT 1,
+    merge_count INTEGER NOT NULL DEFAULT 0,
+    merged_from JSON,
+    created_at TEXT,
+    expires_at TEXT,
+    uuid TEXT,
+    file_path TEXT,
+    archived_at TEXT NOT NULL DEFAULT (datetime('now')),
+    archive_reason TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memories_archive_workspace
+    ON memories_archive(workspace);
 
 -- NeuroStack-managed note metadata (read-only vault guarantee)
 -- Source of truth for status/tags/type — vault .md files are never modified.
@@ -1033,6 +1060,38 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (21)")
         conn.commit()
         log.info("Migration to v21 complete.")
+
+    if current < 22:
+        log.info(
+            "Migrating schema v21 -> v22: memories_archive table — "
+            "delete paths archive instead of destroy (issue #90)..."
+        )
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS memories_archive (
+                memory_id INTEGER PRIMARY KEY,
+                content TEXT NOT NULL,
+                tags JSON,
+                entity_type TEXT NOT NULL DEFAULT 'observation',
+                source_agent TEXT,
+                workspace TEXT,
+                session_id INTEGER,
+                updated_at TEXT,
+                revision_count INTEGER NOT NULL DEFAULT 1,
+                merge_count INTEGER NOT NULL DEFAULT 0,
+                merged_from JSON,
+                created_at TEXT,
+                expires_at TEXT,
+                uuid TEXT,
+                file_path TEXT,
+                archived_at TEXT NOT NULL DEFAULT (datetime('now')),
+                archive_reason TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memories_archive_workspace
+                ON memories_archive(workspace);
+        """)
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (22)")
+        conn.commit()
+        log.info("Migration to v22 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
