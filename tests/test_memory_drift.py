@@ -223,9 +223,10 @@ def test_v20_to_v21_adds_memory_id_preserving_rows():
     assert row["note_path"] == "a.md"          # pre-existing row preserved
     assert row["memory_id"] is None
     assert row["error_type"] == "low_overlap"
+    from neurostack.schema import SCHEMA_VERSION
     assert conn.execute(
         "SELECT MAX(version) FROM schema_version"
-    ).fetchone()[0] == 21
+    ).fetchone()[0] == SCHEMA_VERSION
 
 
 def test_tool_surfaces_memory_drift(db):

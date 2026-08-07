@@ -63,10 +63,12 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack memories search "query"` | Search memories. `--type`, `--workspace`, `--limit N` |
 | `neurostack memories list` | List recent memories |
 | `neurostack memories update ID` | Update memory. `--content`, `--tags`, `--add-tags`, `--remove-tags`, `--type` |
-| `neurostack memories forget ID` | Delete a memory |
+| `neurostack memories forget ID` | Archive a memory (leaves search, restorable) |
+| `neurostack memories archived` | List archived memories. `--workspace`, `--limit N` |
+| `neurostack memories restore ID` | Restore an archived memory (re-embeds via backfill) |
 | `neurostack memories merge TARGET SOURCE` | Merge two memories (unions tags, audit trail) |
-| `neurostack memories prune` | Clean up. `--expired` or `--older-than N` (days) |
-| `neurostack memories stats` | Memory statistics |
+| `neurostack memories prune` | Archive expired/old memories. `--expired` or `--older-than N` (days) |
+| `neurostack memories stats` | Memory statistics (incl. archived count) |
 
 ### Sessions
 | Command | Description |
@@ -145,7 +147,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 - `vault_remember(content, tags, entity_type, source_agent, workspace, ttl_hours, session_id)` - Save memory
 - `vault_update_memory(memory_id, content, tags, add_tags, remove_tags, entity_type, workspace, ttl_hours)` - Update memory
 - `vault_merge(target_id, source_id)` - Merge two memories
-- `vault_forget(memory_id)` - Delete memory
+- `vault_forget(memory_id)` - Delete memory (archived to `memories_archive`, restorable via CLI, issue #90)
 - `vault_memories(query, entity_type, workspace, limit)` - List/search memories
 - `vault_harvest(sessions, dry_run)` - Extract session insights
 

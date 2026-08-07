@@ -79,6 +79,9 @@ def vault_remember(
 def vault_forget(memory_id: int) -> dict:
     """Delete a specific memory by ID.
 
+    The memory leaves the working set (search, drift, ranking) but is
+    archived, not destroyed — `neurostack memories restore ID` brings it back.
+
     Args:
         memory_id: The ID of the memory to delete (from vault_remember or vault_memories)
     """
@@ -87,7 +90,7 @@ def vault_forget(memory_id: int) -> dict:
 
     conn = get_db(DB_PATH)
     deleted = forget_memory(conn, memory_id)
-    return {"deleted": deleted, "memory_id": memory_id}
+    return {"deleted": deleted, "archived": deleted, "memory_id": memory_id}
 
 
 @registry.tool(tags=["memory", "write"], annotations=_WRITE_IDEMPOTENT)

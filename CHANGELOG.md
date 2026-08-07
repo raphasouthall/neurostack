@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **#90 — archive-on-forget.** Every memory delete path (`vault_forget`/`memories forget`, merge source, TTL expiry, prune) now moves the row to a `memories_archive` table instead of destroying it. Archived rows are outside search/FTS/drift by construction but stay greppable and restorable. New CLI: `neurostack memories archived [-w] [--limit N]` and `neurostack memories restore ID` (restored rows re-embed via `backfill memories`). `memories stats` gains `archived`; MCP `vault_forget` result carries `archived: true`.
+
+### Schema
+
+- v21 → v22: `memories_archive` table (#90).
+
 ## v0.16.0 — Retrieval & extraction fixes (2026-06-11)
 
 ### Added

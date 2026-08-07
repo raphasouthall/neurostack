@@ -12,8 +12,10 @@ def cmd_memories(args):
     from ..memories import (
         forget_memory,
         get_memory_stats,
+        list_archived_memories,
         merge_memories,
         prune_memories,
+        restore_memory,
         save_memory,
         search_memories,
         update_memory,
@@ -141,12 +143,46 @@ def cmd_memories(args):
     elif subcmd == "forget":
         deleted = forget_memory(conn, args.id)
         if args.json:
-            print(json.dumps({"deleted": deleted, "memory_id": args.id}))
+            print(json.dumps(
+                {"deleted": deleted, "archived": deleted, "memory_id": args.id}
+            ))
         else:
             if deleted:
-                print(f"  \033[32m\u2713\033[0m Deleted memory #{args.id}")
+                print(f"  \033[32m\u2713\033[0m Archived memory #{args.id}"
+                      " (restore with: neurostack memories restore"
+                      f" {args.id})")
             else:
                 print(f"  \033[31m\u2717\033[0m Memory #{args.id} not found")
+
+    elif subcmd == "archived":
+        rows = list_archived_memories(
+            conn,
+            workspace=_get_workspace(args) if hasattr(args, "workspace") else None,
+            limit=args.limit,
+        )
+        if args.json:
+            print(json.dumps(rows, indent=2, default=str))
+        else:
+            if not rows:
+                print("  No archived memories.")
+                return
+            for r in rows:
+                print(f"  #{r['memory_id']:<4} [{r['entity_type']}]"
+                      f" archived {r['archived_at']} ({r['archive_reason']})")
+                print(f"        {r['content'][:120]}")
+
+    elif subcmd == "restore":
+        memory = restore_memory(conn, args.id)
+        if args.json:
+            print(json.dumps(
+                {"restored": memory is not None, "memory_id": args.id}
+            ))
+        else:
+            if memory:
+                print(f"  \033[32m\u2713\033[0m Restored memory #{args.id}"
+                      " (re-embeds on next backfill)")
+            else:
+                print(f"  \033[31m\u2717\033[0m Memory #{args.id} not in archive")
 
     elif subcmd == "prune":
         count = prune_memories(
@@ -167,6 +203,7 @@ def cmd_memories(args):
             print(f"  Total:    {stats['total']}")
             print(f"  Embedded: {stats['embedded']}")
             print(f"  Expired:  {stats['expired']}")
+            print(f"  Archived: {stats['archived']}")
             if stats["by_type"]:
                 print("  By type:")
                 for t, c in sorted(stats["by_type"].items()):

@@ -9,8 +9,10 @@ from neurostack.memories import (
     Memory,
     forget_memory,
     get_memory_stats,
+    list_archived_memories,
     merge_memories,
     prune_memories,
+    restore_memory,
     save_memory,
     search_memories,
     suggest_tags,
@@ -526,3 +528,128 @@ class TestMemoryEmbeddingBackfill:
         assert in_memory_db.execute(
             "SELECT embed_pending FROM memories WHERE memory_id=?", (m.memory_id,)
         ).fetchone()["embed_pending"] == 1
+
+
+class TestArchiveOnForget:
+    """Issue #90: delete paths archive instead of destroy."""
+
+    def test_forget_archives_row(self, in_memory_db):
+        m = save_memory(
+            in_memory_db, content="Archived not destroyed",
+            tags=["audit"], entity_type="decision", workspace="work/x",
+        )
+        assert forget_memory(in_memory_db, m.memory_id) is True
+
+        row = in_memory_db.execute(
+            "SELECT * FROM memories_archive WHERE memory_id = ?",
+            (m.memory_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["content"] == "Archived not destroyed"
+        assert row["archive_reason"] == "forget"
+        assert row["workspace"] == "work/x"
+        assert json.loads(row["tags"]) == ["audit"]
+        assert row["archived_at"] is not None
+
+    def test_forget_still_removes_from_working_set(self, in_memory_db):
+        m = save_memory(in_memory_db, content="working_set_gone_token")
+        forget_memory(in_memory_db, m.memory_id)
+
+        assert in_memory_db.execute(
+            "SELECT * FROM memories WHERE memory_id = ?", (m.memory_id,)
+        ).fetchone() is None
+        assert in_memory_db.execute(
+            "SELECT * FROM memories_fts WHERE memories_fts MATCH ?",
+            ("working_set_gone_token",),
+        ).fetchall() == []
+
+    def test_restore_round_trip(self, in_memory_db):
+        m = save_memory(
+            in_memory_db, content="restore_me_token", entity_type="learning",
+        )
+        forget_memory(in_memory_db, m.memory_id)
+
+        restored = restore_memory(in_memory_db, m.memory_id)
+        assert restored is not None
+        assert restored.memory_id == m.memory_id
+        assert restored.content == "restore_me_token"
+        assert restored.entity_type == "learning"
+
+        # Back in the working set: FTS matches, embed queued, archive row gone
+        assert in_memory_db.execute(
+            "SELECT * FROM memories_fts WHERE memories_fts MATCH ?",
+            ("restore_me_token",),
+        ).fetchall() != []
+        assert in_memory_db.execute(
+            "SELECT embed_pending FROM memories WHERE memory_id = ?",
+            (m.memory_id,),
+        ).fetchone()["embed_pending"] == 1
+        assert in_memory_db.execute(
+            "SELECT * FROM memories_archive WHERE memory_id = ?",
+            (m.memory_id,),
+        ).fetchone() is None
+
+    def test_restore_nonexistent_returns_none(self, in_memory_db):
+        assert restore_memory(in_memory_db, 99999) is None
+
+    def test_merge_archives_source_pre_merge(self, in_memory_db):
+        target = save_memory(in_memory_db, content="Target content")
+        source = save_memory(in_memory_db, content="Source original")
+        merge_memories(in_memory_db, target.memory_id, source.memory_id)
+
+        row = in_memory_db.execute(
+            "SELECT * FROM memories_archive WHERE memory_id = ?",
+            (source.memory_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["archive_reason"] == "merge"
+        assert row["content"] == "Source original"
+
+    def test_prune_archives(self, in_memory_db):
+        save_memory(in_memory_db, content="Recent")
+        old = save_memory(in_memory_db, content="Old prunable")
+        in_memory_db.execute(
+            "UPDATE memories SET created_at = datetime('now', '-60 days') "
+            "WHERE memory_id = ?", (old.memory_id,)
+        )
+        in_memory_db.commit()
+
+        assert prune_memories(in_memory_db, older_than_days=30) == 1
+        row = in_memory_db.execute(
+            "SELECT archive_reason FROM memories_archive WHERE memory_id = ?",
+            (old.memory_id,),
+        ).fetchone()
+        assert row["archive_reason"] == "prune"
+
+    def test_expired_purge_archives(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Expiring soon", ttl_hours=1)
+        in_memory_db.execute(
+            "UPDATE memories SET expires_at = datetime('now', '-2 hours') "
+            "WHERE memory_id = ?", (m.memory_id,)
+        )
+        in_memory_db.commit()
+
+        search_memories(in_memory_db)  # triggers the expiry purge
+        row = in_memory_db.execute(
+            "SELECT archive_reason FROM memories_archive WHERE memory_id = ?",
+            (m.memory_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["archive_reason"] == "expire"
+
+    def test_list_archived(self, in_memory_db):
+        a = save_memory(in_memory_db, content="A", workspace="work/x")
+        b = save_memory(in_memory_db, content="B", workspace="home/y")
+        forget_memory(in_memory_db, a.memory_id)
+        forget_memory(in_memory_db, b.memory_id)
+
+        rows = list_archived_memories(in_memory_db)
+        assert {r["memory_id"] for r in rows} == {a.memory_id, b.memory_id}
+        scoped = list_archived_memories(in_memory_db, workspace="work/x")
+        assert [r["memory_id"] for r in scoped] == [a.memory_id]
+
+    def test_stats_archived_count(self, in_memory_db):
+        m = save_memory(in_memory_db, content="Counted")
+        forget_memory(in_memory_db, m.memory_id)
+        stats = get_memory_stats(in_memory_db)
+        assert stats["archived"] == 1
