@@ -162,8 +162,15 @@ def main():
     mp.add_argument("--workspace", "-w", help="Workspace scope")
     mp.add_argument("--limit", type=int, default=20)
 
-    mp = mem_sub.add_parser("forget", help="Delete a memory by ID")
+    mp = mem_sub.add_parser("forget", help="Archive a memory by ID (restorable)")
     mp.add_argument("id", type=int, help="Memory ID")
+
+    mp = mem_sub.add_parser("archived", help="List archived (deleted) memories")
+    mp.add_argument("--workspace", "-w", help="Workspace scope")
+    mp.add_argument("--limit", type=int, default=20)
+
+    mp = mem_sub.add_parser("restore", help="Restore an archived memory by ID")
+    mp.add_argument("id", type=int, help="Memory ID to restore")
 
     mp = mem_sub.add_parser("prune", help="Delete expired or old memories")
     mp.add_argument("--older-than", type=int, help="Delete memories older than N days")

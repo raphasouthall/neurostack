@@ -251,8 +251,38 @@ def save_memory(
     return memory
 
 
+# Columns copied verbatim when a memory moves to memories_archive. Excludes
+# embedding/embed_pending: archived rows are outside search by construction,
+# and a restore re-embeds via embed_pending=1 + `neurostack backfill memories`.
+_ARCHIVE_COLUMNS = (
+    "memory_id, content, tags, entity_type, source_agent, workspace, "
+    "session_id, updated_at, revision_count, merge_count, merged_from, "
+    "created_at, expires_at, uuid, file_path"
+)
+
+
+def _archive_memories(
+    conn: sqlite3.Connection, where_sql: str, params: tuple, reason: str
+) -> int:
+    """Move matching memories into memories_archive, then delete them.
+
+    Every delete path routes through here (issue #90): deletion removes a row
+    from the working set, never from the record. Returns rows archived.
+    """
+    cursor = conn.execute(
+        f"INSERT OR REPLACE INTO memories_archive ({_ARCHIVE_COLUMNS}, archive_reason)"
+        f" SELECT {_ARCHIVE_COLUMNS}, ? FROM memories WHERE {where_sql}",
+        (reason, *params),
+    )
+    conn.execute(f"DELETE FROM memories WHERE {where_sql}", params)
+    return cursor.rowcount
+
+
 def forget_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
-    """Delete a specific memory. Returns True if deleted."""
+    """Archive a specific memory (removed from the working set, restorable).
+
+    Returns True if the memory existed and was archived.
+    """
     row = conn.execute(
         "SELECT file_path FROM memories WHERE memory_id = ?", (memory_id,)
     ).fetchone()
@@ -260,15 +290,72 @@ def forget_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
     # on the FK also handles this; the explicit delete keeps it robust regardless
     # of the foreign_keys pragma state.
     conn.execute("DELETE FROM prediction_errors WHERE memory_id = ?", (memory_id,))
-    cursor = conn.execute(
-        "DELETE FROM memories WHERE memory_id = ?", (memory_id,)
-    )
+    archived = _archive_memories(conn, "memory_id = ?", (memory_id,), "forget")
     conn.commit()
-    deleted = cursor.rowcount > 0
+    deleted = archived > 0
     if deleted and row is not None:
         from .vault_writer import apply_writeback_delete
         apply_writeback_delete(row["file_path"])
     return deleted
+
+
+def restore_memory(conn: sqlite3.Connection, memory_id: int) -> Memory | None:
+    """Move an archived memory back into the working set.
+
+    The row returns with embed_pending=1 and no embedding — findable via FTS
+    at once, re-embedded by `neurostack backfill memories`. Returns the
+    restored Memory, or None if the id is not in the archive.
+    """
+    row = conn.execute(
+        "SELECT * FROM memories_archive WHERE memory_id = ?", (memory_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    conn.execute(
+        f"INSERT INTO memories ({_ARCHIVE_COLUMNS}, embed_pending)"
+        f" SELECT {_ARCHIVE_COLUMNS}, 1 FROM memories_archive WHERE memory_id = ?",
+        (memory_id,),
+    )
+    conn.execute(
+        "UPDATE memories SET file_path = NULL WHERE memory_id = ?", (memory_id,)
+    )
+    conn.execute(
+        "DELETE FROM memories_archive WHERE memory_id = ?", (memory_id,)
+    )
+    conn.commit()
+    restored = conn.execute(
+        "SELECT * FROM memories WHERE memory_id = ?", (memory_id,)
+    ).fetchone()
+    memory = _row_to_memory(restored)
+    # Recreate the write-back mirror file if write-back is enabled (the
+    # original file was removed when the memory was archived).
+    from .vault_writer import apply_writeback_create
+    apply_writeback_create(conn, memory)
+    return memory
+
+
+def list_archived_memories(
+    conn: sqlite3.Connection,
+    workspace: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """List archived memories, newest archive first."""
+    where = "WHERE workspace = ?" if workspace else ""
+    params: tuple = (workspace, limit) if workspace else (limit,)
+    rows = conn.execute(
+        f"SELECT * FROM memories_archive {where}"
+        " ORDER BY archived_at DESC, memory_id DESC LIMIT ?",
+        params,
+    ).fetchall()
+    out = []
+    for r in rows:
+        r = dict(r)
+        try:
+            r["tags"] = json.loads(r["tags"]) if isinstance(r["tags"], str) else (r["tags"] or [])
+        except (json.JSONDecodeError, TypeError):
+            r["tags"] = []
+        out.append(r)
+    return out
 
 
 def update_memory(
@@ -602,8 +689,9 @@ def merge_memories(
         ),
     )
 
-    # Delete source
-    conn.execute("DELETE FROM memories WHERE memory_id = ?", (source_id,))
+    # Archive the source (its content lives on merged into the target; the
+    # archived row keeps the pre-merge original for the record — issue #90)
+    _archive_memories(conn, "memory_id = ?", (source_id,), "merge")
     conn.commit()
 
     updated = conn.execute(
@@ -632,10 +720,13 @@ def search_memories(
 
     Uses FTS5 for keyword search, with optional semantic reranking.
     """
-    # Purge expired memories first
+    # Purge expired memories first (to the archive, not oblivion — issue #90)
     if not include_expired:
-        conn.execute(
-            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')"
+        _archive_memories(
+            conn,
+            "expires_at IS NOT NULL AND expires_at < datetime('now')",
+            (),
+            "expire",
         )
         conn.commit()
 
@@ -822,21 +913,26 @@ def prune_memories(
     older_than_days: int | None = None,
     expired_only: bool = False,
 ) -> int:
-    """Delete expired or old memories. Returns count deleted."""
+    """Archive expired or old memories. Returns count archived."""
     if expired_only:
-        cursor = conn.execute(
-            "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')"
+        count = _archive_memories(
+            conn,
+            "expires_at IS NOT NULL AND expires_at < datetime('now')",
+            (),
+            "expire",
         )
     elif older_than_days is not None:
-        cursor = conn.execute(
-            "DELETE FROM memories WHERE created_at < datetime('now', ?)",
+        count = _archive_memories(
+            conn,
+            "created_at < datetime('now', ?)",
             (f"-{older_than_days} days",),
+            "prune",
         )
     else:
         return 0
 
     conn.commit()
-    return cursor.rowcount
+    return count
 
 
 def get_memory_stats(conn: sqlite3.Connection) -> dict:
@@ -857,10 +953,15 @@ def get_memory_stats(conn: sqlite3.Connection) -> dict:
     for r in rows:
         by_type[r["entity_type"]] = r["c"]
 
+    archived = conn.execute(
+        "SELECT COUNT(*) as c FROM memories_archive"
+    ).fetchone()["c"]
+
     return {
         "total": total,
         "expired": expired,
         "embedded": embedded,
+        "archived": archived,
         "by_type": by_type,
     }
 
