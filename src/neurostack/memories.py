@@ -1028,7 +1028,7 @@ def end_session(
         (session_id,),
     ).fetchone()
 
-    return {
+    result = {
         "session_id": session_id,
         "started_at": updated["started_at"],
         "ended_at": updated["ended_at"],
@@ -1036,6 +1036,36 @@ def end_session(
         "source_agent": updated["source_agent"],
         "workspace": updated["workspace"],
     }
+
+    # Promotion-debt warning (issue #92): the session wrote durable memories
+    # but no vault note changed while it ran — knowledge is about to strand in
+    # the volatile layer. Soft signal only; the caller decides what to do.
+    from .promotion import DURABLE_TYPES
+    durable = conn.execute(
+        "SELECT COUNT(*) AS c FROM memories WHERE session_id = ?"
+        f" AND entity_type IN ({','.join('?' * len(DURABLE_TYPES))})",
+        (session_id, *DURABLE_TYPES),
+    ).fetchone()["c"]
+    if durable:
+        # notes.updated_at is ISO-with-T (watcher), started_at is SQLite
+        # 'YYYY-MM-DD HH:MM:SS' — datetime() canonicalises both to UTC.
+        notes_touched = conn.execute(
+            "SELECT COUNT(*) AS c FROM notes"
+            " WHERE datetime(updated_at) >= datetime(?)",
+            (updated["started_at"],),
+        ).fetchone()["c"]
+        if notes_touched == 0:
+            result["promotion_debt_warning"] = {
+                "durable_memories": durable,
+                "notes_updated_during_session": 0,
+                "hint": (
+                    "Run your vault-save step, or tag one of this session's"
+                    " memories 'promotion-debt' so the promotion queue"
+                    " (vault_promotion_queue / neurostack promote) picks it up."
+                ),
+            }
+
+    return result
 
 
 def get_session(

@@ -279,3 +279,49 @@ def cmd_memories(args):
     else:
         print("Usage: neurostack memories {add,search,list,forget,prune,stats,update,merge}")
         print("       neurostack memories --help")
+
+
+def cmd_promote(args):
+    """Promotion queue: memories whose knowledge should move into notes."""
+    from ..promotion import compute_promotion_queue
+    from ..schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    queue = compute_promotion_queue(
+        conn,
+        workspace=_get_workspace(args),
+        handoff_age_days=args.handoff_age_days,
+        uncovered_sim_floor=args.sim_floor,
+        uncovered_limit=args.limit,
+    )
+    if args.json:
+        print(json.dumps(queue, indent=2, default=str))
+        return
+
+    counts = queue["counts"]
+    total = sum(counts.values())
+    print(f"  Promotion queue: {total} candidates "
+          f"(debt {counts['debt']}, drift {counts['drift']}, "
+          f"dead handoffs {counts['dead_handoffs']}, "
+          f"uncovered {counts['uncovered']})")
+    for bucket, label in [
+        ("debt", "PROMOTION-DEBT"),
+        ("drift", "DRIFTED"),
+        ("dead_handoffs", "DEAD HANDOFFS"),
+        ("uncovered", "NO COVERING NOTE"),
+    ]:
+        if not queue[bucket]:
+            continue
+        print(f"\n  {label}:")
+        for e in queue[bucket]:
+            extra = ""
+            if bucket == "drift":
+                extra = f" [drifted from {e['drifted_from']}]"
+            elif bucket == "uncovered":
+                extra = (f" [nearest {e['nearest_note']}"
+                         f" sim {e['nearest_similarity']}]")
+            print(f"    #{e['memory_id']:<4} [{e['entity_type']}]"
+                  f" {e['created_at']}{extra}")
+            print(f"          {e['preview'][:100]}")
+    if total:
+        print(f"\n  {queue['hint']}")

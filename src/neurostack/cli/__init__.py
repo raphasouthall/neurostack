@@ -10,7 +10,7 @@ from .. import __version__
 from ..config import get_config
 from .api import cmd_api, cmd_bundle, cmd_serve
 from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
-from .memories import cmd_memories
+from .memories import cmd_memories, cmd_promote
 from .search import (
     cmd_ask,
     cmd_brief,
@@ -739,6 +739,24 @@ def main():
         "Also reads NEUROSTACK_WORKSPACE env var",
     )
     p.set_defaults(func=cmd_prediction_errors)
+
+    # promote
+    p = sub.add_parser(
+        "promote",
+        help="Promotion queue: memories whose knowledge should move"
+        " into vault notes (issue #92)",
+    )
+    p.add_argument("--handoff-age-days", type=int, default=14,
+                   help="Grace window before a handoff memory counts as dead")
+    p.add_argument("--sim-floor", type=float, default=0.55,
+                   help="Nearest-chunk similarity below this = uncovered")
+    p.add_argument("--limit", type=int, default=200,
+                   help="Max durable memories scanned for coverage")
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict to vault subdirectory. Also reads NEUROSTACK_WORKSPACE",
+    )
+    p.set_defaults(func=cmd_promote)
 
     # stats
     p = sub.add_parser("stats", help="Show index stats")
