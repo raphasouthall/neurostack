@@ -266,3 +266,38 @@ def vault_memories(
     return {"memories": output}
 
 
+
+
+@registry.tool(tags=["memory", "read"], annotations=_READ_ONLY)
+def vault_promotion_queue(
+    workspace: str = None,
+    handoff_age_days: int = 14,
+    uncovered_sim_floor: float = 0.55,
+    uncovered_limit: int = 200,
+) -> dict:
+    """Memories whose knowledge should be promoted into vault notes.
+
+    Deterministic worklist, four buckets (issue #92): 'debt' (tagged
+    promotion-debt), 'drift' (unresolved memory_drift rows), 'dead_handoffs'
+    (stale context memories that read as handoffs; 'open-thread' tag exempts),
+    'uncovered' (durable memories whose nearest note chunk is below the
+    similarity floor — no covering note exists). Read-only; a downstream agent
+    writes the notes and clears entries via vault_update_memory/vault_forget.
+
+    Args:
+        workspace: Optional vault subdirectory scope
+        handoff_age_days: Grace window before a handoff counts as dead (default 14)
+        uncovered_sim_floor: Nearest-chunk similarity below this = uncovered (default 0.55)
+        uncovered_limit: Max durable memories scanned for coverage (default 200, newest first)
+    """
+    from ..promotion import compute_promotion_queue
+    from ..schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    return compute_promotion_queue(
+        conn,
+        workspace=workspace,
+        handoff_age_days=handoff_age_days,
+        uncovered_sim_floor=uncovered_sim_floor,
+        uncovered_limit=uncovered_limit,
+    )

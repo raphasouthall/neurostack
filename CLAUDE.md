@@ -93,6 +93,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | `neurostack record-usage "path1" "path2"` | Record note usage for hotness scoring |
 | `neurostack decay` | Report note excitability and dormancy |
 | `neurostack prediction-errors` | Show notes flagged as poor retrieval fit |
+| `neurostack promote` | Promotion queue: memories that should become vault notes (#92). `--workspace`, `--sim-floor`, `--handoff-age-days` |
 | `neurostack feedback` | Show accumulated implicit-feedback stats — searches, uses, ranks (issue #66) |
 | `neurostack migrate write-back` | Export qualifying memories to markdown files (issue #20). `--dry-run` to preview |
 | `neurostack sync` | Reconcile write-back files against the DB (DB wins on conflict) |
@@ -150,6 +151,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 - `vault_forget(memory_id)` - Delete memory (archived to `memories_archive`, restorable via CLI, issue #90)
 - `vault_memories(query, entity_type, workspace, limit)` - List/search memories
 - `vault_harvest(sessions, dry_run)` - Extract session insights
+- `vault_promotion_queue(workspace, handoff_age_days, uncovered_sim_floor, uncovered_limit)` - Deterministic worklist of memories to promote into notes (#92): debt / drift / dead_handoffs / uncovered
 
 ### Sessions
 - `vault_session_start(source_agent, workspace)` - Begin memory session
