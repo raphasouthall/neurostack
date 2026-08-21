@@ -20,11 +20,16 @@ def build_vault_context(
     include_memories: bool = True,
     include_triples: bool = True,
     embed_url: str | None = None,
+    context: str | None = None,
 ) -> dict:
     """Assemble a context window for a specific task.
 
     Combines memories, triples, summaries, and session history
     relevant to the given task description. Respects token budget.
+
+    ``context`` applies the same soft attention boost as vault_search
+    (1.4x/1.2x convergence, re-ranking not filtering) to the memories,
+    triples, and summaries sub-retrievals (issue #94).
 
     Returns structured dict with sections and approximate token count.
     """
@@ -46,7 +51,7 @@ def build_vault_context(
 
             memories = search_memories(
                 conn, query=task, workspace=workspace,
-                limit=10, embed_url=url,
+                limit=10, embed_url=url, context=context,
             )
             # Memory drift detection (issue #38), non-blocking.
             from .memory_drift import check_memory_drift
@@ -82,7 +87,7 @@ def build_vault_context(
 
             triples = search_triples(
                 task, top_k=15, mode="hybrid",
-                embed_url=url, workspace=workspace,
+                embed_url=url, workspace=workspace, context=context,
             )
             triple_entries = []
             for t in triples:
@@ -111,7 +116,7 @@ def build_vault_context(
 
         results = hybrid_search(
             task, top_k=5, mode="hybrid",
-            embed_url=url, workspace=workspace,
+            embed_url=url, workspace=workspace, context=context,
         )
         summary_entries = []
         for r in results:

@@ -47,6 +47,7 @@ def vault_context(
     workspace: str = None,
     include_memories: bool = True,
     include_triples: bool = True,
+    context: str = None,
 ) -> dict:
     """Assemble task-scoped context for session recovery after /clear or new conversation.
 
@@ -57,9 +58,12 @@ def vault_context(
     Args:
         task: Description of the current task or goal
         token_budget: Maximum approximate tokens in response (default 2000)
-        workspace: Optional vault subdirectory to scope
+        workspace: Optional vault subdirectory to scope (hard filter)
         include_memories: Include relevant memories (default True)
         include_triples: Include relevant triples (default True)
+        context: Optional project/domain context (e.g. "strake") — soft
+            attention boost that re-ranks toward matching notes without
+            filtering out the rest of the vault
     """
     from ..context import build_vault_context
     from ..schema import DB_PATH, get_db
@@ -70,4 +74,5 @@ def vault_context(
         conn, task=task, token_budget=token_budget,
         workspace=workspace, include_memories=include_memories,
         include_triples=include_triples, embed_url=embed_url,
+        context=context,
     )

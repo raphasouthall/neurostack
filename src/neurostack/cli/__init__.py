@@ -791,6 +791,10 @@ def main():
     p.add_argument("--budget", type=int, default=2000,
                    help="Token budget (default: 2000)")
     p.add_argument("--workspace", "-w", help="Workspace scope")
+    p.add_argument(
+        "--context", "-c", default=None,
+        help="Project/domain context for result boosting",
+    )
     p.add_argument("--no-memories", action="store_true",
                    help="Exclude memories from context")
     p.add_argument("--no-triples", action="store_true",
