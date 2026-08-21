@@ -2,7 +2,7 @@
 
 NeuroStack's ranking and clustering features draw on memory neuroscience. This appendix maps each feature to its scientific basis and, more importantly, to what the code actually does. Where the biology is an inspiration rather than a faithful mechanism, it says so.
 
-Verified against the implementation on `main` (the excitability boost was retired in issue #64 — see below).
+Verified against the implementation on `main` at v0.19 / schema v23 (2026-08-21): the excitability boost was retired in issue #64, the two-tier activation signal landed in #95, and consolidation replay in #96 — see below.
 
 **Status tags** used below:
 
@@ -24,25 +24,40 @@ Every hybrid search applies these signals in order, in `search.py:hybrid_search`
 7. Prediction-error demotion (`×1/(1 + 0.1·n)`)
 8. Lateral inhibition (winner-take-all diversity penalty)
 
-## Hotness and Excitability (Recency Decay + CREB Windows)
+## Hotness — Two-Tier Activation (Synaptic Tagging-and-Capture)
 
-**Feature**: Recently and frequently retrieved notes rank higher.
+**Feature**: Recently and frequently retrieved notes rank higher — but only *deliberate* use consolidates; automatic context injection leaves a weaker, decaying trace.
 
 **Implementation**:
-- Hotness (`search.py:hotness_score`, `[implemented]`): `sigmoid(log1p(usage_count)) · exp(-ln2/half_life · age_days)` with a **30-day half-life**, blended at 0.2. Usage is auto-recorded for every returned result, so the signal is continuously updated. This is the sole recency signal in ranking.
-- Excitability boost (`[retired]`, issue #64): a flat `×1.15` when `note_metadata.status == 'active'` used to sit here. Because `status` defaults to `active` and was demoted only by the opt-in `neurostack decay --demote` timer, on a default install every note stayed `active`, the boost applied uniformly, and it changed no ranking. The per-signal ablation harness (issue #63) confirmed a near-zero delta. It was removed rather than propped up with a mandatory timer, since it only duplicated the recency already carried by the continuous hotness blend. `note_metadata.status` is still maintained — it now serves the agent-linking convention (link preferentially to `active` notes) and the `neurostack decay` report, not search ranking.
+- Hotness (`search.py:batch_hotness_scores`, `[implemented]`): `sigmoid(log1p(weighted_count)) · exp(-ln2/half_life · age_days)` with a **30-day half-life**, blended at 0.2.
+- Two tiers of `note_usage` events (issue #95):
+  - **`used`** — deliberate `vault_record_usage`, note reads, and ordinary search returns. Each counts 1.0 toward the frequency term.
+  - **`primed`** — every path `vault_context` returns. The auto-RAG hooks call `vault_context` on *every* prompt, so these injections would poison the usage signal if logged as strong events, but discarding them wastes a real, weaker one. Each prime counts `primed_weight` (default 0.1), the total is capped at `primed_cap` (0.5 — deliberately **below one real use**, so priming alone can never outrank a genuinely used note), and primes older than `primed_decay_days` (14) contribute nothing.
+- Excitability boost (`[retired]`, issue #64): a flat `×1.15` when `note_metadata.status == 'active'` used to sit here. Because `status` defaults to `active` and was demoted only by the opt-in `neurostack decay --demote` timer, on a default install every note stayed `active`, the boost applied uniformly, and it changed no ranking. The per-signal ablation harness (issue #63) confirmed a near-zero delta. It was removed rather than propped up with a mandatory timer. `note_metadata.status` is still maintained — it serves the agent-linking convention and the `neurostack decay` report, not search ranking.
 
-**Science**: CREB-mediated intrinsic excitability biases which neurons are recruited into an engram. Neurons with elevated CREB at encoding are preferentially allocated, creating a transient window (on the order of hours in the biology) during which a memory attracts new associations. NeuroStack's hotness decay is a much slower software analogue (days, not hours) tuned for how often notes are actually re-read; the ~6-hour biological window is the inspiration, not the parameter. The retired excitability boost was a second, coarser take on the same recency idea; folding it into hotness leaves one continuous signal instead of two overlapping ones.
+**Science**: Synaptic tagging-and-capture (Frey & Morris, 1997): sub-threshold stimulation sets a synaptic *tag* that decays within hours unless a strong stimulation event supplies the plasticity products that *capture* it into a lasting change. A `primed` event is the tag — real but sub-threshold, decaying to nothing if never followed by deliberate use. A `used` event is the capture. CREB-mediated excitability windows were an earlier framing for the retired boost; the surviving decay is tuned for how often notes are actually re-read (days, not the biology's hours).
 
 **References**:
+- Frey, U. & Morris, R. G. M. (1997). Synaptic tagging and long-term potentiation. *Nature*, 385, 533-536.
+- Redondo, R. L. & Morris, R. G. M. (2011). Making memories last: the synaptic tagging and capture hypothesis. *Nature Reviews Neuroscience*, 12, 17-30.
 - Han, J.-H. et al. (2007). Neuronal competition and selection during memory formation. *Science*, 316(5823), 457-460.
-- Yiu, A. P. et al. (2014). Neurons are recruited to a memory trace based on relative neuronal excitability. *Neuron*, 83(3), 722-735.
+
+## Context Boost (Cholinergic Attention Gating)
+
+**Feature** `[implemented]`: An active task context biases retrieval toward its notes without silencing the rest of the vault.
+
+**Implementation** (`search.py:_get_context_notes`): a `context` string (e.g. a project name) resolves to a note set three ways — path substring, frontmatter tags, and semantic folder-summary match — plus their 1-hop link neighbours. Direct matches score `×1.4`, neighbours `×1.2`. Re-ranking, never filtering: out-of-context notes still surface (contrast `workspace`, which is a hard filter). Since issue #94 the boost reaches every retrieval surface: `vault_search` chunks/summaries, triples, memories (workspace/tag match), and all three `vault_context` sub-retrievals. The auto-RAG hooks derive the context from the working directory, so retrieval follows the task the user is actually in.
+
+**Science**: Acetylcholine gates cortical attention: cholinergic tone biases processing toward task-relevant assemblies while leaving baseline activity intact — a gain modulation, not a gate that closes. The multiplicative boost mirrors that: in-context assemblies get gain, nothing is switched off.
+
+**References**:
+- Hasselmo, M. E. & Sarter, M. (2011). Modes and models of forebrain cholinergic neuromodulation of cognition. *Neuropsychopharmacology*, 36, 52-73.
 
 ## Hebbian Co-occurrence Learning
 
 **Feature** `[implemented]`: Entities that appear together in notes accumulate association weight; a query that matches one entity boosts notes containing its learned associates. The associations strengthen every time the paired entities are co-retrieved.
 
-**Implementation**: `cooccurrence.py` maintains an `entity_cooccurrence` table. On every search, entity pairs shared between the query and result notes are reinforced (`weight = min(old · 1.1, 100)`); new pairs seed at 1.0 (`search.py:hybrid_search` reinforcement step). The boost is bounded so it lifts but never dominates the base score. This is the signal that makes the vault's retrieval improve with use.
+**Implementation**: `cooccurrence.py` maintains an `entity_cooccurrence` table carrying two signals per pair (issue #60): a structural `weight` (co-mention counts, fully rebuilt on reindex) and a Hebbian `reinforcement` (bumped `min(old · 1.1, 100)` on every search that surfaces the pair, seeded at 1.0, and **never touched by rebuilds** — accumulated learning survives reindexing). Query time blends `weight + reinforcement`; the boost is bounded so it lifts but never dominates the base score. This is the signal that makes the vault's retrieval improve with use.
 
 **Science**: "Cells that fire together wire together." Repeated co-activation strengthens synaptic connections, the basis of associative memory. Co-retrieval of two entities is the software equivalent of co-activation.
 
@@ -79,7 +94,7 @@ Every hybrid search applies these signals in order, in `search.py:hybrid_search`
 
 **Implementation** (`search.py`): after ranking, the top result's raw cosine is checked. Below `0.38` it logs a `low_overlap` error; a note retrieved outside its expected context with similarity below `0.45` logs `contextual_mismatch`. Only notes that have surprised on `>= 2` distinct retrieval events are surfaced (via `vault_prediction_errors`) and demoted (`×1/(1 + 0.1·n)`). Detection is rate-limited to once per hour per note.
 
-**Scope note**: this implements the *detection* half of the neuroscience. The biology's reconsolidation step — rewriting the memory trace to absorb the new information — is **not** automated here. NeuroStack flags and demotes; a human or agent then re-links, updates, or resolves the note. Automatic retrieval-time updating is tracked in issue #38.
+**Scope note**: this implements the *detection* half of the neuroscience for notes, and — since issue #38 — the same surprise signal for agent memories (`memory_drift` errors flag memories whose referenced notes have moved on; the promotion queue's `drift` bucket surfaces them). The biology's reconsolidation step — rewriting the trace to absorb the new information — remains deliberate work: NeuroStack flags and demotes; a human or agent then re-links, updates, or resolves.
 
 **References**:
 - Sinclair, A. H., Manalili, G. M., Brunec, I. K., Adcock, R. A. & Barense, M. D. (2021). Prediction errors disrupt hippocampal representations and update episodic memories. *PNAS*, 118(51), e2117625118.
@@ -111,11 +126,23 @@ Every hybrid search applies these signals in order, in `search.py:hybrid_search`
 - Cai, D. J. et al. (2016). A shared neural ensemble links distinct contextual memories encoded close in time. *Nature*, 534, 115-118.
 - Ramsauer, H. et al. (2020). Hopfield Networks is All You Need. *arXiv:2008.02217*.
 
+## Consolidation Replay (Systems Consolidation)
+
+**Feature** `[implemented]` `[timer-gated]`: Episodic agent memories are periodically promoted into semantic vault notes — clustered, synthesized, written, and archived with a pointer to the note that absorbed them.
+
+**Implementation**: the promotion queue (`promotion.py`, issue #92) is the deterministic worklist — memories tagged as debt, drifted, dead handoffs, or lacking any covering note. `consolidate.py` (issue #96) is the replay job that runs its mechanical half: `debt` + `uncovered` candidates map to their nearest note (embedding argmax) and its coarse Hopfield basin, one LLM synthesis per cluster writes/extends the target note through the git-backed write path, and the promoted memories are archived with a `promoted:<note_path>` pointer — restorable, never destroyed (issue #90). A per-run cap keeps one night from flooding the vault; `drift` and `dead_handoffs` need judgment and stay with an interactive agent. Runs nightly from a systemd timer; a default install has the CLI (`neurostack consolidate`, dry-run by default) but no timer.
+
+**Science**: Systems consolidation — hippocampal replay during slow-wave sleep re-activates recent episodic traces and trains neocortical semantic networks, after which the hippocampal trace fades. Memories are the fast episodic store; notes are the slow semantic one; the nightly replay is the transfer, and archival-with-pointer is the fading trace that still knows where its content went.
+
+**References**:
+- McClelland, J. L., McNaughton, B. L. & O'Reilly, R. C. (1995). Why there are complementary learning systems in the hippocampus and neocortex. *Psychological Review*, 102(3), 419-457.
+- Wilson, M. A. & McNaughton, B. L. (1994). Reactivation of hippocampal ensemble memories during sleep. *Science*, 265(5172), 676-679.
+
 ## Tiered Retrieval (Depth-First Access)
 
 **Feature** `[analogy]`: Retrieval escalates through triples (fast, cheap) → summaries → full content, matching the caller's token budget.
 
-**Implementation** (`search.py:tiered_search`): `depth="auto"` starts with triples and escalates when triple coverage is low. This is a genuine and useful token-cost hierarchy. The mapping to complementary learning systems is a framing, not a mechanism: NeuroStack has no separate fast/slow learners consolidating on different timescales.
+**Implementation** (`search.py:tiered_search`): `depth="auto"` starts with triples and escalates when triple coverage is low. This is a genuine and useful token-cost hierarchy. The mapping to complementary learning systems is a framing for *retrieval*; the fast/slow **learning** division CLS actually describes lives in the memories-vs-notes split and its consolidation replay (previous section).
 
 **Science**: Memory retrieval is hierarchical — gist-level semantic information is accessed before detailed episodic content, which takes more effort. CLS theory proposes fast hippocampal and slow neocortical systems for this division of labour.
 
