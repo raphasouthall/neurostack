@@ -707,6 +707,26 @@ def merge_memories(
     return merged
 
 
+def _boost_memories_by_context(results: list[dict], context: str | None) -> None:
+    """Soft context boost for scored memory rows (issue #94).
+
+    Mirrors vault_search's convergence boost: a memory whose workspace or tags
+    match the active context gets 1.4x. Re-ranking, not filtering — out-of-context
+    memories still surface. Callers re-sort.
+    """
+    if not context:
+        return
+    ctx = context.lower()
+    for r in results:
+        ws = (r.get("workspace") or "").lower()
+        try:
+            tags = json.loads(r.get("tags") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+        if ctx in ws or any(ctx in str(t).lower() for t in tags):
+            r["score"] *= 1.4
+
+
 def search_memories(
     conn: sqlite3.Connection,
     query: str | None = None,
@@ -715,10 +735,13 @@ def search_memories(
     limit: int = 20,
     embed_url: str | None = None,
     include_expired: bool = False,
+    context: str | None = None,
 ) -> list[Memory]:
     """Search memories by text, type, and/or workspace.
 
     Uses FTS5 for keyword search, with optional semantic reranking.
+    ``context`` applies a soft 1.4x boost (workspace/tag match) on the scored
+    semantic paths; the no-query listing path has no score to boost.
     """
     # Purge expired memories first (to the archive, not oblivion — issue #90)
     if not include_expired:
@@ -733,7 +756,7 @@ def search_memories(
     if query:
         return _hybrid_memory_search(
             conn, query, entity_type=entity_type, workspace=workspace,
-            limit=limit, embed_url=embed_url,
+            limit=limit, embed_url=embed_url, context=context,
         )
 
     # No query — list memories with filters
@@ -779,6 +802,7 @@ def _hybrid_memory_search(
     workspace: str | None = None,
     limit: int = 20,
     embed_url: str | None = None,
+    context: str | None = None,
 ) -> list[Memory]:
     """FTS5 + semantic search over memories."""
     # FTS5 search
@@ -852,6 +876,7 @@ def _hybrid_memory_search(
                 for i, r in enumerate(valid):
                     fts_score = 1.0 / (1.0 + abs(r.get("rank", 0)))
                     r["score"] = 0.3 * fts_score + 0.7 * float(scores[i])
+                _boost_memories_by_context(valid, context)
                 valid.sort(key=lambda x: x["score"], reverse=True)
                 return [_row_to_memory(r, score=r["score"]) for r in valid[:limit]]
 
@@ -894,11 +919,17 @@ def _hybrid_memory_search(
 
                 matrix = np.stack(embeddings)
                 scores = cosine_similarity_batch(query_emb, matrix)
-                top_indices = np.argsort(scores)[::-1][:limit]
+                scored = []
+                for idx in np.argsort(scores)[::-1][: limit * 3 if context else limit]:
+                    d = data[idx]
+                    d["score"] = float(scores[idx])
+                    scored.append(d)
+                _boost_memories_by_context(scored, context)
+                scored.sort(key=lambda x: x["score"], reverse=True)
 
                 return [
-                    _row_to_memory(data[idx], score=float(scores[idx]))
-                    for idx in top_indices
+                    _row_to_memory(d, score=d["score"])
+                    for d in scored[:limit]
                 ]
 
     except Exception as exc:
