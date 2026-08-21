@@ -11,10 +11,13 @@ reflect real usage.
 Flow:
 
 1. **log** — a search records ``(query, shown_paths)`` to ``search_log``.
-2. **attribute** — when a surfaced note is then deliberately used
-   (``vault_record_usage`` / ``vault_read_file``) within a window, that use is
-   attributed back to the most recent search that surfaced it, writing a
-   ``search_feedback`` event with the note's rank at search time.
+2. **attribute** — when a surfaced note is then deliberately used within a
+   window, that use is attributed back to the most recent search that surfaced
+   it, writing a ``search_feedback`` event with the note's rank at search time.
+   Two entry points: ``vault_record_usage`` declares a use explicitly, and
+   ``vault_read_file`` has one *inferred* server-side — opening a note the
+   vault just surfaced is the observed act of using it (issue #103), so the
+   strong signal no longer depends on the client remembering to declare it.
 3. **harvest** — :func:`feedback_labels` aggregates events into an ``EvalQuery``
    set for the existing eval / tune harness.
 
@@ -139,6 +142,87 @@ def capture_use(used_paths: list[str], conn=None) -> None:
         pass  # feedback capture must never disrupt a read or a usage record
 
 
+def record_use(note_paths: list[str], conn=None) -> int:
+    """The single server path behind an EXPLICIT usage record (issue #103).
+
+    Writes the strong 'used' tier with source 'explicit', then attributes the use
+    back to the surfacing search. Shared by the ``vault_record_usage`` MCP tool
+    and the ``record-usage`` CLI so both write the same rows and both attribute.
+
+    The note_usage write is NOT feedback-gated — hotness has always counted
+    declared uses regardless of ``feedback_enabled``; only the attribution
+    (``capture_use``) is opt-in. Returns the number of rows recorded (deduped).
+    """
+    if not note_paths:
+        return 0
+    if conn is None:
+        from .schema import DB_PATH, get_db
+
+        conn = get_db(DB_PATH)
+
+    # Lazy import: search imports feedback on its own hot path, so importing it
+    # at module scope would close the cycle.
+    from .search import _record_note_usage
+
+    unique_paths = list(dict.fromkeys(note_paths))
+    _record_note_usage(conn, unique_paths, tier="used", source="explicit")
+    capture_use(unique_paths, conn=conn)
+    return len(unique_paths)
+
+
+def capture_read(path: str, conn=None) -> None:
+    """Opt-in, fully-guarded read hook: infer a deliberate use from a read of a
+    note the vault recently surfaced (issue #103). Never raises.
+
+    Read-after-surface is the observable act of using a search result — the
+    server watches for it instead of waiting for the client to declare a use.
+    A read of a note NOT surfaced within ``feedback_window_seconds`` is a cold
+    read (direct navigation, an unrelated lookup) and records nothing: there is
+    no search to attribute it to and no evidence retrieval earned it.
+
+    Records one 'used' / 'inferred' event plus the attribution. Repeated
+    offset-0 re-opens each count, exactly as repeated explicit record_usage
+    calls do; ``attribute_use`` still dedups the feedback event per
+    (query, path) inside the window.
+    """
+    try:
+        from .config import get_config
+
+        cfg = get_config()
+        if not cfg.feedback_enabled:
+            return
+        if conn is None:
+            from .schema import DB_PATH, get_db
+
+            conn = get_db(DB_PATH)
+
+        rows = conn.execute(
+            "SELECT shown_paths FROM search_log "
+            "WHERE searched_at >= datetime('now', ?) "
+            "ORDER BY searched_at DESC, search_id DESC",
+            (f"-{int(cfg.feedback_window_seconds)} seconds",),
+        ).fetchall()
+
+        surfaced = False
+        for r in rows:
+            try:
+                shown = json.loads(r[0])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if path in shown:
+                surfaced = True
+                break
+        if not surfaced:
+            return
+
+        from .search import _record_note_usage
+
+        _record_note_usage(conn, [path], tier="used", source="inferred")
+        attribute_use(conn, [path], cfg.feedback_window_seconds)
+    except Exception:
+        pass  # feedback capture must never disrupt a read
+
+
 # ── harvest (called from CLI — may raise) ──────────────────────────────────
 
 
@@ -176,7 +260,9 @@ def feedback_stats(conn) -> dict:
     """Summary of accumulated feedback — volume, rank distribution, and the
     two activation tiers (issue #95): deliberate 'used' events vs auto-RAG
     'primed' injections, with the in-window primed count that actually feeds
-    hotness."""
+    hotness. The 'used' total also splits by provenance (issue #103) — how many
+    uses the client declared vs how many the server inferred from a read of a
+    just-surfaced note."""
     from .config import get_config
 
     searches = conn.execute("SELECT COUNT(*) FROM search_log").fetchone()[0]
@@ -200,6 +286,12 @@ def feedback_stats(conn) -> dict:
     primed_events = conn.execute(
         "SELECT COUNT(*) FROM note_usage WHERE tier = 'primed'"
     ).fetchone()[0]
+    used_explicit = conn.execute(
+        "SELECT COUNT(*) FROM note_usage WHERE tier = 'used' AND source = 'explicit'"
+    ).fetchone()[0]
+    used_inferred = conn.execute(
+        "SELECT COUNT(*) FROM note_usage WHERE tier = 'used' AND source = 'inferred'"
+    ).fetchone()[0]
     primed_in_window = conn.execute(
         "SELECT COUNT(*) FROM note_usage WHERE tier = 'primed' "
         "AND used_at >= datetime('now', ?)",
@@ -213,6 +305,8 @@ def feedback_stats(conn) -> dict:
         "avg_chosen_rank": round(avg_rank, 2) if avg_rank is not None else None,
         "informative_events": below_top,  # chosen note was not already top-ranked
         "used_events": used_events,
+        "used_explicit": used_explicit,  # declared via record_usage
+        "used_inferred": used_inferred,  # observed as read-after-surface
         "primed_events": primed_events,
         "primed_in_window": primed_in_window,  # primes still contributing to hotness
     }

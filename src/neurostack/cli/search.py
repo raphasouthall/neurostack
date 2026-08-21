@@ -971,14 +971,12 @@ def cmd_prediction_errors(args):
 
 def cmd_record_usage(args):
     """Record that specific notes were used, driving hotness scoring."""
-    from ..schema import DB_PATH, get_db
+    from ..feedback import record_use
 
-    conn = get_db(DB_PATH)
-    conn.executemany(
-        "INSERT INTO note_usage (note_path) VALUES (?)",
-        [(p,) for p in args.note_paths],
-    )
-    conn.commit()
+    # Shared server path (issue #103) — writes the 'used'/'explicit' rows and
+    # attributes the use back to the surfacing search, which the raw insert here
+    # previously skipped.
+    record_use(args.note_paths)
     print(f"Recorded usage for {len(args.note_paths)} note(s).")
     for p in args.note_paths:
         print(f"  {p}")

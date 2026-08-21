@@ -243,7 +243,7 @@ class TestSearchTriplesRecordGate:
         assert results
         assert conn.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0] == 0
 
-    def test_record_true_writes_used(self, in_memory_db, monkeypatch):
+    def test_record_true_writes_primed(self, in_memory_db, monkeypatch):
         conn = in_memory_db
         _add_note(conn, "a.md", with_chunk=False)
         conn.execute(
@@ -256,8 +256,10 @@ class TestSearchTriplesRecordGate:
 
         search_triples("usetoken", top_k=5, embed_url="http://fake")
 
-        rows = conn.execute("SELECT tier FROM note_usage").fetchall()
-        assert rows and all(r["tier"] == "used" for r in rows)
+        rows = conn.execute("SELECT tier, source FROM note_usage").fetchall()
+        # Returning a triple's note is surfacing, not use (issue #103).
+        assert rows and all(r["tier"] == "primed" for r in rows)
+        assert all(r["source"] == "search" for r in rows)
 
 
 class TestFeedbackStatsTiers:
