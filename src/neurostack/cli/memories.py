@@ -325,3 +325,41 @@ def cmd_promote(args):
             print(f"          {e['preview'][:100]}")
     if total:
         print(f"\n  {queue['hint']}")
+
+
+def cmd_consolidate(args):
+    """Consolidation replay: promote queued memories into notes (issue #96)."""
+    from ..consolidate import consolidate_replay
+    from ..schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    report = consolidate_replay(
+        conn,
+        cap=args.cap,
+        dry_run=not args.run,
+        workspace=_get_workspace(args),
+        llm_url=getattr(args, "summarize_url", None) or None,
+        llm_model=getattr(args, "llm_model", None),
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+        return
+
+    mode = "DRY RUN" if report["dry_run"] else "RUN"
+    print(f"  Consolidation replay ({mode}): "
+          f"{report['clusters_found']} cluster(s), "
+          f"{report['clusters_planned']} within cap {report['cap']}")
+    for c in report["consolidated"]:
+        ids = ", ".join(str(i) for i in c["memory_ids"])
+        print(f"\n    [{c['action']}] {c['target']}")
+        if c.get("title"):
+            print(f"      title: {c['title']}")
+        print(f"      memories: {ids}")
+        if c.get("commit_sha"):
+            print(f"      commit: {c['commit_sha'][:10]}  archived: {c['archived']}")
+    for c in report.get("skipped", []):
+        print(f"\n    SKIPPED [{c['action']}] {c['target']}: {c['error']}")
+    for c in report.get("deferred", []):
+        print(f"\n    deferred (over cap): {len(c['memory_ids'])} memories -> {c['target']}")
+    if report["dry_run"] and report["clusters_planned"]:
+        print("\n  Dry run — pass --run to synthesize, write notes, and archive.")
