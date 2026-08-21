@@ -26,7 +26,6 @@ clusters one night may consolidate so a backlog cannot flood the vault.
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import re
 import sqlite3
@@ -49,9 +48,10 @@ identifiers, versions, hosts, paths, commands, numbers, decisions and their \
 reasons. Merge overlap, keep disagreements visible, and do not invent or embellish \
 anything. No preamble, no headings above ###.
 
-Also give the section a short specific title (3-8 words).
+Respond in EXACTLY this format — first line the title, then the section:
+TITLE: <short specific title, 3-8 words>
 
-Respond with JSON only: {{"title": "...", "synthesis": "markdown body"}}
+<markdown section>
 
 Memories:
 {memories}
@@ -64,6 +64,27 @@ def _strip_fences(raw: str) -> str:
         raw = re.sub(r"^```\w*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw).strip()
     return raw
+
+
+def _parse_synthesis(raw: str) -> dict:
+    """Parse the TITLE:-line response format. Prose rides outside any JSON
+    string, so backslashes/quotes in the body can never break parsing (the
+    JSON contract did, on the first live rehearsal)."""
+    lines = raw.split("\n")
+    title = "Consolidated session knowledge"
+    body_start = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.upper().startswith("TITLE:"):
+            title = stripped[6:].strip() or title
+            body_start = i + 1
+        break
+    synthesis = "\n".join(lines[body_start:]).strip()
+    if not synthesis:
+        raise ValueError("LLM returned an empty synthesis")
+    return {"title": title, "synthesis": synthesis}
 
 
 def _slugify(title: str) -> str:
@@ -208,12 +229,7 @@ def _synthesize(
     )
     resp.raise_for_status()
     raw = _strip_fences(resp.json()["choices"][0]["message"]["content"])
-    parsed = json.loads(raw)
-    title = (parsed.get("title") or "Consolidated session knowledge").strip()
-    synthesis = (parsed.get("synthesis") or "").strip()
-    if not synthesis:
-        raise ValueError("LLM returned an empty synthesis")
-    return {"title": title, "synthesis": synthesis}
+    return _parse_synthesis(raw)
 
 
 def _sources_block(members: list[dict]) -> str:
