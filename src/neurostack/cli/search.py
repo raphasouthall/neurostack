@@ -997,6 +997,7 @@ def cmd_context(args):
         include_memories=not args.no_memories,
         include_triples=not args.no_triples,
         embed_url=args.embed_url,
+        context=getattr(args, "context", None),
     )
 
     if args.json:
