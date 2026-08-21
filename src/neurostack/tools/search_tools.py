@@ -587,6 +587,10 @@ def vault_record_usage(note_paths: list[str]) -> dict:
     Call this after vault_search when you actually consumed the returned notes.
     Drives hotness scoring — frequently used notes score higher in future searches.
 
+    This is the strong 'used' tier of the two-tier activation signal (issue #95);
+    auto-RAG vault_context injections are logged server-side as weak 'primed'
+    events and never need this call.
+
     Args:
         note_paths: List of note paths that were used (e.g. ["research/foo.md", "work/bar.md"])
     """
@@ -594,7 +598,7 @@ def vault_record_usage(note_paths: list[str]) -> dict:
 
     conn = get_db(DB_PATH)
     conn.executemany(
-        "INSERT INTO note_usage (note_path) VALUES (?)",
+        "INSERT INTO note_usage (note_path, tier) VALUES (?, 'used')",
         [(p,) for p in note_paths],
     )
     conn.commit()

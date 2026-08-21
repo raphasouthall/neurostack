@@ -243,10 +243,11 @@ def _run_tune(args, queries, db_path, cache):
     freeze_hotness = getattr(args, "autolabel", False) and not getattr(
         args, "tune_usage_signals", False)
     if freeze_hotness:
-        grids = {k: v for k, v in tn.DEFAULT_GRIDS.items() if k != "hotness_weight"}
-        order = tuple(p for p in tn.DEFAULT_ORDER if p != "hotness_weight")
-        print("  (hotness frozen — synthetic labels can't judge usage; "
-              "pass --tune-usage-signals to include it)")
+        usage_params = ("hotness_weight", "primed_weight")
+        grids = {k: v for k, v in tn.DEFAULT_GRIDS.items() if k not in usage_params}
+        order = tuple(p for p in tn.DEFAULT_ORDER if p not in usage_params)
+        print("  (hotness + primed frozen — synthetic labels can't judge usage; "
+              "pass --tune-usage-signals to include them)")
 
     result = tn.coordinate_ascent(
         train,
