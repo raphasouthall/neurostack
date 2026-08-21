@@ -584,29 +584,24 @@ def vault_stats() -> dict:
 def vault_record_usage(note_paths: list[str]) -> dict:
     """Record that specific notes were retrieved and used in this session.
 
-    Call this after vault_search when you actually consumed the returned notes.
-    Drives hotness scoring — frequently used notes score higher in future searches.
+    Drives hotness scoring — frequently used notes score higher in future
+    searches. This is the strong 'used' tier of the two-tier activation signal
+    (issue #95); surfacing alone (search returns, auto-RAG vault_context
+    injections) is logged server-side as weak 'primed' events.
 
-    This is the strong 'used' tier of the two-tier activation signal (issue #95);
-    auto-RAG vault_context injections are logged server-side as weak 'primed'
-    events and never need this call.
+    Mostly unnecessary now: the server infers a use from read-after-surface —
+    opening a just-surfaced note via vault_read_file (issue #103). This call is
+    the explicit override, for consumption the server cannot observe: acting on a
+    snippet or a summary without ever opening the note.
 
     Args:
         note_paths: List of note paths that were used (e.g. ["research/foo.md", "work/bar.md"])
     """
+    from ..feedback import record_use
     from ..schema import DB_PATH, get_db
 
     conn = get_db(DB_PATH)
-    conn.executemany(
-        "INSERT INTO note_usage (note_path, tier) VALUES (?, 'used')",
-        [(p,) for p in note_paths],
-    )
-    conn.commit()
-
-    # Implicit-feedback loop (issue #66): a deliberate use is the click signal —
-    # attribute it back to the search that surfaced it. Opt-in, non-blocking.
-    from ..feedback import capture_use
-    capture_use(note_paths, conn=conn)
+    record_use(note_paths, conn=conn)
     return {"recorded": len(note_paths), "paths": note_paths}
 
 

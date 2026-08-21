@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -195,14 +195,18 @@ CREATE TABLE IF NOT EXISTS folder_summaries (
     generated_at TEXT
 );
 
--- Usage tracking for hotness scoring. tier distinguishes deliberate use
--- ('used' — vault_record_usage, reads) from auto-RAG injection ('primed' —
--- vault_context returns; issue #95): synaptic tag vs capture.
+-- Usage tracking for hotness scoring. tier is signal STRENGTH: deliberate use
+-- ('used' — vault_record_usage, inferred reads) vs auto-RAG injection
+-- ('primed' — vault_context / search returns; issue #95) — synaptic tag vs
+-- capture. source is PROVENANCE, i.e. which path wrote the row (issue #103):
+-- 'explicit' (record_usage), 'inferred' (read-after-surface), 'search'
+-- (search returns), 'context' (vault_context returns).
 CREATE TABLE IF NOT EXISTS note_usage (
     usage_id INTEGER PRIMARY KEY AUTOINCREMENT,
     note_path TEXT NOT NULL,
     used_at TEXT NOT NULL DEFAULT (datetime('now')),
-    tier TEXT NOT NULL DEFAULT 'used'
+    tier TEXT NOT NULL DEFAULT 'used',
+    source TEXT NOT NULL DEFAULT 'explicit'
 );
 
 CREATE INDEX IF NOT EXISTS idx_note_usage_path ON note_usage(note_path);
@@ -1122,6 +1126,43 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (23)")
         conn.commit()
         log.info("Migration to v23 complete.")
+
+    if current < 24:
+        log.info(
+            "Migrating schema v23 -> v24: note_usage.source — "
+            "provenance of each usage row, so server-inferred reads are "
+            "distinguishable from explicit records (issue #103)..."
+        )
+        cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(note_usage)").fetchall()
+        }
+        if not cols:
+            # Partial DBs (older fixtures/tests) may lack the table entirely.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS note_usage ("
+                " usage_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " note_path TEXT NOT NULL,"
+                " used_at TEXT NOT NULL DEFAULT (datetime('now')),"
+                " tier TEXT NOT NULL DEFAULT 'used',"
+                " source TEXT NOT NULL DEFAULT 'explicit')"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_note_usage_path"
+                " ON note_usage(note_path)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_note_usage_time"
+                " ON note_usage(used_at)"
+            )
+        elif "source" not in cols:
+            # Existing rows predate inference, so the 'explicit' default is correct.
+            conn.execute(
+                "ALTER TABLE note_usage ADD COLUMN"
+                " source TEXT NOT NULL DEFAULT 'explicit'"
+            )
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (24)")
+        conn.commit()
+        log.info("Migration to v24 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
