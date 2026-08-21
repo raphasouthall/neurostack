@@ -10,7 +10,7 @@ from .. import __version__
 from ..config import get_config
 from .api import cmd_api, cmd_bundle, cmd_serve
 from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
-from .memories import cmd_memories, cmd_promote
+from .memories import cmd_consolidate, cmd_memories, cmd_promote
 from .search import (
     cmd_ask,
     cmd_brief,
@@ -757,6 +757,25 @@ def main():
         help="Restrict to vault subdirectory. Also reads NEUROSTACK_WORKSPACE",
     )
     p.set_defaults(func=cmd_promote)
+
+    # consolidate
+    p = sub.add_parser(
+        "consolidate",
+        help="Consolidation replay: promote queued memories into notes"
+        " via basin-clustered LLM synthesis (issue #96)",
+    )
+    p.add_argument("--run", action="store_true",
+                   help="Actually synthesize, write notes, and archive"
+                   " (default: dry run)")
+    p.add_argument("--cap", type=int, default=5,
+                   help="Max clusters consolidated per run (default: 5)")
+    p.add_argument("--llm-model", default=None,
+                   help="Override the synthesis model")
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict to vault subdirectory. Also reads NEUROSTACK_WORKSPACE",
+    )
+    p.set_defaults(func=cmd_consolidate)
 
     # stats
     p = sub.add_parser("stats", help="Show index stats")
