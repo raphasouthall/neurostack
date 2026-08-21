@@ -1280,6 +1280,30 @@ def triple_semantic_search(
     return results
 
 
+def _boost_triples_by_context(
+    conn: sqlite3.Connection,
+    results: list[dict],
+    context: str | None,
+    embed_url: str = None,
+) -> None:
+    """Apply the vault_search context boost to scored triple dicts (issue #94).
+
+    Same convergence path as hybrid_search: 1.4x for triples from notes that
+    directly match the context, 1.2x for their 1-hop link neighbors. Re-ranking,
+    not filtering — out-of-context triples still surface. Callers re-sort.
+    """
+    if not context or not results:
+        return
+    direct_ctx, neighbor_ctx = _get_context_notes(conn, context, embed_url=embed_url)
+    for r in results:
+        if r["note_path"] in direct_ctx:
+            r["score"] = r.get("score", 0.0) * 1.4
+        elif r["note_path"] in neighbor_ctx:
+            r["score"] = r.get("score", 0.0) * 1.2
+    results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+
+
+
 def search_triples(
     query: str,
     top_k: int = 10,
@@ -1287,8 +1311,12 @@ def search_triples(
     embed_url: str = None,
     db_path=None,
     workspace: str | None = None,
+    context: str | None = None,
 ) -> list[TripleResult]:
     """Search triples using hybrid FTS5 + semantic similarity.
+
+    ``context`` applies the same soft attention boost as hybrid_search on the
+    scored (semantic/hybrid) paths; keyword-only paths have no score to boost.
 
     Returns compact TripleResult objects (~10-20 tokens each).
     """
@@ -1319,8 +1347,10 @@ def search_triples(
 
     if mode == "semantic":
         sem_results = triple_semantic_search(
-            conn, query_embedding, limit=top_k, workspace=workspace,
+            conn, query_embedding, limit=top_k * 3 if context else top_k,
+            workspace=workspace,
         )
+        _boost_triples_by_context(conn, sem_results, context, embed_url=embed_url)
         results = _to_triple_results(conn, sem_results[:top_k])
         _record_note_usage(conn, [r.note_path for r in results])
         return results
@@ -1332,8 +1362,10 @@ def search_triples(
 
     if not fts_results:
         sem_results = triple_semantic_search(
-            conn, query_embedding, limit=top_k, workspace=workspace,
+            conn, query_embedding, limit=top_k * 3 if context else top_k,
+            workspace=workspace,
         )
+        _boost_triples_by_context(conn, sem_results, context, embed_url=embed_url)
         results = _to_triple_results(conn, sem_results[:top_k])
         _record_note_usage(conn, [r.note_path for r in results])
         return results
@@ -1356,6 +1388,8 @@ def search_triples(
     for i, r in enumerate(valid_results):
         fts_score = 1.0 / (1.0 + abs(r.get("rank", 0)))
         r["score"] = 0.3 * fts_score + 0.7 * float(scores[i])
+
+    _boost_triples_by_context(conn, valid_results, context, embed_url=embed_url)
 
     valid_results.sort(key=lambda x: x["score"], reverse=True)
 
@@ -1446,6 +1480,7 @@ def tiered_search(
             query, top_k=top_k * 2, mode=mode,
             embed_url=embed_url, db_path=db_path,
             workspace=workspace,
+            context=context,
         )
         result["triples"] = [
             {"note": t.note_path, "title": t.title,
@@ -1492,6 +1527,7 @@ def tiered_search(
         query, top_k=top_k * 3, mode=mode,
         embed_url=embed_url, db_path=db_path,
         workspace=workspace,
+        context=context,
     )
     result["triples"] = [
         {"note": t.note_path, "title": t.title,
