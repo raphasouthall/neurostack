@@ -84,19 +84,28 @@ def log_prediction_error(
         pass  # Never let error logging disrupt search
 
 
-def _record_note_usage(conn: sqlite3.Connection, note_paths: list[str]) -> None:
+def _record_note_usage(
+    conn: sqlite3.Connection,
+    note_paths: list[str],
+    tier: str = "used",
+) -> None:
     """Record note access for hotness scoring. Non-blocking.
 
     Deduplicates paths so a single retrieval counts as one usage event per note,
     regardless of how many chunks/triples/edges from that note were returned.
+
+    ``tier`` is ``'used'`` (deliberate — record_usage, reads, search returns) or
+    ``'primed'`` (auto-RAG injection via vault_context; issue #95). Primed events
+    carry a small, capped, decaying weight in hotness — a synaptic tag, not a
+    consolidation.
     """
     if not note_paths:
         return
     unique_paths = list(dict.fromkeys(note_paths))
     try:
         conn.executemany(
-            "INSERT INTO note_usage (note_path) VALUES (?)",
-            [(p,) for p in unique_paths],
+            "INSERT INTO note_usage (note_path, tier) VALUES (?, ?)",
+            [(p, tier) for p in unique_paths],
         )
         conn.commit()
     except Exception:
@@ -385,72 +394,88 @@ def _get_context_notes(
     return direct, neighbors
 
 
-def hotness_score(conn: sqlite3.Connection, note_path: str, half_life_days: float = 30.0) -> float:
+def hotness_score(
+    conn: sqlite3.Connection,
+    note_path: str,
+    half_life_days: float = 30.0,
+    primed_weight: float = 0.1,
+    primed_cap: float = 0.5,
+    primed_decay_days: float = 14.0,
+) -> float:
     """Compute hotness score blending usage frequency and recency.
 
     Blends frequency and recency using sigmoid-compressed usage count
     with exponential half-life decay:
-        hotness = sigmoid(log1p(active_count)) * exp(-ln2/half_life * age_days)
+        hotness = sigmoid(log1p(weighted_count)) * exp(-ln2/half_life * age_days)
 
-    Returns a value in [0, 1]. Returns 0.0 if never used.
+    Returns a value in [0, 1]. Returns 0.0 if never used or primed.
     """
-    import math
-
-    rows = conn.execute(
-        "SELECT used_at FROM note_usage WHERE note_path = ? ORDER BY used_at DESC",
-        (note_path,),
-    ).fetchall()
-
-    if not rows:
-        return 0.0
-
-    active_count = len(rows)
-
-    # Age in days since most recent usage
-    most_recent = rows[0]["used_at"]
-    age_row = conn.execute(
-        "SELECT (julianday('now') - julianday(?)) as age_days", (most_recent,)
-    ).fetchone()
-    age_days = max(0.0, float(age_row["age_days"]))
-
-    decay = math.exp(-math.log(2) / half_life_days * age_days)
-    freq = 1.0 / (1.0 + math.exp(-math.log1p(active_count)))  # sigmoid(log1p(count))
-
-    return freq * decay
+    return batch_hotness_scores(
+        conn, [note_path], half_life_days=half_life_days,
+        primed_weight=primed_weight, primed_cap=primed_cap,
+        primed_decay_days=primed_decay_days,
+    ).get(note_path, 0.0)
 
 
 def batch_hotness_scores(
     conn: sqlite3.Connection,
     note_paths: list[str],
     half_life_days: float = 30.0,
+    primed_weight: float = 0.1,
+    primed_cap: float = 0.5,
+    primed_decay_days: float = 14.0,
 ) -> dict[str, float]:
     """Compute hotness scores for multiple notes in a single batch query.
 
+    Two-tier activation (issue #95, synaptic tagging-and-capture):
+
+    - ``'used'`` rows (deliberate record_usage / reads / search returns) each
+      count 1.0 toward the frequency term, as before.
+    - ``'primed'`` rows (auto-RAG vault_context injections) count
+      ``primed_weight`` each, the total capped at ``primed_cap`` — deliberately
+      BELOW one real use, so priming alone can never outrank a genuinely used
+      note — and only within ``primed_decay_days``; older primes contribute
+      nothing. Recency comes from the latest 'used' event, falling back to the
+      latest in-window prime for primed-only notes.
+
     Returns a dict mapping note_path -> hotness score (0-1).
-    Notes with no usage history are omitted from the result.
+    Notes with no live usage signal are omitted from the result.
     """
     import math
 
     if not note_paths:
         return {}
 
+    window = f"-{float(primed_decay_days)} days"
     placeholders = ",".join("?" for _ in note_paths)
     rows = conn.execute(
-        f"SELECT note_path, COUNT(*) as usage_count, "
-        f"julianday('now') - julianday(MAX(used_at)) as age_days "
+        f"SELECT note_path, "
+        f"SUM(CASE WHEN tier = 'primed' THEN 0 ELSE 1 END) as used_count, "
+        f"SUM(CASE WHEN tier = 'primed' AND used_at >= datetime('now', ?)"
+        f"    THEN 1 ELSE 0 END) as primed_count, "
+        f"julianday('now') - julianday("
+        f"    MAX(CASE WHEN tier != 'primed' THEN used_at END)) as used_age, "
+        f"julianday('now') - julianday("
+        f"    MAX(CASE WHEN tier = 'primed' AND used_at >= datetime('now', ?)"
+        f"        THEN used_at END)) as primed_age "
         f"FROM note_usage "
         f"WHERE note_path IN ({placeholders}) "
         f"GROUP BY note_path",
-        list(note_paths),
+        [window, window, *note_paths],
     ).fetchall()
 
     scores: dict[str, float] = {}
     ln2 = math.log(2)
     for row in rows:
-        age_days = max(0.0, float(row["age_days"]))
-        usage_count = int(row["usage_count"])
+        used_count = int(row["used_count"] or 0)
+        primed_count = int(row["primed_count"] or 0)
+        weighted = used_count + min(primed_weight * primed_count, primed_cap)
+        if weighted <= 0.0:
+            continue  # only stale primes — decayed to nothing
+        age_raw = row["used_age"] if used_count else row["primed_age"]
+        age_days = max(0.0, float(age_raw)) if age_raw is not None else 0.0
         decay = math.exp(-ln2 / half_life_days * age_days)
-        freq = 1.0 / (1.0 + math.exp(-math.log1p(usage_count)))
+        freq = 1.0 / (1.0 + math.exp(-math.log1p(weighted)))
         scores[row["note_path"]] = freq * decay
 
     return scores
@@ -878,7 +903,12 @@ def hybrid_search(
     # (default w=0.2 → 0.8 score + 0.2 hotness).
     if "hotness" not in ablate:
         hw = weights.hotness_weight
-        hotness_map = batch_hotness_scores(conn, [r["note_path"] for r in valid_results])
+        hotness_map = batch_hotness_scores(
+            conn, [r["note_path"] for r in valid_results],
+            primed_weight=weights.primed_weight,
+            primed_cap=cfg.primed_cap,
+            primed_decay_days=cfg.primed_decay_days,
+        )
         for r in valid_results:
             h = hotness_map.get(r["note_path"], 0.0)
             if h > 0.0:
@@ -1312,11 +1342,16 @@ def search_triples(
     db_path=None,
     workspace: str | None = None,
     context: str | None = None,
+    record: bool = True,
 ) -> list[TripleResult]:
     """Search triples using hybrid FTS5 + semantic similarity.
 
     ``context`` applies the same soft attention boost as hybrid_search on the
     scored (semantic/hybrid) paths; keyword-only paths have no score to boost.
+
+    ``record=False`` suppresses usage recording — vault_context retrieves
+    through here and logs its returns as 'primed' itself (issue #95), so its
+    sub-retrievals must not double-log strong 'used' events.
 
     Returns compact TripleResult objects (~10-20 tokens each).
     """
@@ -1329,7 +1364,8 @@ def search_triples(
     if mode == "keyword":
         fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
         results = _to_triple_results(conn, fts_results[:top_k])
-        _record_note_usage(conn, [r.note_path for r in results])
+        if record:
+            _record_note_usage(conn, [r.note_path for r in results])
         return results
 
     try:
@@ -1342,7 +1378,8 @@ def search_triples(
         )
         fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
         results = _to_triple_results(conn, fts_results[:top_k])
-        _record_note_usage(conn, [r.note_path for r in results])
+        if record:
+            _record_note_usage(conn, [r.note_path for r in results])
         return results
 
     if mode == "semantic":
@@ -1352,7 +1389,8 @@ def search_triples(
         )
         _boost_triples_by_context(conn, sem_results, context, embed_url=embed_url)
         results = _to_triple_results(conn, sem_results[:top_k])
-        _record_note_usage(conn, [r.note_path for r in results])
+        if record:
+            _record_note_usage(conn, [r.note_path for r in results])
         return results
 
     # Hybrid: FTS5 pre-filter + semantic rerank
@@ -1367,7 +1405,8 @@ def search_triples(
         )
         _boost_triples_by_context(conn, sem_results, context, embed_url=embed_url)
         results = _to_triple_results(conn, sem_results[:top_k])
-        _record_note_usage(conn, [r.note_path for r in results])
+        if record:
+            _record_note_usage(conn, [r.note_path for r in results])
         return results
 
     embeddings = []
@@ -1379,7 +1418,8 @@ def search_triples(
 
     if not valid_results:
         results = _to_triple_results(conn, fts_results[:top_k])
-        _record_note_usage(conn, [r.note_path for r in results])
+        if record:
+            _record_note_usage(conn, [r.note_path for r in results])
         return results
 
     matrix = np.stack(embeddings)
@@ -1394,7 +1434,8 @@ def search_triples(
     valid_results.sort(key=lambda x: x["score"], reverse=True)
 
     results = _to_triple_results(conn, valid_results[:top_k])
-    _record_note_usage(conn, [r.note_path for r in results])
+    if record:
+        _record_note_usage(conn, [r.note_path for r in results])
     return results
 
 

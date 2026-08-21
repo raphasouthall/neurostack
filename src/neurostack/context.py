@@ -88,6 +88,7 @@ def build_vault_context(
             triples = search_triples(
                 task, top_k=15, mode="hybrid",
                 embed_url=url, workspace=workspace, context=context,
+                record=False,
             )
             triple_entries = []
             for t in triples:
@@ -117,6 +118,7 @@ def build_vault_context(
         results = hybrid_search(
             task, top_k=5, mode="hybrid",
             embed_url=url, workspace=workspace, context=context,
+            record=False,
         )
         summary_entries = []
         for r in results:
@@ -159,6 +161,25 @@ def build_vault_context(
                 tokens_used += entry_tokens
     except Exception as exc:
         log.debug("Could not fetch session history: %s", exc)
+
+    # Two-tier activation signal (issue #95): every note path this call RETURNS
+    # is a 'primed' event — the auto-RAG hooks inject it, the model may never
+    # act on it. Sub-retrievals above ran with record=False so nothing here was
+    # double-logged as a strong 'used' event; the deliberate tier stays
+    # vault_record_usage / reads. With feedback enabled, the surfacing is also
+    # search-logged so a later deliberate use attributes back to this task
+    # (tag-and-capture through the #66 loop).
+    primed_paths = [t["note"] for t in sections.get("triples", [])]
+    primed_paths += [s["path"] for s in sections.get("summaries", [])]
+    if primed_paths:
+        from .search import _record_note_usage
+
+        _record_note_usage(conn, primed_paths, tier="primed")
+        if cfg.feedback_enabled:
+            from .feedback import log_search
+
+            log_search(conn, task, list(dict.fromkeys(primed_paths)),
+                       cfg.feedback_log_retention)
 
     return {
         "task": task,

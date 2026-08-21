@@ -87,6 +87,14 @@ class Config:
     feedback_enabled: bool = False
     feedback_window_seconds: float = 1800.0  # a use counts as feedback if within this of the search
     feedback_log_retention: int = 5000       # cap on retained search_log rows
+    # Two-tier activation signal (issue #95): vault_context injections are logged
+    # as 'primed' (synaptic tag — sub-threshold), deliberate record_usage / reads
+    # stay 'used' (capture — consolidating). Primed events carry a small hotness
+    # weight, their total contribution is capped BELOW one real use, and they only
+    # count within a decay window — priming alone must never promote a note.
+    primed_weight: float = 0.1        # hotness weight of one primed event vs one use
+    primed_cap: float = 0.5           # ceiling on total primed contribution (< 1.0 use)
+    primed_decay_days: float = 14.0   # primed events older than this contribute nothing
     # Vault write-back (issue #20): opt-in persistence of qualifying memories as
     # markdown files under a quarantined directory (default ``.neurostack/``).
     # Off by default — the DB stays the source of truth; files are exports. Only
@@ -123,6 +131,7 @@ class RankingWeights:
     inhibition_threshold: float = 0.65
     inhibition_strength: float = 0.30
     cooccurrence_boost_weight: float = 0.1
+    primed_weight: float = 0.1
     link_section_penalty: float = 0.5
     link_density_threshold: float = 0.5
 
@@ -135,6 +144,7 @@ class RankingWeights:
             inhibition_threshold=cfg.inhibition_threshold,
             inhibition_strength=cfg.inhibition_strength,
             cooccurrence_boost_weight=cfg.cooccurrence_boost_weight,
+            primed_weight=cfg.primed_weight,
             link_section_penalty=cfg.link_section_penalty,
             link_density_threshold=cfg.link_density_threshold,
         )
@@ -169,7 +179,8 @@ def load_config() -> Config:
         if "link_density_threshold" in data:
             cfg.link_density_threshold = float(data["link_density_threshold"])
         for key in ("convergence_weight", "hotness_weight",
-                    "inhibition_threshold", "inhibition_strength"):
+                    "inhibition_threshold", "inhibition_strength",
+                    "primed_weight", "primed_cap", "primed_decay_days"):
             if key in data:
                 setattr(cfg, key, float(data[key]))
         if "feedback_enabled" in data:
@@ -218,6 +229,9 @@ def load_config() -> Config:
         "NEUROSTACK_HOTNESS_WEIGHT": ("hotness_weight", float),
         "NEUROSTACK_INHIBITION_THRESHOLD": ("inhibition_threshold", float),
         "NEUROSTACK_INHIBITION_STRENGTH": ("inhibition_strength", float),
+        "NEUROSTACK_PRIMED_WEIGHT": ("primed_weight", float),
+        "NEUROSTACK_PRIMED_CAP": ("primed_cap", float),
+        "NEUROSTACK_PRIMED_DECAY_DAYS": ("primed_decay_days", float),
         "NEUROSTACK_FEEDBACK_ENABLED": ("feedback_enabled", bool),
         "NEUROSTACK_FEEDBACK_WINDOW_SECONDS": ("feedback_window_seconds", float),
         "NEUROSTACK_FEEDBACK_LOG_RETENTION": ("feedback_log_retention", int),
