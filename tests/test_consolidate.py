@@ -108,6 +108,25 @@ class TestHelpers:
         assert content.startswith("---\ndate:")
         assert "# T" in content and "- memory 7 (decision, 2026-01-01)" in content
 
+    def test_parse_synthesis_title_line(self):
+        from neurostack.consolidate import _parse_synthesis
+        out = _parse_synthesis(
+            'TITLE: Ollama fallback facts\n\nBody with C:\\paths and "quotes" \\x27.'
+        )
+        assert out["title"] == "Ollama fallback facts"
+        assert out["synthesis"].startswith("Body with C:\\paths")
+
+    def test_parse_synthesis_missing_title_falls_back(self):
+        from neurostack.consolidate import _parse_synthesis
+        out = _parse_synthesis("just a body")
+        assert out["title"] == "Consolidated session knowledge"
+        assert out["synthesis"] == "just a body"
+
+    def test_parse_synthesis_empty_raises(self):
+        from neurostack.consolidate import _parse_synthesis
+        with pytest.raises(ValueError):
+            _parse_synthesis("TITLE: only a title\n\n")
+
     def test_extended_content_appends_section(self):
         members = [{"memory_id": 7, "entity_type": "bug", "created_at": "x"}]
         out = _extended_content("---\n---\n\n# Old\n\nbody\n", "New facts",
