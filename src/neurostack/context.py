@@ -174,7 +174,7 @@ def build_vault_context(
     if primed_paths:
         from .search import _record_note_usage
 
-        _record_note_usage(conn, primed_paths, tier="primed")
+        _record_note_usage(conn, primed_paths, tier="primed", source="context")
         if cfg.feedback_enabled:
             from .feedback import log_search
 

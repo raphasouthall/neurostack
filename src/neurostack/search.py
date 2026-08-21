@@ -88,24 +88,30 @@ def _record_note_usage(
     conn: sqlite3.Connection,
     note_paths: list[str],
     tier: str = "used",
+    source: str = "explicit",
 ) -> None:
     """Record note access for hotness scoring. Non-blocking.
 
     Deduplicates paths so a single retrieval counts as one usage event per note,
     regardless of how many chunks/triples/edges from that note were returned.
 
-    ``tier`` is ``'used'`` (deliberate — record_usage, reads, search returns) or
-    ``'primed'`` (auto-RAG injection via vault_context; issue #95). Primed events
+    ``tier`` is the signal STRENGTH: ``'used'`` (deliberate — record_usage and
+    reads inferred from read-after-surface) or ``'primed'`` (mere surfacing —
+    vault_context injections and search returns; issues #95/#103). Primed events
     carry a small, capped, decaying weight in hotness — a synaptic tag, not a
     consolidation.
+
+    ``source`` is the PROVENANCE, i.e. which path wrote the row (issue #103):
+    ``'explicit'`` (record_usage), ``'inferred'`` (read-after-surface),
+    ``'search'`` (search returns), ``'context'`` (vault_context returns).
     """
     if not note_paths:
         return
     unique_paths = list(dict.fromkeys(note_paths))
     try:
         conn.executemany(
-            "INSERT INTO note_usage (note_path, tier) VALUES (?, ?)",
-            [(p, tier) for p in unique_paths],
+            "INSERT INTO note_usage (note_path, tier, source) VALUES (?, ?, ?)",
+            [(p, tier, source) for p in unique_paths],
         )
         conn.commit()
     except Exception:
@@ -429,9 +435,9 @@ def batch_hotness_scores(
 
     Two-tier activation (issue #95, synaptic tagging-and-capture):
 
-    - ``'used'`` rows (deliberate record_usage / reads / search returns) each
-      count 1.0 toward the frequency term, as before.
-    - ``'primed'`` rows (auto-RAG vault_context injections) count
+    - ``'used'`` rows (deliberate record_usage / reads inferred from
+      read-after-surface) each count 1.0 toward the frequency term, as before.
+    - ``'primed'`` rows (auto-RAG vault_context injections, search returns) count
       ``primed_weight`` each, the total capped at ``primed_cap`` — deliberately
       BELOW one real use, so priming alone can never outrank a genuinely used
       note — and only within ``primed_decay_days``; older primes contribute
@@ -1100,8 +1106,12 @@ def hybrid_search(
     # prediction-error log that the next configuration would then read back.
     returned_paths = [r["note_path"] for r in deduped[:top_k]]
     if record:
-        # Auto-record usage for returned results (drives hotness scoring)
-        _record_note_usage(conn, returned_paths)
+        # Returning a note is SURFACING it, not using it (issues #95/#103), so it
+        # earns the weak 'primed' tier. The strong 'used' signal now comes from
+        # read-after-surface — vault_read_file opening one of these paths — which
+        # the server infers itself instead of trusting a search to speak for the
+        # model's attention.
+        _record_note_usage(conn, returned_paths, tier="primed", source="search")
 
         # Implicit-feedback loop (issue #66): log what this search surfaced so a
         # later deliberate use of one of these notes can be attributed back to
@@ -1349,9 +1359,10 @@ def search_triples(
     ``context`` applies the same soft attention boost as hybrid_search on the
     scored (semantic/hybrid) paths; keyword-only paths have no score to boost.
 
-    ``record=False`` suppresses usage recording — vault_context retrieves
-    through here and logs its returns as 'primed' itself (issue #95), so its
-    sub-retrievals must not double-log strong 'used' events.
+    ``record=False`` suppresses usage recording entirely — vault_context
+    retrieves through here and logs its own returns as 'primed' (issue #95), so
+    its sub-retrievals must not double-log. When recording, returns are 'primed'
+    too: surfacing a triple's note is not using it (issue #103).
 
     Returns compact TripleResult objects (~10-20 tokens each).
     """
@@ -1365,7 +1376,9 @@ def search_triples(
         fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
         results = _to_triple_results(conn, fts_results[:top_k])
         if record:
-            _record_note_usage(conn, [r.note_path for r in results])
+            _record_note_usage(
+                conn, [r.note_path for r in results], tier="primed", source="search"
+            )
         return results
 
     try:
@@ -1379,7 +1392,9 @@ def search_triples(
         fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
         results = _to_triple_results(conn, fts_results[:top_k])
         if record:
-            _record_note_usage(conn, [r.note_path for r in results])
+            _record_note_usage(
+                conn, [r.note_path for r in results], tier="primed", source="search"
+            )
         return results
 
     if mode == "semantic":
@@ -1390,7 +1405,9 @@ def search_triples(
         _boost_triples_by_context(conn, sem_results, context, embed_url=embed_url)
         results = _to_triple_results(conn, sem_results[:top_k])
         if record:
-            _record_note_usage(conn, [r.note_path for r in results])
+            _record_note_usage(
+                conn, [r.note_path for r in results], tier="primed", source="search"
+            )
         return results
 
     # Hybrid: FTS5 pre-filter + semantic rerank
@@ -1406,7 +1423,9 @@ def search_triples(
         _boost_triples_by_context(conn, sem_results, context, embed_url=embed_url)
         results = _to_triple_results(conn, sem_results[:top_k])
         if record:
-            _record_note_usage(conn, [r.note_path for r in results])
+            _record_note_usage(
+                conn, [r.note_path for r in results], tier="primed", source="search"
+            )
         return results
 
     embeddings = []
@@ -1419,7 +1438,9 @@ def search_triples(
     if not valid_results:
         results = _to_triple_results(conn, fts_results[:top_k])
         if record:
-            _record_note_usage(conn, [r.note_path for r in results])
+            _record_note_usage(
+                conn, [r.note_path for r in results], tier="primed", source="search"
+            )
         return results
 
     matrix = np.stack(embeddings)
@@ -1435,7 +1456,9 @@ def search_triples(
 
     results = _to_triple_results(conn, valid_results[:top_k])
     if record:
-        _record_note_usage(conn, [r.note_path for r in results])
+        _record_note_usage(
+            conn, [r.note_path for r in results], tier="primed", source="search"
+        )
     return results
 
 
