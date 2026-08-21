@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -195,11 +195,14 @@ CREATE TABLE IF NOT EXISTS folder_summaries (
     generated_at TEXT
 );
 
--- Usage tracking for hotness scoring
+-- Usage tracking for hotness scoring. tier distinguishes deliberate use
+-- ('used' — vault_record_usage, reads) from auto-RAG injection ('primed' —
+-- vault_context returns; issue #95): synaptic tag vs capture.
 CREATE TABLE IF NOT EXISTS note_usage (
     usage_id INTEGER PRIMARY KEY AUTOINCREMENT,
     note_path TEXT NOT NULL,
-    used_at TEXT NOT NULL DEFAULT (datetime('now'))
+    used_at TEXT NOT NULL DEFAULT (datetime('now')),
+    tier TEXT NOT NULL DEFAULT 'used'
 );
 
 CREATE INDEX IF NOT EXISTS idx_note_usage_path ON note_usage(note_path);
@@ -1092,6 +1095,33 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (22)")
         conn.commit()
         log.info("Migration to v22 complete.")
+
+    if current < 23:
+        log.info(
+            "Migrating schema v22 -> v23: note_usage.tier — "
+            "primed vs used two-tier activation signal (issue #95)..."
+        )
+        cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(note_usage)").fetchall()
+        }
+        if not cols:
+            # Partial DBs (older fixtures/tests) may lack the table entirely.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS note_usage ("
+                " usage_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " note_path TEXT NOT NULL,"
+                " used_at TEXT NOT NULL DEFAULT (datetime('now')),"
+                " tier TEXT NOT NULL DEFAULT 'used')"
+            )
+        elif "tier" not in cols:
+            # Existing rows predate priming, so the 'used' default is correct.
+            conn.execute(
+                "ALTER TABLE note_usage ADD COLUMN"
+                " tier TEXT NOT NULL DEFAULT 'used'"
+            )
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (23)")
+        conn.commit()
+        log.info("Migration to v23 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:

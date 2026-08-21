@@ -173,7 +173,12 @@ def feedback_labels(conn, *, min_count: int = 1, max_age_days: float | None = No
 
 
 def feedback_stats(conn) -> dict:
-    """Summary of accumulated feedback — volume and rank distribution."""
+    """Summary of accumulated feedback — volume, rank distribution, and the
+    two activation tiers (issue #95): deliberate 'used' events vs auto-RAG
+    'primed' injections, with the in-window primed count that actually feeds
+    hotness."""
+    from .config import get_config
+
     searches = conn.execute("SELECT COUNT(*) FROM search_log").fetchone()[0]
     events = conn.execute("SELECT COUNT(*) FROM search_feedback").fetchone()[0]
     distinct_q = conn.execute(
@@ -189,6 +194,17 @@ def feedback_stats(conn) -> dict:
     below_top = conn.execute(
         "SELECT COUNT(*) FROM search_feedback WHERE rank IS NOT NULL AND rank > 1"
     ).fetchone()[0]
+    used_events = conn.execute(
+        "SELECT COUNT(*) FROM note_usage WHERE tier = 'used'"
+    ).fetchone()[0]
+    primed_events = conn.execute(
+        "SELECT COUNT(*) FROM note_usage WHERE tier = 'primed'"
+    ).fetchone()[0]
+    primed_in_window = conn.execute(
+        "SELECT COUNT(*) FROM note_usage WHERE tier = 'primed' "
+        "AND used_at >= datetime('now', ?)",
+        (f"-{float(get_config().primed_decay_days)} days",),
+    ).fetchone()[0]
     return {
         "searches_logged": searches,
         "feedback_events": events,
@@ -196,4 +212,7 @@ def feedback_stats(conn) -> dict:
         "distinct_chosen_notes": distinct_notes,
         "avg_chosen_rank": round(avg_rank, 2) if avg_rank is not None else None,
         "informative_events": below_top,  # chosen note was not already top-ranked
+        "used_events": used_events,
+        "primed_events": primed_events,
+        "primed_in_window": primed_in_window,  # primes still contributing to hotness
     }

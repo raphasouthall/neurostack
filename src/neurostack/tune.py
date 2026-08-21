@@ -40,6 +40,9 @@ DEFAULT_GRIDS: dict[str, list[float]] = {
     # optimum well past 0.6, so a grid capped there would silently under-move it.
     "convergence_weight": [0.0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.0],
     "hotness_weight": [0.0, 0.1, 0.2, 0.3, 0.4],
+    # Primed tier (issue #95): weight of one auto-RAG injection vs one real use.
+    # Usage-grounded labels only — frozen alongside hotness on synthetic labels.
+    "primed_weight": [0.0, 0.05, 0.1, 0.2, 0.3],
     "inhibition_threshold": [0.55, 0.65, 0.75, 0.85, 0.95],
     "inhibition_strength": [0.0, 0.15, 0.3, 0.45],
     "cooccurrence_boost_weight": [0.0, 0.05, 0.1, 0.2],
@@ -55,6 +58,7 @@ DEFAULT_ORDER: tuple[str, ...] = (
     "inhibition_strength",
     "inhibition_threshold",
     "hotness_weight",
+    "primed_weight",
     "cooccurrence_boost_weight",
     "link_section_penalty",
 )
