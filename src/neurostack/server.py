@@ -4,7 +4,7 @@
 """NeuroStack MCP server — thin adapter over the protocol-agnostic tool registry.
 
 All tool logic lives in neurostack.tools.*_tools modules. This file
-creates a FastMCP server with all tools auto-registered.
+creates an MCPServer with all tools auto-registered.
 """
 
 from .tools.mcp_adapter import create_mcp_server
