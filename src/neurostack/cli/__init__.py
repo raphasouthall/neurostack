@@ -792,8 +792,10 @@ def main():
                    help="Only observations older than this (default: 7)")
     p.add_argument("--min-siblings", type=int, default=3,
                    help="Related siblings required beyond the anchor (default: 3)")
-    p.add_argument("--threshold", type=float, default=0.35,
-                   help="Cosine similarity floor for siblings (default: 0.35)")
+    p.add_argument("--threshold", type=float, default=0.65,
+                   help="Cosine similarity floor for siblings (default: 0.65)")
+    p.add_argument("--max-cluster", type=int, default=20,
+                   help="Max observations consolidated per cluster (default: 20)")
     p.add_argument("--llm-model", default=None,
                    help="Override the synthesis model")
     p.add_argument(

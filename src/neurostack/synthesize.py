@@ -36,11 +36,17 @@ log = logging.getLogger("neurostack")
 DEFAULT_CAP = 5
 DEFAULT_MIN_AGE_DAYS = 7
 DEFAULT_MIN_SIBLINGS = 3
-# Same-topic-different-fact observations measure ~0.43 on the prod embedder
-# (embeddinggemma:300m) while unrelated content sits ~0.20; 0.35 splits the
-# gap with margin on the grouping side. Paraphrases (~0.93) are handled
-# earlier by harvest dedup — synthesis clusters are the same-topic tier.
-SIBLING_THRESHOLD = 0.35
+# Live-calibrated on the prod embedder (embeddinggemma:300m) against the real
+# memory store: 0.35-0.55 chains dense early-harvest noise into 100+ member
+# mega-clusters; 0.65 yields coherent 4-15 member topic groups. Paraphrases
+# (~0.93) are handled earlier by harvest dedup — synthesis clusters are the
+# same-topic tier.
+SIBLING_THRESHOLD = 0.65
+# Hard per-cluster member ceiling: one learning cannot faithfully preserve the
+# facts of an unbounded heap, and the prompt must stay bounded. Oversized
+# clusters keep the anchor plus its most similar members; the rest stay
+# unsuperseded and regroup on a later pass.
+MAX_CLUSTER = 20
 _MEMORY_CHARS = 1500          # per-observation content budget in the prompt
 _SUPERSEDED_PREFIX = "superseded_by:"
 
@@ -94,6 +100,7 @@ def cluster_observations(
     min_age_days: int = DEFAULT_MIN_AGE_DAYS,
     min_siblings: int = DEFAULT_MIN_SIBLINGS,
     threshold: float = SIBLING_THRESHOLD,
+    max_cluster: int = MAX_CLUSTER,
     workspace: str | None = None,
 ) -> tuple[list[dict], int]:
     """Greedy anchor clustering over stored embeddings. Pure read.
@@ -101,6 +108,8 @@ def cluster_observations(
     Returns (clusters, no_embedding_count). Each cluster dict carries its
     member rows, oldest-anchor first. Clusters below ``1 + min_siblings``
     members are discarded — a heap that small is not yet worth consolidating.
+    Clusters above ``max_cluster`` keep the anchor plus its most similar
+    members; the overflow stays available for a later pass.
     """
     from .embedder import HAS_NUMPY, blob_to_embedding, cosine_similarity_batch
 
@@ -140,6 +149,11 @@ def cluster_observations(
         ]
         if len(member_idx) < 1 + min_siblings:
             continue
+        if len(member_idx) > max_cluster:
+            member_idx = sorted(
+                member_idx, key=lambda j: (j != i, -sims[j])
+            )[:max_cluster]
+            member_idx.sort()
         for j in member_idx:
             assigned[j] = True
         clusters.append({
@@ -238,6 +252,7 @@ def synthesize_observations(
     min_age_days: int = DEFAULT_MIN_AGE_DAYS,
     min_siblings: int = DEFAULT_MIN_SIBLINGS,
     threshold: float = SIBLING_THRESHOLD,
+    max_cluster: int = MAX_CLUSTER,
     workspace: str | None = None,
     llm_url: str | None = None,
     llm_model: str | None = None,
@@ -258,7 +273,7 @@ def synthesize_observations(
 
     clusters, no_embedding = cluster_observations(
         conn, min_age_days=min_age_days, min_siblings=min_siblings,
-        threshold=threshold, workspace=workspace,
+        threshold=threshold, max_cluster=max_cluster, workspace=workspace,
     )
     planned = clusters[: max(0, cap)]
     report: dict = {
@@ -267,6 +282,7 @@ def synthesize_observations(
         "min_age_days": min_age_days,
         "min_siblings": min_siblings,
         "threshold": threshold,
+        "max_cluster": max_cluster,
         "clusters_found": len(clusters),
         "clusters_planned": len(planned),
         "candidates_without_embedding": no_embedding,

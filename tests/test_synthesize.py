@@ -151,8 +151,27 @@ class TestClustering:
         assert no_emb == 1
         assert len(clusters) == 1
 
-    def test_threshold_default(self):
-        assert SIBLING_THRESHOLD == 0.35
+    def test_threshold_default_live_calibrated(self):
+        assert SIBLING_THRESHOLD == 0.65
+
+    def test_oversized_cluster_capped_keeps_anchor_and_most_similar(
+            self, in_memory_db):
+        conn = in_memory_db
+        anchor = _add_memory(conn, "anchor", _emb(1.0))
+        near = [_add_memory(conn, f"near {i}", _emb(1.0, 0.1))
+                for i in range(2)]
+        far = [_add_memory(conn, f"far {i}", _emb(1.0, 0.5))
+               for i in range(3)]
+        clusters, _ = cluster_observations(
+            conn, threshold=0.6, max_cluster=3)
+        assert len(clusters) == 1
+        ids = [m["memory_id"] for m in clusters[0]["members"]]
+        # anchor survives the cap; the closest members win the remaining slots
+        assert ids == [anchor, *near]
+        # overflow stays unassigned and regroups into its own cluster if it
+        # can — here the three far rows form one (anchor + 2 siblings fails
+        # min_siblings=3), so they were simply left for a later pass
+        assert all(f not in ids for f in far)
 
 
 class TestDryRun:

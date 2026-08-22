@@ -378,6 +378,7 @@ def cmd_synthesize(args):
         min_age_days=args.min_age_days,
         min_siblings=args.min_siblings,
         threshold=args.threshold,
+        max_cluster=args.max_cluster,
         workspace=_get_workspace(args),
         llm_model=getattr(args, "llm_model", None),
     )
