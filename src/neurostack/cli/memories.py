@@ -363,3 +363,52 @@ def cmd_consolidate(args):
         print(f"\n    deferred (over cap): {len(c['memory_ids'])} memories -> {c['target']}")
     if report["dry_run"] and report["clusters_planned"]:
         print("\n  Dry run — pass --run to synthesize, write notes, and archive.")
+
+
+def cmd_synthesize(args):
+    """Observation -> learning synthesis (issue #36)."""
+    from ..schema import DB_PATH, get_db
+    from ..synthesize import synthesize_observations
+
+    conn = get_db(DB_PATH)
+    report = synthesize_observations(
+        conn,
+        cap=args.cap,
+        dry_run=not args.run,
+        min_age_days=args.min_age_days,
+        min_siblings=args.min_siblings,
+        threshold=args.threshold,
+        workspace=_get_workspace(args),
+        llm_model=getattr(args, "llm_model", None),
+    )
+    if args.json:
+        print(json.dumps(report, indent=2, default=str))
+        return
+
+    mode = "DRY RUN" if report["dry_run"] else "RUN"
+    before = report["ratio_before"]
+    print(f"  Synthesis ({mode}): {report['clusters_found']} cluster(s), "
+          f"{report['clusters_planned']} within cap {report['cap']}")
+    print(f"  Active observations: {before['observations']}, "
+          f"learnings: {before['learnings']}"
+          + (f" (ratio {before['ratio']}:1)" if before["ratio"] else ""))
+    if report["candidates_without_embedding"]:
+        print(f"  Skipped {report['candidates_without_embedding']} candidate(s) "
+          "without embeddings — run: neurostack backfill memories")
+    for c in report["synthesized"]:
+        ids = ", ".join(str(i) for i in c["memory_ids"])
+        print(f"\n    [{len(c['memory_ids'])} observations] anchor #{c['anchor_id']}")
+        print(f"      memories: {ids}")
+        if c.get("learning_id"):
+            print(f"      -> learning #{c['learning_id']}: {c['learning'][:120]}")
+    for c in report.get("skipped", []):
+        print(f"\n    SKIPPED anchor #{c['anchor_id']}: {c['error']}")
+    for c in report.get("deferred", []):
+        print(f"\n    deferred (over cap): {len(c['memory_ids'])} observations")
+    if not report["dry_run"]:
+        after = report["ratio_after"]
+        print(f"\n  After: {after['observations']} observations, "
+              f"{after['learnings']} learnings"
+              + (f" (ratio {after['ratio']}:1)" if after["ratio"] else ""))
+    if report["dry_run"] and report["clusters_planned"]:
+        print("\n  Dry run — pass --run to synthesize learnings and tag originals.")
