@@ -10,7 +10,7 @@ from .. import __version__
 from ..config import get_config
 from .api import cmd_api, cmd_bundle, cmd_serve
 from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
-from .memories import cmd_consolidate, cmd_memories, cmd_promote
+from .memories import cmd_consolidate, cmd_memories, cmd_promote, cmd_synthesize
 from .search import (
     cmd_ask,
     cmd_brief,
@@ -776,6 +776,31 @@ def main():
         help="Restrict to vault subdirectory. Also reads NEUROSTACK_WORKSPACE",
     )
     p.set_defaults(func=cmd_consolidate)
+
+    # synthesize
+    p = sub.add_parser(
+        "synthesize",
+        help="Observation -> learning synthesis: consolidate aged observation"
+        " heaps into single learnings (issue #36)",
+    )
+    p.add_argument("--run", action="store_true",
+                   help="Actually synthesize learnings and tag originals"
+                   " (default: dry run)")
+    p.add_argument("--cap", type=int, default=5,
+                   help="Max clusters synthesized per run (default: 5)")
+    p.add_argument("--min-age-days", type=int, default=7,
+                   help="Only observations older than this (default: 7)")
+    p.add_argument("--min-siblings", type=int, default=3,
+                   help="Related siblings required beyond the anchor (default: 3)")
+    p.add_argument("--threshold", type=float, default=0.35,
+                   help="Cosine similarity floor for siblings (default: 0.35)")
+    p.add_argument("--llm-model", default=None,
+                   help="Override the synthesis model")
+    p.add_argument(
+        "--workspace", "-w", default=None,
+        help="Restrict to vault subdirectory. Also reads NEUROSTACK_WORKSPACE",
+    )
+    p.set_defaults(func=cmd_synthesize)
 
     # stats
     p = sub.add_parser("stats", help="Show index stats")
