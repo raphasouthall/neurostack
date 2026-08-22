@@ -3,7 +3,7 @@
 """Integration tests for the MCP server layer (issue #5).
 
 Exercises the registered MCP tools end-to-end against a fixture vault:
-registry registration, the FastMCP adapter, and the tool functions
+registry registration, the MCPServer adapter, and the tool functions
 themselves (vault_search, vault_stats, vault_prediction_errors), asserting
 response structure and JSON serialisability.
 
