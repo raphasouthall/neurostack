@@ -790,7 +790,11 @@ def harvest_sessions(
                 continue
 
             tags = _extract_tags(item["text"])
-            ttl = 168.0 if etype == "context" else None
+            # Harvest-created rows only: agent-written memories keep their
+            # caller-chosen TTL. Auto-captured context goes stale in a week;
+            # auto-captured observations get 30 days to be synthesized into a
+            # learning (issue #36) before they expire as noise.
+            ttl = {"context": 168.0, "observation": 720.0}.get(etype)
             record = {"content": summary, "entity_type": etype, "tags": tags,
                       "ttl_hours": ttl, "provider": session.provider}
 

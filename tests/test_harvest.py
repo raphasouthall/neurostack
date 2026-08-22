@@ -539,3 +539,68 @@ class TestLlmClassify:
         }]
         out = _llm_classify(candidates, "http://llm.test", "model")
         assert out[0]["entity_type"] == "observation"
+
+
+# ---------------------------------------------------------------------------
+# harvest_sessions — per-type TTL on harvest-created memories (issue #36)
+# ---------------------------------------------------------------------------
+
+class TestHarvestTtl:
+    """Auto-captured context expires in 7 days, observations in 30; durable
+    types (learning, decision, ...) stay permanent. Agent-written memories are
+    unaffected — the TTL lives in the harvest save path only."""
+
+    def _run_harvest(self, in_memory_db, tmp_path, monkeypatch, classified):
+        import numpy as np
+
+        import neurostack.embedder as embedder_mod
+        import neurostack.harvest as harvest_mod
+        from neurostack.harvest import SessionFile
+
+        session = SessionFile(path=tmp_path / "s.jsonl", mtime=1.0,
+                              provider="claude-code")
+        monkeypatch.setattr(harvest_mod, "find_recent_sessions",
+                            lambda *a, **k: [session])
+        monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [
+            Message(role="assistant", text=c["text"]) for c in classified
+        ])
+        monkeypatch.setattr(harvest_mod, "_llm_classify",
+                            lambda cands, *a, **k: classified)
+        monkeypatch.setattr(harvest_mod, "_harvest_state_path",
+                            lambda: tmp_path / "state.json")
+        monkeypatch.setattr("neurostack.schema.get_db",
+                            lambda path: in_memory_db)
+        cfg = SimpleNamespace(embed_url="http://embed.test",
+                              llm_url="http://llm.test", llm_model="m",
+                              llm_api_key=None, writeback_enabled=False)
+        monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+        monkeypatch.setattr(embedder_mod, "get_embedding",
+                            lambda *a, **k: np.ones(768, dtype=np.float32))
+        from neurostack.harvest import harvest_sessions
+        return harvest_sessions(n_sessions=1, dry_run=False)
+
+    def test_per_type_ttl(self, in_memory_db, tmp_path, monkeypatch):
+        classified = [
+            {"text": "The API key is stored at /etc/app/credentials for the deploy.",
+             "role": "assistant", "prefilter_type": "context",
+             "entity_type": "context",
+             "summary": "API key stored at /etc/app/credentials for deploys"},
+            {"text": "The dashboard pipeline currently runs on agent pool two.",
+             "role": "assistant", "prefilter_type": "decision",
+             "entity_type": "observation",
+             "summary": "Dashboard pipeline currently runs on agent pool two"},
+            {"text": "We decided to use merge commits over squash for this repo.",
+             "role": "assistant", "prefilter_type": "decision",
+             "entity_type": "decision",
+             "summary": "Use merge commits over squash for this repository"},
+        ]
+        report = self._run_harvest(in_memory_db, tmp_path, monkeypatch, classified)
+
+        assert [r["status"] for r in report["saved"]] == ["saved"] * 3
+        rows = {r["entity_type"]: r for r in in_memory_db.execute(
+            "SELECT entity_type, expires_at,"
+            " round((julianday(expires_at) - julianday('now')) * 24) AS ttl_h"
+            " FROM memories").fetchall()}
+        assert rows["context"]["ttl_h"] == 168
+        assert rows["observation"]["ttl_h"] == 720
+        assert rows["decision"]["expires_at"] is None

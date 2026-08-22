@@ -55,7 +55,16 @@ insight in noise, so reach for a more specific type whenever one fits.
   values, "X is currently at version N". Harvest gives these a 168h TTL by default. Not for
   durable handoffs or long-lived facts; those aren't ephemeral state.
 - **observation**: A durable fact that isn't yet a synthesised insight. Use sparingly — if you can
-  phrase it as a learning or decision, do that. Raw observations are the noisiest, least useful bucket.
+  phrase it as a learning or decision, do that. Raw observations are the noisiest, least useful
+  bucket; harvest-created observations expire after 30 days unless promoted.
 
-When several related observations pile up, promote them into one consolidated `learning`
-(via `vault_update_memory`) rather than leaving a heap of near-duplicates.
+## Promote observations into learnings
+
+When several related observations pile up, consolidate them into one `learning` instead of
+leaving a heap of near-duplicates. Manually via `vault_update_memory`, or in bulk:
+```
+neurostack synthesize            # dry run: show planned clusters
+neurostack synthesize --run      # consolidate; originals get superseded_by:<id> tags
+```
+Clusters are observations older than 7 days with at least 3 similar siblings. Originals are
+tagged, never deleted — filter them out with the `superseded_by:` tag prefix.
