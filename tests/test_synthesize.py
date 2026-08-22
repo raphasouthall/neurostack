@@ -80,8 +80,8 @@ class TestHelpers:
 
     def test_cluster_tags_union_ranked_and_marked(self):
         members = [
-            {"tags": json.dumps(["aks", "azure", "superseded_by:9"])},
-            {"tags": json.dumps(["aks"])},
+            {"tags": json.dumps(["aks", "azure", "superseded_by:9", ""])},
+            {"tags": json.dumps(["aks", "  "])},
             {"tags": None},
         ]
         tags = _cluster_tags(members)
