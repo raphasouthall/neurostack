@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""MCP adapter — wraps registry tools for FastMCP.
+"""MCP adapter — wraps registry tools for the mcp 2.x MCPServer.
 
 Usage:
     from neurostack.tools.mcp_adapter import create_mcp_server
@@ -15,7 +15,7 @@ import functools
 import inspect
 import logging
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from . import ensure_registered
@@ -23,14 +23,14 @@ from . import ensure_registered
 log = logging.getLogger("neurostack.tools.mcp_adapter")
 
 
-def create_mcp_server(name: str = "neurostack", **fastmcp_kwargs) -> FastMCP:
-    """Create a FastMCP server with all registry tools auto-registered.
+def create_mcp_server(name: str = "neurostack", **server_kwargs) -> MCPServer:
+    """Create an MCPServer with all registry tools auto-registered.
 
     Args:
         name: MCP server name
-        **fastmcp_kwargs: Passed through to FastMCP constructor
+        **server_kwargs: Passed through to the MCPServer constructor
     """
-    mcp = FastMCP(name, **fastmcp_kwargs)
+    mcp = MCPServer(name, **server_kwargs)
     registry = ensure_registered()
 
     for tool_def in registry.list_tools():
@@ -46,13 +46,13 @@ def create_mcp_server(name: str = "neurostack", **fastmcp_kwargs) -> FastMCP:
         if tool_def.annotations:
             hints = tool_def.annotations
             mcp_annotations = ToolAnnotations(
-                readOnlyHint=hints.read_only,
-                destructiveHint=hints.destructive,
-                idempotentHint=hints.idempotent,
-                openWorldHint=hints.open_world,
+                read_only_hint=hints.read_only,
+                destructive_hint=hints.destructive,
+                idempotent_hint=hints.idempotent,
+                open_world_hint=hints.open_world,
             )
 
-        mcp.tool(annotations=mcp_annotations)(wrapper)
+        mcp.add_tool(wrapper, annotations=mcp_annotations)
 
     log.debug("Registered %d tools on MCP server %r", len(registry), name)
     return mcp
