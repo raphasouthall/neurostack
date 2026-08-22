@@ -209,7 +209,8 @@ def _cluster_tags(members: list[dict], limit: int = 8) -> list[str]:
     for m in members:
         try:
             for t in json.loads(m.get("tags") or "[]"):
-                if not t.startswith(_SUPERSEDED_PREFIX):
+                t = t.strip() if isinstance(t, str) else ""
+                if t and not t.startswith(_SUPERSEDED_PREFIX):
                     counts[t] = counts.get(t, 0) + 1
         except (TypeError, ValueError):
             continue
