@@ -260,5 +260,16 @@ def get_neighborhood(
     # Sort by PageRank descending
     neighbors.sort(key=lambda x: x.pagerank, reverse=True)
 
-    _record_note_usage(conn, [center.path] + [n.path for n in neighbors])
+    # Returning a neighborhood is surfacing, not use (issues #95/#103/#109):
+    # log every returned path as 'primed' and, with feedback enabled, search-log
+    # the surfacing so a later deliberate read attributes back as 'used'.
+    surfaced = [center.path] + [n.path for n in neighbors]
+    _record_note_usage(conn, surfaced, tier="primed", source="graph")
+    from .config import get_config
+
+    cfg = get_config()
+    if cfg.feedback_enabled:
+        from .feedback import log_search
+
+        log_search(conn, note_path, surfaced, cfg.feedback_log_retention)
     return GraphResult(center=center, neighbors=neighbors)
