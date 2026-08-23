@@ -38,10 +38,13 @@ DEFAULT_MIN_AGE_DAYS = 7
 DEFAULT_MIN_SIBLINGS = 3
 # Live-calibrated on the prod embedder (embeddinggemma:300m) against the real
 # memory store: 0.35-0.55 chains dense early-harvest noise into 100+ member
-# mega-clusters; 0.65 yields coherent 4-15 member topic groups. Paraphrases
+# mega-clusters; 0.65 still cross-linked unrelated topics (one cluster mixed
+# neurostack-cloud, KPI-dashboard, AFD, firewall and Citrix observations) and
+# pulled credential-bearing rows along; 0.75 yields tight same-topic groups
+# whose live learnings read well (issue #111, run of 2026-08-23). Paraphrases
 # (~0.93) are handled earlier by harvest dedup — synthesis clusters are the
 # same-topic tier.
-SIBLING_THRESHOLD = 0.65
+SIBLING_THRESHOLD = 0.75
 # Hard per-cluster member ceiling: one learning cannot faithfully preserve the
 # facts of an unbounded heap, and the prompt must stay bounded. Oversized
 # clusters keep the anchor plus its most similar members; the rest stay

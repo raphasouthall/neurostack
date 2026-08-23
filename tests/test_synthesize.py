@@ -152,7 +152,7 @@ class TestClustering:
         assert len(clusters) == 1
 
     def test_threshold_default_live_calibrated(self):
-        assert SIBLING_THRESHOLD == 0.65
+        assert SIBLING_THRESHOLD == 0.75
 
     def test_oversized_cluster_capped_keeps_anchor_and_most_similar(
             self, in_memory_db):
