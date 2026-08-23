@@ -198,9 +198,11 @@ CREATE TABLE IF NOT EXISTS folder_summaries (
 -- Usage tracking for hotness scoring. tier is signal STRENGTH: deliberate use
 -- ('used' — vault_record_usage, inferred reads) vs auto-RAG injection
 -- ('primed' — vault_context / search returns; issue #95) — synaptic tag vs
--- capture. source is PROVENANCE, i.e. which path wrote the row (issue #103):
--- 'explicit' (record_usage), 'inferred' (read-after-surface), 'search'
--- (search returns), 'context' (vault_context returns).
+-- capture. source is PROVENANCE, i.e. which path wrote the row (issues
+-- #103/#109): 'explicit' (record_usage), 'inferred' (read-after-surface),
+-- 'search' (search returns), 'context' (vault_context returns), 'graph'
+-- (vault_graph returns), 'related' (vault_related returns), 'summary'
+-- (vault_summary returns).
 CREATE TABLE IF NOT EXISTS note_usage (
     usage_id INTEGER PRIMARY KEY AUTOINCREMENT,
     note_path TEXT NOT NULL,
