@@ -288,7 +288,18 @@ def vault_summary(path_or_query: str) -> dict:
     if not row:
         return {"error": "Note not found"}
 
-    _record_note_usage(conn, [row["path"]])
+    # Returning a ~150-token summary is surfacing, not use (issues #95/#103/#109):
+    # 'primed' here; a follow-up read of the note itself infers the strong
+    # signal via capture_read. With feedback enabled, search-log the surfacing
+    # so that read attributes back.
+    _record_note_usage(conn, [row["path"]], tier="primed", source="summary")
+    from ..config import get_config
+
+    cfg = get_config()
+    if cfg.feedback_enabled:
+        from ..feedback import log_search
+
+        log_search(conn, path_or_query, [row["path"]], cfg.feedback_log_retention)
 
     return {
         "path": row["path"],

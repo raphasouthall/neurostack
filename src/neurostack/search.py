@@ -101,9 +101,11 @@ def _record_note_usage(
     carry a small, capped, decaying weight in hotness — a synaptic tag, not a
     consolidation.
 
-    ``source`` is the PROVENANCE, i.e. which path wrote the row (issue #103):
-    ``'explicit'`` (record_usage), ``'inferred'`` (read-after-surface),
-    ``'search'`` (search returns), ``'context'`` (vault_context returns).
+    ``source`` is the PROVENANCE, i.e. which path wrote the row (issues
+    #103/#109): ``'explicit'`` (record_usage), ``'inferred'``
+    (read-after-surface), ``'search'`` (search returns), ``'context'``
+    (vault_context returns), ``'graph'`` (vault_graph returns), ``'related'``
+    (vault_related returns), ``'summary'`` (vault_summary returns).
     """
     if not note_paths:
         return

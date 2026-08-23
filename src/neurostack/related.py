@@ -121,5 +121,17 @@ def find_related(
             "summary": summary,
         })
 
-    _record_note_usage(conn, [r["path"] for r in results])
+    # Returning related notes is surfacing, not use (issues #95/#103/#109):
+    # log the returned paths as 'primed' and, with feedback enabled, search-log
+    # the surfacing so a later deliberate read attributes back as 'used'.
+    surfaced = [r["path"] for r in results]
+    _record_note_usage(conn, surfaced, tier="primed", source="related")
+    if surfaced:
+        from .config import get_config
+
+        cfg = get_config()
+        if cfg.feedback_enabled:
+            from .feedback import log_search
+
+            log_search(conn, note_path, surfaced, cfg.feedback_log_retention)
     return results
