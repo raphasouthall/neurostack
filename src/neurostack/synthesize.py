@@ -308,6 +308,7 @@ def synthesize_observations(
         return report
 
     from .memories import save_memory, update_memory
+    from .redact import redact_secrets
 
     for cluster in planned:
         plan = _plan(cluster)
@@ -318,6 +319,12 @@ def synthesize_observations(
             plan["error"] = f"synthesis failed: {exc}"
             report["skipped"].append(plan)
             continue
+
+        # A learning inherits its members' text, so a credential left in an old
+        # observation would propagate into the new memory (issue #113).
+        learning, redacted = redact_secrets(learning)
+        if redacted:
+            plan["redacted"] = redacted
 
         try:
             memory = save_memory(
