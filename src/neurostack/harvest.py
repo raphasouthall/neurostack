@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from .redact import redact_secrets
+
 log = logging.getLogger("neurostack")
 
 
@@ -784,6 +786,10 @@ def harvest_sessions(
         # Save classified insights
         for item in classified:
             summary = item.get("summary", _make_summary(item["text"]))
+            # Transcripts carry live credentials; a summary must never store one
+            # (issue #113). Redact BEFORE the dedup check so the stored form and
+            # the deduped form are the same string.
+            summary, redacted = redact_secrets(summary)
             etype = item.get("entity_type", item.get("prefilter_type", "observation"))
 
             if len(summary) < _MIN_LEN:
@@ -797,6 +803,8 @@ def harvest_sessions(
             ttl = {"context": 168.0, "observation": 720.0}.get(etype)
             record = {"content": summary, "entity_type": etype, "tags": tags,
                       "ttl_hours": ttl, "provider": session.provider}
+            if redacted:
+                record["redacted"] = redacted
 
             if _is_duplicate(conn, summary, etype, embed_url=url):
                 record["status"] = "skipped (duplicate)"
