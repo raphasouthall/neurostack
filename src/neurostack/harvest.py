@@ -1028,7 +1028,12 @@ def harvest_transcript(
             saved=saved, skipped=skipped, counts=counts,
         )
 
-    if not dry_run:
+    # Record the digest only if the run actually yielded something. LLM
+    # classification is not deterministic (issue #117), so a zero-yield run may
+    # simply have been unlucky — leaving it unrecorded lets a client re-post and
+    # pick up what the classifier dropped, instead of the guard making that loss
+    # permanent.
+    if not dry_run and (saved or skipped):
         harvest_state[state_key] = digest
         _save_harvest_state(harvest_state)
 
