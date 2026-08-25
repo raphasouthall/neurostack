@@ -15,8 +15,10 @@ Query time blends them as ``weight + reinforcement``. A row survives a
 rebuild while either signal is positive.
 """
 
+import atexit
 import logging
 import sqlite3
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -24,6 +26,12 @@ log = logging.getLogger("neurostack")
 
 # Caps the reinforcement (usage) signal; structural weights are raw counts
 MAX_COOCCURRENCE_WEIGHT = 100.0
+
+# SQLite caps the number of bound variables per statement (999 by default), so
+# every batch query over an arbitrary-length entity/pair list is issued in
+# chunks of this size. Shared with the search-side co-occurrence lookup so both
+# sides stay under the same limit (issue #120).
+SQL_PARAM_CHUNK = 500
 
 
 def reinforce_cooccurrence(
@@ -60,9 +68,9 @@ def reinforce_cooccurrence(
         # Batch-fetch existing reinforcement in a single query
         canonical_list = sorted(canonical)
         existing: dict[tuple[str, str], float] = {}
-        # SQLite has a variable limit; process in chunks of 500 pairs
-        for chunk_start in range(0, len(canonical_list), 500):
-            chunk = canonical_list[chunk_start:chunk_start + 500]
+        # SQLite has a variable limit; process in pair chunks
+        for chunk_start in range(0, len(canonical_list), SQL_PARAM_CHUNK):
+            chunk = canonical_list[chunk_start:chunk_start + SQL_PARAM_CHUNK]
             where_clauses = " OR ".join(
                 "(entity_a = ? AND entity_b = ?)" for _ in chunk
             )
@@ -98,6 +106,193 @@ def reinforce_cooccurrence(
     except Exception:
         log.debug("reinforce_cooccurrence failed silently", exc_info=True)
         return 0
+
+
+# ── Deferred reinforcement (issue #120) ──
+#
+# Reinforcement is a WRITE and SQLite allows exactly one writer, so doing it
+# inside a search put the request on the write lock: two overlapping searches
+# serialized, and the second was measured blocking for minutes on a 12.8M-row
+# table. Nothing reads the reinforcement column back until the *next* search's
+# ranking blend, so the write does not belong on the request path at all.
+# Searches buffer pairs in memory and the write happens elsewhere, through
+# reinforce_cooccurrence, whose semantics are untouched.
+#
+# "Elsewhere" is a short-lived background thread with its own connection, not an
+# inline flush every N searches: an inline flush would put the write back on one
+# request in N, and the request path has to be read-only. Under WAL a concurrent
+# writer does not block the readers a search performs.
+#
+# The buffer is per-process, and that is exactly what makes it work: the MCP
+# server is a long-lived process, so pairs buffered by one search are written by
+# the drain a later search triggers, by `neurostack cooccurrence --flush`, or by
+# the atexit hook when the process stops. A short-lived CLI invocation flushes
+# on exit.
+#
+# Pairs are deduplicated while buffered. A pair repeated across searches inside
+# one flush window is therefore reinforced once rather than once per search —
+# deliberate: three identical consecutive searches used to triple-bump the same
+# pairs, which is query repetition, not association strength.
+REINFORCEMENT_FLUSH_THRESHOLD = 5000
+
+# Hard ceiling so a persistently failing flush (locked database, disk full)
+# cannot grow the buffer without bound. Past the ceiling new pairs are dropped:
+# reinforcement is a soft ranking signal, and losing some of it is strictly
+# better than an unbounded process.
+REINFORCEMENT_BUFFER_MAX = 50_000
+
+_reinforcement_lock = threading.Lock()
+_reinforcement_buffer: set[tuple[str, str]] = set()
+# Path of the database the buffered pairs belong to, so the writer thread and the
+# atexit hook can open their own connections instead of using one across threads
+# (sqlite3 forbids that). Empty for in-memory databases, which no other thread
+# can reach — those pairs wait for an explicit flush_reinforcement call.
+_reinforcement_db_path: str = ""
+_flush_thread_lock = threading.Lock()
+_flush_thread: threading.Thread | None = None
+
+
+def _database_path(conn: sqlite3.Connection) -> str:
+    """File path backing *conn*'s main database ("" for in-memory)."""
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+        return (row[2] or "") if row else ""
+    except Exception:
+        return ""
+
+
+def _flush_in_background(db_path: str) -> threading.Thread | None:
+    """Drain the buffer on a worker thread with its own connection.
+
+    One writer at a time: while a drain is in flight, later callers just keep
+    buffering, and whatever they add is picked up by the next drain.
+    """
+    global _flush_thread
+    with _flush_thread_lock:
+        if _flush_thread is not None and _flush_thread.is_alive():
+            return _flush_thread
+        thread = threading.Thread(
+            target=_flush_worker,
+            args=(db_path,),
+            name="neurostack-reinforce",
+            daemon=True,
+        )
+        _flush_thread = thread
+    thread.start()
+    return thread
+
+
+def _flush_worker(db_path: str) -> None:
+    """Open a writer connection, drain the buffer, close it again."""
+    try:
+        conn = sqlite3.connect(db_path, timeout=60.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA busy_timeout=60000")
+            flush_reinforcement(conn)
+        finally:
+            conn.close()
+    except Exception:
+        log.debug("background reinforcement flush failed", exc_info=True)
+
+
+def buffer_reinforcement(
+    conn: sqlite3.Connection, entity_pairs: list[tuple[str, str]]
+) -> int:
+    """Queue entity pairs for a later reinforcement write.
+
+    Writes nothing itself. Once the buffer passes REINFORCEMENT_FLUSH_THRESHOLD a
+    background thread drains it, so the caller — a search serving a request —
+    stays read-only. Pairs buffered from an in-memory database (no file another
+    thread could open) wait for an explicit flush_reinforcement instead.
+
+    Never raises: a caller in the middle of serving a search must never see a
+    reinforcement failure. Returns the number of pairs still buffered.
+    """
+    if not entity_pairs:
+        return 0
+
+    global _reinforcement_db_path
+    try:
+        # Canonicalized outside the lock (entity_a < entity_b, the order the
+        # table stores) so the buffer dedups a pair seen in either direction and
+        # the critical section stays a single set update.
+        canonical = {(min(a, b), max(a, b)) for a, b in entity_pairs if a != b}
+        if not canonical:
+            return 0
+        db_path = "" if _reinforcement_db_path else _database_path(conn)
+
+        with _reinforcement_lock:
+            _reinforcement_db_path = _reinforcement_db_path or db_path
+            db_path = _reinforcement_db_path
+            headroom = REINFORCEMENT_BUFFER_MAX - len(_reinforcement_buffer)
+            if headroom > 0:
+                _reinforcement_buffer.update(list(canonical)[:headroom])
+            pending = len(_reinforcement_buffer)
+
+        if pending > REINFORCEMENT_FLUSH_THRESHOLD and db_path:
+            _flush_in_background(db_path)
+        return pending
+    except Exception:
+        log.debug("buffer_reinforcement failed silently", exc_info=True)
+        return 0
+
+
+def flush_reinforcement(conn: sqlite3.Connection) -> int:
+    """Write every buffered pair and clear the buffer.
+
+    The batch is taken out of the buffer before the write, so a concurrent
+    search keeps buffering into an empty set rather than waiting on the write.
+    A failed write drops its batch (reinforce_cooccurrence swallows the error
+    and returns 0) instead of re-queuing it: retrying a batch that failed on a
+    locked database is how a bounded buffer turns into an unbounded one.
+
+    Returns the number of pairs written.
+    """
+    with _reinforcement_lock:
+        if not _reinforcement_buffer:
+            return 0
+        batch = list(_reinforcement_buffer)
+        _reinforcement_buffer.clear()
+    return reinforce_cooccurrence(conn, batch)
+
+
+def reinforcement_buffer_size() -> int:
+    """Number of entity pairs waiting to be written."""
+    with _reinforcement_lock:
+        return len(_reinforcement_buffer)
+
+
+def _flush_reinforcement_at_exit() -> None:
+    """Drain the buffer on interpreter shutdown so the signal is not lost."""
+    # A drain already running holds a batch this function cannot see; give it a
+    # moment to land before writing the rest. The thread is a daemon, so without
+    # the join its batch would die with the interpreter.
+    with _flush_thread_lock:
+        thread = _flush_thread
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=10.0)
+
+    with _reinforcement_lock:
+        pending = len(_reinforcement_buffer)
+        db_path = _reinforcement_db_path
+    if not pending or not db_path:
+        return
+    try:
+        # A fresh connection: the one that buffered these pairs may belong to
+        # another thread, and sqlite3 forbids cross-thread use. Raw connect
+        # rather than get_db -- shutdown is no time to run migrations.
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            flush_reinforcement(conn)
+        finally:
+            conn.close()
+    except Exception:
+        log.debug("atexit reinforcement flush failed", exc_info=True)
+
+
+atexit.register(_flush_reinforcement_at_exit)
 
 
 def persist_cooccurrence(conn: sqlite3.Connection) -> int:
