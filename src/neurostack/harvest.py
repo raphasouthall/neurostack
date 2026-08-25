@@ -680,26 +680,35 @@ def _llm_classify(
 
         batch_text = "\n---\n".join(numbered)
 
+        # The instruction to answer EVERY message, with the expected line count
+        # stated, is load-bearing (issue #117). The previous prompt led with the
+        # keep/skip criteria and offered the two line shapes as alternatives;
+        # measured against one session's 10 candidates it answered only 5 of
+        # them and kept 0, five runs in a row. Naming the count and forbidding
+        # merged or reordered lines took the same 10 to 10 answered and 9 kept,
+        # stable over five runs.
         prompt = (
-            "You are analyzing an AI coding session transcript. "
-            "For each numbered message below, decide if it contains a "
-            "genuinely useful insight worth remembering long-term. "
-            "Insights include: architectural decisions, bug root causes, "
-            "tool configurations, user corrections/preferences, "
-            "discovered facts about infrastructure, and ephemeral "
-            "session-scoped facts (credentials, endpoints, URLs, "
-            "current-state notes that go stale quickly).\n\n"
-            "Skip boilerplate, status updates, and routine tool output.\n\n"
+            "You are analyzing an AI coding session transcript.\n\n"
+            f"There are {len(batch)} numbered messages below. Answer with "
+            f"EXACTLY {len(batch)} lines, one per message, in order, numbered "
+            f"[1] to [{len(batch)}]. Do not merge, skip or reorder lines. "
+            "No preamble.\n\n"
+            "Each line is either:\n"
+            "[N] KEEP type=<bug|decision|convention|learning|observation|"
+            "context> summary=<one sentence>\n"
+            "[N] SKIP\n\n"
+            "KEEP a message that records any of: an architectural or tooling "
+            "decision, a bug's root cause or fix, a rule to follow, a "
+            "discovered fact about a system, a user correction or preference, "
+            "or a short-lived operational fact such as an endpoint, credential "
+            "location or current-state note.\n"
+            "SKIP a message that is only progress narration, a restatement of "
+            "the task, or raw command output.\n\n"
             "Type guide: bug=root cause/fix, decision=choice made, "
             "convention=rule to always follow, learning=discovered fact, "
             "observation=durable infrastructure fact, "
             "context=ephemeral/short-lived fact kept only short-term.\n\n"
-            "For each message, respond with EXACTLY one line:\n"
-            "[N] KEEP type=<bug|decision|convention|learning|observation|context> "
-            "summary=<one sentence summary>\n"
-            "OR:\n"
-            "[N] SKIP\n\n"
-            "Messages:\n" + batch_text + "\n\nAnalysis:"
+            "Messages:\n" + batch_text + "\n\nAnswer:"
         )
 
         try:
@@ -713,7 +722,9 @@ def _llm_classify(
                     "stream": False,
                     "reasoning_effort": "none",
                     "temperature": 0.1,
-                    "max_tokens": 500,
+                    # One line per candidate, each carrying a summary: 500
+                    # truncated a 10-message answer mid-line (issue #117).
+                    "max_tokens": 2000,
                 },
                 timeout=60.0,
             )
@@ -730,15 +741,24 @@ def _llm_classify(
                 results.append(c)
             continue
 
+        answered: set[int] = set()
         for line in response.strip().splitlines():
+            line = line.strip()
+            skip = re.match(r"\[(\d+)\]\s+SKIP\b", line)
+            if skip:
+                idx = int(skip.group(1)) - 1
+                if 0 <= idx < len(batch):
+                    answered.add(idx)
+                continue
             m = re.match(
                 r"\[(\d+)\]\s+KEEP\s+type=(\w+)\s+summary=(.+)",
-                line.strip(),
+                line,
             )
             if not m:
                 continue
             idx = int(m.group(1)) - 1
             if 0 <= idx < len(batch):
+                answered.add(idx)
                 c = batch[idx].copy()
                 etype = m.group(2).strip()
                 valid = {"bug", "decision", "convention", "learning", "observation", "context"}
@@ -748,6 +768,16 @@ def _llm_classify(
                     c["entity_type"] = c["prefilter_type"]
                 c["summary"] = m.group(3).strip()
                 results.append(c)
+
+        # A batch the model only partly answered is a silent capture loss: the
+        # unanswered candidates are dropped, and an all-SKIP reply is otherwise
+        # indistinguishable from a reply that never arrived (issue #117). Say so.
+        missing = len(batch) - len(answered)
+        if missing:
+            log.warning(
+                "LLM classify answered %d of %d candidates - %d dropped unclassified",
+                len(answered), len(batch), missing,
+            )
 
     return results
 

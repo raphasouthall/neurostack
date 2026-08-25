@@ -1,6 +1,7 @@
 """Tests for neurostack.harvest — session transcript insight extraction."""
 
 import json
+import logging
 from types import SimpleNamespace
 
 from neurostack.harvest import (
@@ -543,6 +544,67 @@ class TestLlmClassify:
         }]
         out = _llm_classify(candidates, "http://llm.test", "model")
         assert out[0]["entity_type"] == "observation"
+
+    @staticmethod
+    def _capture_prompt(monkeypatch, content):
+        """Same stub, but hand back the prompt the classifier actually sent."""
+        import httpx
+
+        sent = {}
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"choices": [{"message": {"content": content}}]}
+
+        def _post(*_a, **kwargs):
+            sent["prompt"] = kwargs["json"]["messages"][0]["content"]
+            sent["max_tokens"] = kwargs["json"]["max_tokens"]
+            return _Resp()
+
+        monkeypatch.setattr(httpx, "post", _post)
+        cfg = SimpleNamespace(llm_api_key=None)
+        monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+        monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
+        return sent
+
+    @staticmethod
+    def _candidates(n):
+        return [{
+            "text": f"The root cause of failure number {i} was a missing guard clause.",
+            "role": "assistant",
+            "prefilter_type": "bug",
+        } for i in range(n)]
+
+    def test_prompt_demands_one_line_per_candidate(self, monkeypatch):
+        # Issue #117: without the explicit count the model answered 5 of 10 and
+        # kept none. The count instruction is the fix, so it is pinned here.
+        sent = self._capture_prompt(monkeypatch, "[1] SKIP\n[2] SKIP\n[3] SKIP")
+        _llm_classify(self._candidates(3), "http://llm.test", "model")
+        assert "EXACTLY 3 lines" in sent["prompt"]
+        assert "[1] to [3]" in sent["prompt"]
+        # One summary-carrying line per candidate does not fit in 500 tokens.
+        assert sent["max_tokens"] >= 2000
+
+    def test_partial_answer_is_logged(self, monkeypatch, caplog):
+        # A dropped candidate is a silent capture loss unless it is announced.
+        self._stub_llm(monkeypatch, "[1] SKIP\n[2] KEEP type=bug summary=Second one mattered")
+        with caplog.at_level(logging.WARNING, logger="neurostack"):
+            out = _llm_classify(self._candidates(5), "http://llm.test", "model")
+        assert len(out) == 1
+        assert "answered 2 of 5" in caplog.text
+        assert "3 dropped unclassified" in caplog.text
+
+    def test_full_answer_logs_nothing(self, monkeypatch, caplog):
+        # An all-SKIP reply that covers every candidate is a real verdict, not a
+        # failure — it must not cry wolf.
+        self._stub_llm(monkeypatch, "[1] SKIP\n[2] SKIP\n[3] SKIP")
+        with caplog.at_level(logging.WARNING, logger="neurostack"):
+            out = _llm_classify(self._candidates(3), "http://llm.test", "model")
+        assert out == []
+        assert "dropped unclassified" not in caplog.text
 
 
 # ---------------------------------------------------------------------------
