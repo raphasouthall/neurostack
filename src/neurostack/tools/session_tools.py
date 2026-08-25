@@ -125,3 +125,41 @@ def vault_harvest(sessions: int = 1, dry_run: bool = False, provider: str | None
         embed_url=_embed_url(),
         provider=provider,
     )
+
+
+@registry.tool(tags=["session", "memory"], annotations=_WRITE_ADDITIVE)
+def vault_harvest_transcript(
+    transcript: str,
+    session_id: str,
+    source_agent: str = "claude-code",
+    dry_run: bool = False,
+) -> dict:
+    """Extract insights from a session transcript you POST here, and save them.
+
+    Unlike vault_harvest, this reads nothing off the server's filesystem — send
+    the transcript text and a client on any machine can harvest its own
+    sessions. Deduplicates against existing memories before saving.
+
+    source_agent names the transcript FORMAT, not the machine: one of
+    claude-code, vscode-chat, codex-cli, aider, gemini-cli, omp.
+
+    A large transcript must be split on NEWLINE boundaries and posted as
+    several calls; each chunk is harvested independently and near-duplicate
+    insights across chunks are dropped. Re-posting an identical transcript for
+    the same session_id is a no-op.
+
+    Args:
+        transcript: Raw session transcript in source_agent's native format
+        session_id: Client-side session identifier (guards against re-posts)
+        source_agent: Provider name naming the transcript format
+        dry_run: If True, show what would be saved without saving
+    """
+    from ..harvest import harvest_transcript
+
+    return harvest_transcript(
+        transcript=transcript,
+        session_id=session_id,
+        source_agent=source_agent,
+        dry_run=dry_run,
+        embed_url=_embed_url(),
+    )

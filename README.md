@@ -322,6 +322,7 @@ include_observations = false   # also write the noisier observation/context type
 | `vault_forget` | Delete a memory |
 | `vault_memories` | List or search memories |
 | `vault_harvest` | Extract insights from session transcripts |
+| `vault_harvest_transcript` | Extract insights from a transcript posted by the client (no server filesystem access) |
 
 **Sessions**
 
