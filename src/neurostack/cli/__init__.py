@@ -864,6 +864,8 @@ def main():
     p.add_argument("--limit", type=int, default=20,
                    help="Number of top pairs to show (default: 20)")
     p.add_argument("--json", action="store_true", help="Output as JSON")
+    p.add_argument("--flush", action="store_true",
+                   help="Write this process's pending reinforcement buffer first")
     p.set_defaults(func=cmd_cooccurrence)
 
     # harvest

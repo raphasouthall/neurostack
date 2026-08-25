@@ -20,7 +20,7 @@ from .config import RankingWeights, get_config
 
 log = logging.getLogger("neurostack")
 
-from .cooccurrence import reinforce_cooccurrence
+from .cooccurrence import SQL_PARAM_CHUNK, buffer_reinforcement
 from .embedder import (
     blob_to_embedding,
     cosine_similarity_batch,
@@ -44,6 +44,24 @@ CONTEXTUAL_MISMATCH_MAX_SIM = 0.45
 # retrieval events — the recurrence is what distinguishes a defective note from a
 # weak/exploratory query that hit the least-bad target once.
 PREDICTION_ERROR_MIN_OCCURRENCES = 2
+
+# Cap on the number of query-matched entities fed to the co-occurrence stage.
+# Every stage downstream is sized by this count — the boost lookup joins on it
+# and reinforcement pairs it against every result entity — but the cap is not
+# there to make a slow query fast. An entity that matches a short query
+# alongside hundreds of others carries no ranking signal: a boost that every
+# candidate note earns discriminates between none of them. When the cap bites we
+# keep the entities appearing in the FEWEST triples, because a term that is
+# everywhere in the graph separates nothing while a rare term is precisely the
+# one whose associations are worth following (issue #120).
+MAX_QUERY_ENTITIES = 50
+
+# Cap on result-note entities paired against query entities for reinforcement.
+# The pair count is the product of the two caps: 50 x 40 = 2000 pairs per search,
+# worst case. Unbounded fan-out is what grew entity_cooccurrence to 12.8M rows
+# for 695 notes. Entities are taken in result rank order, so the top-ranked
+# note's associations are the ones that survive the cap.
+MAX_RESULT_ENTITIES = 40
 
 
 def log_prediction_error(
@@ -714,6 +732,95 @@ ABLATABLE_SIGNALS = (
 )
 
 
+def _extract_query_entities(conn: sqlite3.Connection, query: str) -> set[str]:
+    """Entities in the triples graph that the query's words name.
+
+    One statement for the whole query, not one per word: the per-word version
+    rescanned the triples table for every term and unioned the results in Python
+    (issue #120).
+
+    Matching is anchored at a word start — the entity begins with the query word,
+    or a word inside it does. The old rule was a bare ``LIKE '%word%'``,
+    substring-anywhere, so "agent" matched most of the graph ("subagent",
+    "user_agent_string"): the 4-word query "azure foundry knowledge agent" pulled
+    643 entities, which are not the query's entities, and every later stage was
+    sized by that number. Anchoring keeps the variants a user means ("agents",
+    "agentic", "Azure Foundry") and drops the accidental interior hits. Hyphens
+    and underscores normalize to spaces on both sides, so "azure-foundry" is
+    still two words.
+
+    Words of 2 characters or fewer are skipped (they match too much to mean
+    anything) and the result is capped at MAX_QUERY_ENTITIES, least-frequent
+    first.
+    """
+    query_words = [w.lower() for w in query.split() if len(w) > 2]
+    if not query_words:
+        return set()
+
+    params: list[str] = []
+    for word in query_words:
+        # LIKE wildcards inside a query word would match everything; escape
+        # them. '_' and '-' are normalized away before escaping.
+        w = word.replace("-", " ").replace("_", " ")
+        w = w.replace("\\", r"\\").replace("%", r"\%")
+        params.extend((f"{w}%", f"% {w}%"))
+    clauses = " OR ".join(
+        r"norm LIKE ? ESCAPE '\' OR norm LIKE ? ESCAPE '\'" for _ in query_words
+    )
+    # occurrences = how many triple slots the entity fills, i.e. how common it
+    # is; ordering by it ascending means the cap keeps the selective entities.
+    rows = conn.execute(
+        "SELECT entity, COUNT(*) AS occurrences FROM ("
+        "  SELECT subject AS entity,"
+        "         REPLACE(REPLACE(LOWER(subject), '-', ' '), '_', ' ') AS norm"
+        "  FROM triples"
+        "  UNION ALL"
+        "  SELECT object AS entity,"
+        "         REPLACE(REPLACE(LOWER(object), '-', ' '), '_', ' ') AS norm"
+        "  FROM triples"
+        f") WHERE {clauses} "
+        "GROUP BY entity ORDER BY occurrences ASC, entity ASC LIMIT ?",
+        [*params, MAX_QUERY_ENTITIES],
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def _cooccurring_entities(
+    conn: sqlite3.Connection, query_entities: set[str]
+) -> dict[str, float]:
+    """Entities associated with *query_entities*, mapped to their blended weight.
+
+    ``weight + reinforcement`` (issue #60): structural co-occurrence blended with
+    the accumulated usage signal, keeping the strongest association per entity.
+    Entities that are themselves query entities are excluded — an entity the
+    query already matched is a direct hit, not an association.
+
+    One statement per SQL_PARAM_CHUNK entities rather than two per entity (issue
+    #120): 643 query entities meant 1286 round trips, 3.5s of the request spent
+    in fetchall. The result is identical to the per-entity loop — each row is
+    folded in from whichever side matched, and max() makes the rows a chunk
+    boundary returns twice idempotent.
+    """
+    cooc_entities: dict[str, float] = {}
+    qe_list = sorted(query_entities)
+    for start in range(0, len(qe_list), SQL_PARAM_CHUNK):
+        chunk = qe_list[start:start + SQL_PARAM_CHUNK]
+        marks = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"SELECT entity_a, entity_b, weight + reinforcement AS w "
+            f"FROM entity_cooccurrence "
+            f"WHERE entity_a IN ({marks}) OR entity_b IN ({marks})",
+            chunk + chunk,
+        ).fetchall()
+        for r in rows:
+            ea, eb, w = r[0], r[1], r[2]
+            if ea in query_entities and eb not in query_entities:
+                cooc_entities[eb] = max(cooc_entities.get(eb, 0), w)
+            if eb in query_entities and ea not in query_entities:
+                cooc_entities[ea] = max(cooc_entities.get(ea, 0), w)
+    return cooc_entities
+
+
 def hybrid_search(
     query: str,
     top_k: int = 5,
@@ -923,41 +1030,14 @@ def hybrid_search(
                 r["score"] = (1.0 - hw) * r["score"] + hw * h
                 _rec(r, hotness=round(h, 4), after_hotness=round(r["score"], 4))
 
-    # Extract query-matched entities (used for co-occurrence boost AND reinforcement)
-    query_words = [w.lower() for w in query.split() if len(w) > 2]
-    query_entities: set[str] = set()
-    if query_words:
-        for word in query_words:
-            ent_rows = conn.execute(
-                "SELECT DISTINCT subject FROM triples WHERE LOWER(subject) LIKE ? "
-                "UNION "
-                "SELECT DISTINCT object FROM triples WHERE LOWER(object) LIKE ?",
-                (f"%{word}%", f"%{word}%"),
-            ).fetchall()
-            query_entities.update(r[0] for r in ent_rows)
+    # Entities the query names, used for the co-occurrence boost AND reinforcement
+    query_entities = _extract_query_entities(conn, query)
 
     # Co-occurrence boost: notes containing entities that co-occur with query entities
     # get a bounded multiplicative boost. Slots after hotness, before demotion.
     cooc_weight = weights.cooccurrence_boost_weight
     if cooc_weight > 0 and query_entities and "cooccurrence" not in ablate:
-                # Step 2: Find co-occurring entities and their weights
-                cooc_entities = {}  # entity -> max co-occurrence weight
-                for qe in query_entities:
-                    # Blend structural weight with accumulated search
-                    # reinforcement (issue #60)
-                    rows = conn.execute(
-                        "SELECT entity_b, weight + reinforcement AS w "
-                        "FROM entity_cooccurrence WHERE entity_a = ? "
-                        "UNION ALL "
-                        "SELECT entity_a, weight + reinforcement AS w "
-                        "FROM entity_cooccurrence WHERE entity_b = ?",
-                        (qe, qe),
-                    ).fetchall()
-                    for r in rows:
-                        ent = r[0]
-                        w = r[1]
-                        if ent not in query_entities:  # Don't boost for direct matches
-                            cooc_entities[ent] = max(cooc_entities.get(ent, 0), w)
+                cooc_entities = _cooccurring_entities(conn, query_entities)
 
                 if cooc_entities:
                     # Step 3: Build note -> entities map from triples for result notes
@@ -1125,18 +1205,41 @@ def hybrid_search(
         # Hebbian reinforcement: strengthen co-occurrence for entity pairs shared
         # between query-matched entities and result-note entities.
         # Fires regardless of cooccurrence_boost_weight setting.
+        #
+        # Buffered, never written here (issue #120). This used to be a write
+        # inside the search request, and SQLite has one writer: two overlapping
+        # searches serialized on the lock and the second was measured stalling
+        # for minutes. buffer_reinforcement queues the pairs and the write
+        # happens off the request path — a background drain once the buffer
+        # fills, `neurostack cooccurrence --flush`, or process exit — with the
+        # same reinforce_cooccurrence semantics.
         if query_entities and returned_paths:
             try:
                 placeholders = ",".join("?" * len(returned_paths))
                 result_ent_rows = conn.execute(
-                    f"SELECT DISTINCT subject, object FROM triples "
+                    f"SELECT DISTINCT note_path, subject, object FROM triples "
                     f"WHERE note_path IN ({placeholders})",
                     returned_paths,
                 ).fetchall()
-                result_entities: set[str] = set()
+                by_path: dict[str, set[str]] = {}
                 for rer in result_ent_rows:
-                    result_entities.add(rer["subject"])
-                    result_entities.add(rer["object"])
+                    ents = by_path.setdefault(rer["note_path"], set())
+                    ents.add(rer["subject"])
+                    ents.add(rer["object"])
+
+                # Walk the results in rank order and stop at
+                # MAX_RESULT_ENTITIES: the top note's entities are the ones
+                # whose association with the query is worth strengthening.
+                result_entities: list[str] = []
+                seen_entities: set[str] = set()
+                for path in returned_paths:
+                    for ent in sorted(by_path.get(path, ())):
+                        if ent not in seen_entities:
+                            seen_entities.add(ent)
+                            result_entities.append(ent)
+                    if len(result_entities) >= MAX_RESULT_ENTITIES:
+                        break
+                del result_entities[MAX_RESULT_ENTITIES:]
 
                 # Build reinforcement pairs: each query entity x each result entity
                 reinforce_pairs = [
@@ -1146,7 +1249,7 @@ def hybrid_search(
                     if qe != re
                 ]
                 if reinforce_pairs:
-                    reinforce_cooccurrence(conn, reinforce_pairs)
+                    buffer_reinforcement(conn, reinforce_pairs)
             except Exception:
                 pass  # Never let reinforcement disrupt search
 

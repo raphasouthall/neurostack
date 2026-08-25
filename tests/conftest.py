@@ -97,6 +97,31 @@ def tmp_vault(tmp_path):
     return vault
 
 
+@pytest.fixture(autouse=True)
+def clear_reinforcement_buffer():
+    """Isolate the per-process reinforcement buffer between tests (issue #120).
+
+    hybrid_search buffers co-occurrence pairs in a module-level set instead of
+    writing them, so without this a search in one test leaves pairs that a drain
+    in another would write to an unrelated database. The recorded database path
+    is reset too, for the same reason.
+    """
+    from neurostack import cooccurrence
+
+    def _reset():
+        thread = cooccurrence._flush_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=10.0)
+        with cooccurrence._reinforcement_lock:
+            cooccurrence._reinforcement_buffer.clear()
+        cooccurrence._reinforcement_db_path = ""
+        cooccurrence._flush_thread = None
+
+    _reset()
+    yield
+    _reset()
+
+
 @pytest.fixture
 def in_memory_db():
     """Create an in-memory SQLite database with the NeuroStack schema."""
