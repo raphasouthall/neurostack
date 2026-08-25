@@ -36,8 +36,8 @@ def _harvest_state_path() -> Path:
     return get_config().db_dir / "harvest_state.json"
 
 
-def _load_harvest_state() -> dict[str, float]:
-    """Load harvest state: mapping of session file path -> mtime at harvest."""
+def _load_harvest_state() -> dict[str, float | str]:
+    """Load harvest state: session path -> mtime, or ``mcp:`` key -> transcript hash."""
     path = _harvest_state_path()
     if path.exists():
         try:
@@ -47,7 +47,7 @@ def _load_harvest_state() -> dict[str, float]:
     return {}
 
 
-def _save_harvest_state(state: dict[str, float]) -> None:
+def _save_harvest_state(state: dict[str, float | str]) -> None:
     """Persist harvest state atomically (temp file + os.replace)."""
     import os
     import tempfile
@@ -380,6 +380,60 @@ def _extract_gemini_content(content) -> str | None:
     return None
 
 
+class OmpProvider:
+    """Oh My Pi — ~/.omp/agent/sessions/*/*.jsonl
+
+    One JSONL per session, under a per-project subdirectory. Message lines are
+    {"type": "message", "message": {"role": ..., "content": [part, ...]}}.
+    Roles also include "toolResult", whose text parts are raw tool output —
+    excluded, or the pre-filter drowns in it.
+    """
+
+    name = "omp"
+
+    def find_sessions(self, n: int) -> list[SessionFile]:
+        sessions_dir = Path.home() / ".omp" / "agent" / "sessions"
+        if not sessions_dir.exists():
+            return []
+        sessions = []
+        for f in sessions_dir.glob("*/*.jsonl"):
+            try:
+                st = f.stat()
+                sessions.append(SessionFile(path=f, mtime=st.st_mtime, provider=self.name))
+            except OSError:
+                continue
+        sessions.sort(key=lambda s: s.mtime, reverse=True)
+        return sessions[:n]
+
+    def extract_messages(self, path: Path) -> list[Message]:
+        messages = []
+        for entry in _parse_jsonl(path):
+            if entry.get("type") != "message":
+                continue
+            msg = entry.get("message")
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role", "")
+            if role not in ("assistant", "user"):
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                # Only "text" parts — "thinking" and "toolCall" parts are noise.
+                parts = [
+                    p["text"] for p in content
+                    if isinstance(p, dict) and p.get("type") == "text"
+                    and isinstance(p.get("text"), str)
+                ]
+                text = "\n".join(parts)
+            else:
+                continue
+            if text:
+                messages.append(Message(role=role, text=text))
+        return messages
+
+
 # Provider registry — order doesn't matter, all are scanned
 _PROVIDERS: list[SessionProvider] = [
     ClaudeCodeProvider(),
@@ -387,6 +441,7 @@ _PROVIDERS: list[SessionProvider] = [
     CodexCLIProvider(),
     AiderProvider(),
     GeminiCLIProvider(),
+    OmpProvider(),
 ]
 
 _PROVIDER_MAP: dict[str, SessionProvider] = {p.name: p for p in _PROVIDERS}
@@ -698,7 +753,113 @@ def _llm_classify(
 
 
 # ---------------------------------------------------------------------------
-# Main harvest entry point
+# Shared harvest core
+# ---------------------------------------------------------------------------
+
+def _harvest_messages(
+    conn,
+    messages: list[Message],
+    provider: str,
+    *,
+    cfg,
+    embed_url: str | None,
+    dry_run: bool,
+    use_llm: bool,
+    saved: list[dict],
+    skipped: list[dict],
+    counts: dict[str, int],
+) -> None:
+    """Classify one transcript's messages and save the keepers.
+
+    The seam shared by both entry points: ``harvest_sessions`` (session files on
+    this machine's disk) and ``harvest_transcript`` (a transcript posted over
+    MCP). Results accumulate into the caller's ``saved``/``skipped``/``counts``,
+    so a multi-session caller needs no per-session merge step. Redaction lives
+    here, ahead of the dedup check, so both callers inherit the issue #113
+    contract by construction.
+    """
+    from .memories import save_memory
+
+    candidates = []
+
+    for msg in messages:
+        if not msg.text or len(msg.text) < _MIN_LEN:
+            continue
+        # Skip user messages that are system XML or very long pastes
+        if msg.role == "user" and (len(msg.text) > 1000 or msg.text.startswith("<")):
+            continue
+
+        prefilter_type = _prefilter_classify(msg.text, msg.role)
+        if not prefilter_type:
+            continue
+
+        candidates.append({
+            "text": msg.text,
+            "role": msg.role,
+            "prefilter_type": prefilter_type,
+            "provider": provider,
+        })
+
+    # Tier 2: LLM classification
+    if use_llm and candidates:
+        classified = _llm_classify(candidates, cfg.llm_url, cfg.llm_model)
+    else:
+        # Fallback: regex classification + naive summary
+        classified = []
+        for c in candidates:
+            c["entity_type"] = c["prefilter_type"]
+            c["summary"] = _make_summary(c["text"])
+            classified.append(c)
+
+    # Save classified insights
+    for item in classified:
+        summary = item.get("summary", _make_summary(item["text"]))
+        # Transcripts carry live credentials; a summary must never store one
+        # (issue #113). Redact BEFORE the dedup check so the stored form and
+        # the deduped form are the same string.
+        summary, redacted = redact_secrets(summary)
+        etype = item.get("entity_type", item.get("prefilter_type", "observation"))
+
+        if len(summary) < _MIN_LEN:
+            continue
+
+        tags = _extract_tags(item["text"])
+        # Harvest-created rows only: agent-written memories keep their
+        # caller-chosen TTL. Auto-captured context goes stale in a week;
+        # auto-captured observations get 30 days to be synthesized into a
+        # learning (issue #36) before they expire as noise.
+        ttl = {"context": 168.0, "observation": 720.0}.get(etype)
+        record = {"content": summary, "entity_type": etype, "tags": tags,
+                  "ttl_hours": ttl, "provider": provider}
+        if redacted:
+            record["redacted"] = redacted
+
+        if _is_duplicate(conn, summary, etype, embed_url=embed_url):
+            record["status"] = "skipped (duplicate)"
+            skipped.append(record)
+            continue
+
+        if dry_run:
+            record["status"] = "would save"
+            saved.append(record)
+        else:
+            try:
+                mem = save_memory(
+                    conn, content=summary, tags=tags, entity_type=etype,
+                    source_agent=f"harvest/{provider}", ttl_hours=ttl,
+                    embed_url=embed_url,
+                )
+                record["memory_id"] = mem.memory_id
+                record["status"] = "saved"
+                saved.append(record)
+            except Exception as exc:
+                record["status"] = f"error: {exc}"
+                skipped.append(record)
+        counts[etype] = counts.get(etype, 0) + 1
+
+
+# ---------------------------------------------------------------------------
+# Main harvest entry points
 # ---------------------------------------------------------------------------
 
 def harvest_sessions(
@@ -722,7 +883,6 @@ def harvest_sessions(
         provider: Restrict to a single provider name, or None for all.
     """
     from .config import get_config
-    from .memories import save_memory
     from .schema import DB_PATH, get_db
 
     cfg = get_config()
@@ -738,7 +898,8 @@ def harvest_sessions(
     sessions = []
     for s in all_sessions:
         prev_mtime = harvest_state.get(str(s.path))
-        if prev_mtime is not None and prev_mtime == s.mtime:
+        # `mcp:` keys hold a transcript hash, never an mtime — compare numbers only.
+        if isinstance(prev_mtime, (int, float)) and prev_mtime == s.mtime:
             log.debug("Skipping already-harvested session: %s (%s)", s.path.name, s.provider)
             continue
         sessions.append(s)
@@ -751,83 +912,11 @@ def harvest_sessions(
     counts: dict[str, int] = {}
 
     for session in sessions:
-        messages = extract_messages(session)
-        candidates = []
-
-        for msg in messages:
-            if not msg.text or len(msg.text) < _MIN_LEN:
-                continue
-            # Skip user messages that are system XML or very long pastes
-            if msg.role == "user" and (len(msg.text) > 1000 or msg.text.startswith("<")):
-                continue
-
-            prefilter_type = _prefilter_classify(msg.text, msg.role)
-            if not prefilter_type:
-                continue
-
-            candidates.append({
-                "text": msg.text,
-                "role": msg.role,
-                "prefilter_type": prefilter_type,
-                "provider": session.provider,
-            })
-
-        # Tier 2: LLM classification
-        if use_llm and candidates:
-            classified = _llm_classify(candidates, cfg.llm_url, cfg.llm_model)
-        else:
-            # Fallback: regex classification + naive summary
-            classified = []
-            for c in candidates:
-                c["entity_type"] = c["prefilter_type"]
-                c["summary"] = _make_summary(c["text"])
-                classified.append(c)
-
-        # Save classified insights
-        for item in classified:
-            summary = item.get("summary", _make_summary(item["text"]))
-            # Transcripts carry live credentials; a summary must never store one
-            # (issue #113). Redact BEFORE the dedup check so the stored form and
-            # the deduped form are the same string.
-            summary, redacted = redact_secrets(summary)
-            etype = item.get("entity_type", item.get("prefilter_type", "observation"))
-
-            if len(summary) < _MIN_LEN:
-                continue
-
-            tags = _extract_tags(item["text"])
-            # Harvest-created rows only: agent-written memories keep their
-            # caller-chosen TTL. Auto-captured context goes stale in a week;
-            # auto-captured observations get 30 days to be synthesized into a
-            # learning (issue #36) before they expire as noise.
-            ttl = {"context": 168.0, "observation": 720.0}.get(etype)
-            record = {"content": summary, "entity_type": etype, "tags": tags,
-                      "ttl_hours": ttl, "provider": session.provider}
-            if redacted:
-                record["redacted"] = redacted
-
-            if _is_duplicate(conn, summary, etype, embed_url=url):
-                record["status"] = "skipped (duplicate)"
-                skipped.append(record)
-                continue
-
-            if dry_run:
-                record["status"] = "would save"
-                saved.append(record)
-            else:
-                try:
-                    mem = save_memory(
-                        conn, content=summary, tags=tags, entity_type=etype,
-                        source_agent=f"harvest/{session.provider}", ttl_hours=ttl,
-                        embed_url=url,
-                    )
-                    record["memory_id"] = mem.memory_id
-                    record["status"] = "saved"
-                    saved.append(record)
-                except Exception as exc:
-                    record["status"] = f"error: {exc}"
-                    skipped.append(record)
-            counts[etype] = counts.get(etype, 0) + 1
+        _harvest_messages(
+            conn, extract_messages(session), session.provider,
+            cfg=cfg, embed_url=url, dry_run=dry_run, use_llm=use_llm,
+            saved=saved, skipped=skipped, counts=counts,
+        )
 
     # Record harvested sessions (skip on dry run)
     if not dry_run:
@@ -838,6 +927,117 @@ def harvest_sessions(
     return {
         "sessions_scanned": len(sessions),
         "providers": list({s.provider for s in sessions}),
+        "counts": counts,
+        "saved": saved,
+        "skipped": skipped,
+        "dry_run": dry_run,
+    }
+
+
+# Cap on a single posted transcript. Above this the client must split on newline
+# boundaries and post each chunk separately: chunks are harvested independently
+# and the cosine dedup absorbs whatever the split overlaps.
+MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024
+
+
+def harvest_transcript(
+    transcript: str,
+    session_id: str,
+    source_agent: str,
+    dry_run: bool = False,
+    embed_url: str | None = None,
+    use_llm: bool = True,
+) -> dict:
+    """Extract insights from a POSTED transcript. Returns report dict.
+
+    The MCP-native counterpart to ``harvest_sessions`` (issue #115): the client
+    sends its own session text, so the server needs no access to the client's
+    filesystem. Classification, redaction and dedup are the same code path.
+
+    Args:
+        transcript: Raw session text in ``source_agent``'s native format.
+        session_id: Client-side session id, used for the re-post guard.
+        source_agent: Registered provider name — names the transcript FORMAT.
+        dry_run: If True, show what would be saved without saving.
+        embed_url: Override embedding URL.
+        use_llm: Use LLM for classification (falls back to regex if False).
+    """
+    import hashlib
+    import tempfile
+
+    from .config import get_config
+    from .schema import DB_PATH, get_db
+
+    def _err(msg: str) -> dict:
+        return {"error": msg, "saved": [], "skipped": [], "counts": {}}
+
+    prov = _PROVIDER_MAP.get(source_agent)
+    if prov is None:
+        return _err(
+            f"Unknown source_agent '{source_agent}' — must be one of: "
+            f"{', '.join(get_provider_names())}"
+        )
+    if not transcript.strip():
+        return _err("Empty transcript")
+
+    raw = transcript.encode("utf-8")
+    if len(raw) > MAX_TRANSCRIPT_BYTES:
+        return _err(
+            f"Transcript is {len(raw)} bytes, over the {MAX_TRANSCRIPT_BYTES} "
+            "byte cap. Split it on newline boundaries and post each chunk as a "
+            "separate call — chunks are harvested independently and the dedup "
+            "absorbs any overlap."
+        )
+
+    # Re-post guard: same session id + same bytes is a no-op, so a client can
+    # retry a failed POST without duplicating work.
+    digest = hashlib.sha256(raw).hexdigest()
+    state_key = f"mcp:{source_agent}:{session_id}"
+    harvest_state = _load_harvest_state()
+    if harvest_state.get(state_key) == digest:
+        return {"sessions_scanned": 0, "session_id": session_id,
+                "provider": source_agent, "providers": [source_agent],
+                "counts": {}, "saved": [], "skipped": [], "dry_run": dry_run,
+                "note": "transcript already harvested"}
+
+    cfg = get_config()
+    url = embed_url or cfg.embed_url
+    conn = get_db(DB_PATH)
+
+    # The provider parsers read a path, so the posted text becomes a temp file
+    # rather than every provider growing a second entry point.
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".jsonl", delete=False, encoding="utf-8",
+        ) as tmp:
+            tmp_path = tmp.name
+            tmp.write(transcript)
+        messages = prov.extract_messages(Path(tmp_path))
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    saved: list[dict] = []
+    skipped: list[dict] = []
+    counts: dict[str, int] = {}
+    if messages:
+        _harvest_messages(
+            conn, messages, source_agent,
+            cfg=cfg, embed_url=url, dry_run=dry_run, use_llm=use_llm,
+            saved=saved, skipped=skipped, counts=counts,
+        )
+
+    if not dry_run:
+        harvest_state[state_key] = digest
+        _save_harvest_state(harvest_state)
+
+    return {
+        "sessions_scanned": 1,
+        "session_id": session_id,
+        "provider": source_agent,
+        "providers": [source_agent],
+        "messages": len(messages),
         "counts": counts,
         "saved": saved,
         "skipped": skipped,
