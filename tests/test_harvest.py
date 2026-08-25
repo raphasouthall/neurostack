@@ -835,3 +835,27 @@ class TestHarvestTranscript:
         assert "error" not in report
         assert report["messages"] == 0
         assert report["counts"] == {} and report["saved"] == []
+
+    def test_zero_yield_is_not_guarded(self, in_memory_db, tmp_path, monkeypatch):
+        # LLM classification is not deterministic (issue #117), so recording the
+        # digest after a run that kept nothing would make that loss permanent.
+        # A zero-yield post stays re-postable.
+        self._setup(in_memory_db, tmp_path, monkeypatch)
+        transcript = _claude_line("assistant", _BUG_INSIGHT) + "\n"
+        # Stand in for the model returning all-SKIP on a keepable candidate.
+        # Restored by hand rather than monkeypatch.undo(), which would also
+        # revert _setup's db and state-path patches.
+        import neurostack.harvest as harvest_mod
+        real_classify = harvest_mod._llm_classify
+        harvest_mod._llm_classify = lambda *a, **k: []
+        try:
+            empty = harvest_transcript(transcript, session_id="sess-1",
+                                       source_agent="claude-code", use_llm=True)
+        finally:
+            harvest_mod._llm_classify = real_classify
+        assert empty["counts"] == {} and empty["saved"] == []
+
+        retry = harvest_transcript(transcript, session_id="sess-1",
+                                   source_agent="claude-code", use_llm=False)
+        assert "note" not in retry
+        assert len(retry["saved"]) == 1

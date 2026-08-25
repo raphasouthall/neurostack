@@ -146,7 +146,8 @@ def vault_harvest_transcript(
     A large transcript must be split on NEWLINE boundaries and posted as
     several calls; each chunk is harvested independently and near-duplicate
     insights across chunks are dropped. Re-posting an identical transcript for
-    the same session_id is a no-op.
+    the same session_id is a no-op once it has yielded insights; a post that
+    yielded none stays re-postable.
 
     Args:
         transcript: Raw session transcript in source_agent's native format
