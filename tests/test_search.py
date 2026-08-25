@@ -729,8 +729,12 @@ class TestReinforcementFromSearch:
     """Tests for Hebbian reinforcement wired into hybrid_search."""
 
     def test_reinforce_from_search(self, in_memory_db, monkeypatch):
-        """After hybrid_search, co-occurrence weights increase for entity pairs
-        appearing in both query-matched entities and result-note entities."""
+        """hybrid_search buffers the pairs; a flush is what writes them.
+
+        Rewritten for issue #120: search no longer writes to
+        entity_cooccurrence, so the same fixture now asserts the pair is
+        buffered by the search and lands with the same reinforcement value once
+        flushed."""
         conn = in_memory_db
         emb = _fake_embedding(0.5)
 
@@ -791,13 +795,25 @@ class TestReinforcementFromSearch:
         finally:
             config_mod._config = original_config
 
-        # After search, reinforcement should have created/increased the
-        # co-occurrence between alpha (query entity) and beta (result-note entity)
+        # Search itself must not have written — the whole point of issue #120
+        assert conn.execute(
+            "SELECT COUNT(*) AS c FROM entity_cooccurrence"
+        ).fetchone()["c"] == 0
+
+        # The pair is buffered, canonical order (alpha < beta)
+        from neurostack.cooccurrence import (
+            _reinforcement_buffer as buffered,
+        )
+        from neurostack.cooccurrence import flush_reinforcement
+        assert ("alpha", "beta") in buffered
+
+        # After a flush, reinforcement lands exactly as it used to
+        flush_reinforcement(conn)
         after = conn.execute(
             "SELECT weight, reinforcement FROM entity_cooccurrence "
             "WHERE entity_a = 'alpha' AND entity_b = 'beta'"
         ).fetchone()
-        assert after is not None, "Reinforcement should have created (alpha, beta) pair"
+        assert after is not None, "Flush should have created (alpha, beta) pair"
         initial_reinf = initial["reinforcement"] if initial else 0.0
         assert after["reinforcement"] > initial_reinf, (
             f"Reinforcement should have increased from {initial_reinf}"
@@ -845,6 +861,308 @@ class TestReinforcementFromSearch:
             "SELECT COUNT(*) as c FROM entity_cooccurrence"
         ).fetchone()["c"]
         assert count == 0, "No reinforcement should occur when query matches no entities"
+
+    def test_search_does_not_write_cooccurrence(self, in_memory_db, monkeypatch):
+        """hybrid_search issues zero writes to entity_cooccurrence (issue #120).
+
+        SQLite has one writer, so a write inside the request serialized
+        overlapping searches. The pairs must land in the buffer instead, leaving
+        the table byte-identical."""
+        conn = in_memory_db
+        emb = _fake_embedding(0.5)
+
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("noteA.md", "Note A", "ha", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO chunks (note_path, heading_path, content, "
+            "content_hash, position, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            ("noteA.md", "## Test", "alpha related content", "h_a", 0, emb),
+        )
+        conn.execute(
+            "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("noteA.md", "alpha", "relates_to", "beta", "alpha relates_to beta"),
+        )
+        # A pre-existing row so "untouched" means untouched, not merely empty
+        conn.execute(
+            "INSERT INTO entity_cooccurrence "
+            "(entity_a, entity_b, weight, reinforcement, last_seen) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("alpha", "beta", 4.0, 2.0, "2026-01-01"),
+        )
+        conn.commit()
+
+        before = conn.execute(
+            "SELECT entity_a, entity_b, weight, reinforcement, last_seen "
+            "FROM entity_cooccurrence ORDER BY entity_a, entity_b"
+        ).fetchall()
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+        from neurostack.cooccurrence import _reinforcement_buffer as buffered
+        from neurostack.cooccurrence import reinforcement_buffer_size
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(
+            search_mod, "get_embedding", lambda q, base_url=None: fake_emb
+        )
+
+        original_config = config_mod._config
+        try:
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.5
+            config_mod._config = cfg
+            hybrid_search("alpha", top_k=10, embed_url="http://fake")
+        finally:
+            config_mod._config = original_config
+
+        after = conn.execute(
+            "SELECT entity_a, entity_b, weight, reinforcement, last_seen "
+            "FROM entity_cooccurrence ORDER BY entity_a, entity_b"
+        ).fetchall()
+        assert [tuple(r) for r in after] == [tuple(r) for r in before], (
+            "search must not touch entity_cooccurrence"
+        )
+        assert reinforcement_buffer_size() > 0, "pairs should be buffered instead"
+        assert ("alpha", "beta") in buffered
+
+    def test_failing_reinforcement_does_not_propagate(self, in_memory_db, monkeypatch):
+        """A reinforcement failure never reaches the caller of hybrid_search."""
+        conn = in_memory_db
+        emb = _fake_embedding(0.5)
+
+        conn.execute(
+            "INSERT INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("noteA.md", "Note A", "ha", "2026-01-01"),
+        )
+        conn.execute(
+            "INSERT INTO chunks (note_path, heading_path, content, "
+            "content_hash, position, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            ("noteA.md", "## Test", "alpha related content", "h_a", 0, emb),
+        )
+        conn.execute(
+            "INSERT INTO triples (note_path, subject, predicate, object, triple_text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("noteA.md", "alpha", "relates_to", "beta", "alpha relates_to beta"),
+        )
+        conn.commit()
+
+        import neurostack.config as config_mod
+        import neurostack.search as search_mod
+
+        monkeypatch.setattr(search_mod, "get_db", lambda path: conn)
+
+        import numpy as np
+        fake_emb = np.array([0.5] * 768, dtype=np.float32)
+        monkeypatch.setattr(
+            search_mod, "get_embedding", lambda q, base_url=None: fake_emb
+        )
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("buffering failed")
+
+        monkeypatch.setattr(search_mod, "buffer_reinforcement", boom)
+
+        original_config = config_mod._config
+        try:
+            cfg = Config()
+            cfg.cooccurrence_boost_weight = 0.0
+            config_mod._config = cfg
+            results = hybrid_search("alpha", top_k=10, embed_url="http://fake")
+        finally:
+            config_mod._config = original_config
+
+        assert len(results) > 0, "search must still return results"
+
+
+class _CountingConn:
+    """Wraps a connection, counting execute() calls.
+
+    sqlite3.Connection allows no attribute assignment, so the count is taken by
+    delegation rather than by monkeypatching the connection.
+    """
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.executes = 0
+
+    def execute(self, *args, **kwargs):
+        self.executes += 1
+        return self._conn.execute(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+class TestQueryEntityExtraction:
+    """Tests for _extract_query_entities (issue #120)."""
+
+    def _seed(self, conn, entities, note="n.md", predicate="relates_to"):
+        conn.execute(
+            "INSERT OR IGNORE INTO notes (path, title, content_hash, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (note, note, f"h_{note}", "2026-01-01"),
+        )
+        for i, ent in enumerate(entities):
+            conn.execute(
+                "INSERT INTO triples (note_path, subject, predicate, object, "
+                "triple_text) VALUES (?, ?, ?, ?, ?)",
+                (note, ent, predicate, f"obj_{note}_{i}", f"{ent} {predicate}"),
+            )
+        conn.commit()
+
+    def test_interior_substring_no_longer_matches(self, in_memory_db):
+        """The LIKE '%word%' blowup is gone: matching is anchored at a word start."""
+        from neurostack.search import _extract_query_entities
+
+        conn = in_memory_db
+        self._seed(conn, [
+            # word-anchored: these are what the query means
+            "agent registry", "Azure Foundry agent", "agents", "agentic flow",
+            "azure-foundry-agent",
+            # interior substrings: the old rule pulled all of these in
+            "subagent_runner", "useragentstring", "reagent batch", "myagentless",
+        ])
+
+        found = _extract_query_entities(conn, "agent")
+        assert found == {
+            "agent registry", "Azure Foundry agent", "agents", "agentic flow",
+            "azure-foundry-agent",
+        }
+
+        # The old rule for comparison: every entity containing the substring
+        legacy = {
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT subject FROM triples "
+                "WHERE LOWER(subject) LIKE '%agent%'"
+            ).fetchall()
+        }
+        assert len(legacy) > len(found)
+
+    def test_short_words_skipped(self, in_memory_db):
+        from neurostack.search import _extract_query_entities
+
+        conn = in_memory_db
+        self._seed(conn, ["ai platform", "azure hosting"])
+        assert _extract_query_entities(conn, "ai") == set()
+
+    def test_cap_keeps_least_frequent_entities(self, in_memory_db):
+        """Over the cap, the selective entities survive and the common ones do not."""
+        from neurostack.search import MAX_QUERY_ENTITIES, _extract_query_entities
+
+        conn = in_memory_db
+        rare = [f"azure rare {i}" for i in range(MAX_QUERY_ENTITIES + 20)]
+        self._seed(conn, rare)
+        # "azure everywhere" fills far more triple slots than any rare entity
+        self._seed(conn, ["azure everywhere"] * 40, note="hot.md")
+
+        found = _extract_query_entities(conn, "azure")
+        assert len(found) == MAX_QUERY_ENTITIES
+        assert "azure everywhere" not in found, (
+            "a term appearing everywhere carries no ranking signal"
+        )
+
+    def test_extraction_is_one_query_regardless_of_word_count(self, in_memory_db):
+        """Query count does not scale with the number of query words."""
+        from neurostack.search import _extract_query_entities
+
+        conn = in_memory_db
+        self._seed(conn, ["azure foundry", "knowledge base", "agent registry"])
+
+        one = _CountingConn(conn)
+        _extract_query_entities(one, "azure")
+        many = _CountingConn(conn)
+        _extract_query_entities(many, "azure foundry knowledge agent registry base")
+        assert one.executes == 1
+        assert many.executes == 1
+
+    def test_wildcards_in_query_word_are_literal(self, in_memory_db):
+        """A '%' in a query word must not match everything."""
+        from neurostack.search import _extract_query_entities
+
+        conn = in_memory_db
+        self._seed(conn, ["azure hosting", "100% coverage"])
+        assert _extract_query_entities(conn, "%cov") == set()
+
+
+class TestCooccurringEntitiesLookup:
+    """Tests for _cooccurring_entities (issue #120)."""
+
+    def _reference_impl(self, conn, query_entities):
+        """The per-entity loop this replaced, kept as the regression oracle."""
+        cooc_entities = {}
+        for qe in query_entities:
+            rows = conn.execute(
+                "SELECT entity_b, weight + reinforcement AS w "
+                "FROM entity_cooccurrence WHERE entity_a = ? "
+                "UNION ALL "
+                "SELECT entity_a, weight + reinforcement AS w "
+                "FROM entity_cooccurrence WHERE entity_b = ?",
+                (qe, qe),
+            ).fetchall()
+            for r in rows:
+                ent, w = r[0], r[1]
+                if ent not in query_entities:
+                    cooc_entities[ent] = max(cooc_entities.get(ent, 0), w)
+        return cooc_entities
+
+    def _seed_pairs(self, conn, pairs):
+        for a, b, weight, reinforcement in pairs:
+            conn.execute(
+                "INSERT INTO entity_cooccurrence "
+                "(entity_a, entity_b, weight, reinforcement, last_seen) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (a, b, weight, reinforcement, "2026-01-01"),
+            )
+        conn.commit()
+
+    def test_result_matches_per_entity_loop(self, in_memory_db):
+        """Same entity -> weight mapping as the loop it replaced."""
+        from neurostack.search import _cooccurring_entities
+
+        conn = in_memory_db
+        self._seed_pairs(conn, [
+            ("alpha", "beta", 3.0, 0.0),      # query entity on side a
+            ("delta", "alpha", 1.0, 2.0),     # query entity on side b, blended
+            ("alpha", "gamma", 5.0, 0.0),     # both query entities -> excluded
+            ("beta", "gamma", 9.0, 0.0),      # both sides non-query... via gamma
+            ("epsilon", "zeta", 7.0, 0.0),    # unrelated
+            ("gamma", "beta2", 2.0, 0.5),     # gamma is a query entity
+        ])
+        query_entities = {"alpha", "gamma"}
+
+        got = _cooccurring_entities(conn, query_entities)
+        assert got == self._reference_impl(conn, query_entities)
+        # spelled out, so the oracle cannot drift silently
+        assert got == {"beta": 9.0, "delta": 3.0, "beta2": 2.5}
+
+    def test_lookup_is_chunk_bounded_not_per_entity(self, in_memory_db):
+        """One statement per SQL_PARAM_CHUNK entities, not one (or two) each."""
+        from neurostack.cooccurrence import SQL_PARAM_CHUNK
+        from neurostack.search import _cooccurring_entities
+
+        conn = in_memory_db
+        self._seed_pairs(conn, [("q0", "target", 1.0, 0.0)])
+
+        entities = {f"q{i}" for i in range(SQL_PARAM_CHUNK + 10)}
+        counting = _CountingConn(conn)
+        got = _cooccurring_entities(counting, entities)
+        assert counting.executes == 2, "expected one statement per chunk"
+        assert got == {"target": 1.0}
+
+    def test_no_query_entities_issues_no_query(self, in_memory_db):
+        from neurostack.search import _cooccurring_entities
+
+        counting = _CountingConn(in_memory_db)
+        assert _cooccurring_entities(counting, set()) == {}
+        assert counting.executes == 0
 
 
 class TestLinkSectionHelpers:

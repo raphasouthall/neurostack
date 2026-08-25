@@ -1099,10 +1099,23 @@ def cmd_decay(args):
 
 def cmd_cooccurrence(args):
     """Inspect entity co-occurrence pairs."""
-    from ..cooccurrence import get_cooccurrence_stats, get_top_pairs
+    from ..cooccurrence import (
+        flush_reinforcement,
+        get_cooccurrence_stats,
+        get_top_pairs,
+    )
     from ..schema import DB_PATH, get_db
 
     conn = get_db(DB_PATH)
+
+    if args.flush:
+        # Drains THIS process's pending reinforcement buffer (issue #120). The
+        # buffer is per-process, so this is the escape hatch for a script or
+        # REPL that ran searches in-process; the long-lived MCP server drains
+        # its own buffer on its flush threshold and at shutdown.
+        written = flush_reinforcement(conn)
+        print(f"Flushed {written} pending reinforcement pairs.")
+
     pairs = get_top_pairs(conn, limit=args.limit)
 
     if args.json:

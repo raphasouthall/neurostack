@@ -2,9 +2,12 @@
 
 from neurostack.cooccurrence import (
     MAX_COOCCURRENCE_WEIGHT,
+    buffer_reinforcement,
+    flush_reinforcement,
     get_cooccurrence_stats,
     persist_cooccurrence,
     reinforce_cooccurrence,
+    reinforcement_buffer_size,
     upsert_cooccurrence_for_note,
 )
 
@@ -512,3 +515,191 @@ def test_upsert_keeps_reinforced_pair_when_structure_vanishes(in_memory_db):
     assert ("Alpha", "Ceta") not in rows
     assert ("Beta", "Ceta") not in rows
     assert rows[("Alpha", "Zeta")][0] == 1.0
+
+
+# --- issue #120: reinforcement is buffered, not written on the search path ---
+
+
+def test_buffer_does_not_write(in_memory_db):
+    """Buffering leaves the table alone and reports what is pending."""
+    conn = in_memory_db
+
+    pending = buffer_reinforcement(conn, [("Alpha", "Beta"), ("Alpha", "Gamma")])
+
+    assert pending == 2
+    assert reinforcement_buffer_size() == 2
+    assert conn.execute(
+        "SELECT COUNT(*) as c FROM entity_cooccurrence"
+    ).fetchone()["c"] == 0
+
+
+def test_buffer_canonicalizes_and_dedups(in_memory_db):
+    """(Z, A) and (A, Z) are the same association, buffered once."""
+    conn = in_memory_db
+
+    buffer_reinforcement(conn, [("Z", "A"), ("A", "Z"), ("A", "A")])
+
+    assert reinforcement_buffer_size() == 1
+    flush_reinforcement(conn)
+    row = conn.execute(
+        "SELECT entity_a, entity_b, reinforcement FROM entity_cooccurrence"
+    ).fetchone()
+    assert (row["entity_a"], row["entity_b"]) == ("A", "Z")
+    assert row["reinforcement"] == 1.0
+
+
+def test_flush_applies_reinforcement_maths(in_memory_db):
+    """Flush writes exactly what reinforce_cooccurrence would: 1.0 seed, x1.1, capped."""
+    conn = in_memory_db
+    conn.execute(
+        "INSERT INTO entity_cooccurrence "
+        "(entity_a, entity_b, weight, reinforcement, last_seen) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("Alpha", "Beta", 3.0, 2.0, "2026-01-01"),
+    )
+    conn.execute(
+        "INSERT INTO entity_cooccurrence "
+        "(entity_a, entity_b, weight, reinforcement, last_seen) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("Delta", "Gamma", 0.0, MAX_COOCCURRENCE_WEIGHT, "2026-01-01"),
+    )
+    conn.commit()
+
+    buffer_reinforcement(conn, [("Alpha", "Beta"), ("Delta", "Gamma"), ("X", "Y")])
+    written = flush_reinforcement(conn)
+
+    assert written == 3
+    assert reinforcement_buffer_size() == 0
+    rows = {
+        (r["entity_a"], r["entity_b"]): (r["weight"], r["reinforcement"])
+        for r in conn.execute(
+            "SELECT entity_a, entity_b, weight, reinforcement "
+            "FROM entity_cooccurrence"
+        )
+    }
+    assert abs(rows[("Alpha", "Beta")][1] - 2.2) < 1e-9  # 2.0 * 1.1
+    assert rows[("Alpha", "Beta")][0] == 3.0             # structural untouched
+    assert rows[("Delta", "Gamma")][1] == MAX_COOCCURRENCE_WEIGHT  # capped
+    assert rows[("X", "Y")] == (0.0, 1.0)                # seeded
+
+
+def test_flush_empty_buffer_is_noop(in_memory_db):
+    conn = in_memory_db
+    assert flush_reinforcement(conn) == 0
+
+
+def test_threshold_drains_in_background_without_explicit_call(tmp_path, monkeypatch):
+    """Crossing the threshold drains the buffer off the caller's thread."""
+    import neurostack.cooccurrence as cooc_mod
+    from neurostack.schema import get_db
+
+    conn = get_db(tmp_path / "drain.db")
+    monkeypatch.setattr(cooc_mod, "REINFORCEMENT_FLUSH_THRESHOLD", 3)
+
+    assert buffer_reinforcement(conn, [("A", "B"), ("A", "C")]) == 2
+    assert reinforcement_buffer_size() == 2
+    assert cooc_mod._flush_thread is None, "under the threshold, no writer starts"
+
+    buffer_reinforcement(conn, [("A", "D"), ("A", "E")])
+    cooc_mod._flush_thread.join(timeout=10.0)
+
+    assert reinforcement_buffer_size() == 0
+    assert conn.execute(
+        "SELECT COUNT(*) as c FROM entity_cooccurrence"
+    ).fetchone()["c"] == 4, "the whole buffer is written, not just the new pairs"
+
+
+def test_threshold_does_not_write_on_calling_thread(tmp_path, monkeypatch):
+    """The drain runs on another thread — the buffering caller never writes."""
+    import threading
+
+    import neurostack.cooccurrence as cooc_mod
+    from neurostack.schema import get_db
+
+    conn = get_db(tmp_path / "thread.db")
+    monkeypatch.setattr(cooc_mod, "REINFORCEMENT_FLUSH_THRESHOLD", 0)
+    writer_threads = []
+    real_reinforce = cooc_mod.reinforce_cooccurrence
+
+    def record(*args, **kwargs):
+        writer_threads.append(threading.current_thread())
+        return real_reinforce(*args, **kwargs)
+
+    monkeypatch.setattr(cooc_mod, "reinforce_cooccurrence", record)
+
+    buffer_reinforcement(conn, [("A", "B")])
+    cooc_mod._flush_thread.join(timeout=10.0)
+
+    assert writer_threads, "the drain should have written"
+    assert threading.current_thread() not in writer_threads
+
+
+def test_in_memory_db_never_starts_a_writer(in_memory_db, monkeypatch):
+    """An in-memory database has no file another thread could open."""
+    import neurostack.cooccurrence as cooc_mod
+
+    monkeypatch.setattr(cooc_mod, "REINFORCEMENT_FLUSH_THRESHOLD", 0)
+
+    buffer_reinforcement(in_memory_db, [("A", "B")])
+
+    assert cooc_mod._flush_thread is None
+    assert reinforcement_buffer_size() == 1, "pairs wait for an explicit flush"
+
+
+def test_buffer_capped(in_memory_db, monkeypatch):
+    """Past the ceiling, pairs are dropped rather than growing the process."""
+    import neurostack.cooccurrence as cooc_mod
+
+    conn = in_memory_db
+    # Threshold above the cap so nothing drains and the cap is what bites
+    monkeypatch.setattr(cooc_mod, "REINFORCEMENT_BUFFER_MAX", 5)
+    monkeypatch.setattr(cooc_mod, "REINFORCEMENT_FLUSH_THRESHOLD", 1000)
+
+    buffer_reinforcement(conn, [("A", f"B{i}") for i in range(20)])
+
+    assert reinforcement_buffer_size() == 5
+
+
+def test_failing_write_does_not_raise(tmp_path, monkeypatch):
+    """A drain whose write blows up is swallowed, and the batch is dropped."""
+    import neurostack.cooccurrence as cooc_mod
+    from neurostack.schema import get_db
+
+    conn = get_db(tmp_path / "boom.db")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(cooc_mod, "reinforce_cooccurrence", boom)
+    monkeypatch.setattr(cooc_mod, "REINFORCEMENT_FLUSH_THRESHOLD", 0)
+
+    buffer_reinforcement(conn, [("A", "B")])
+    cooc_mod._flush_thread.join(timeout=10.0)
+
+    assert reinforcement_buffer_size() == 0, "a failed batch is dropped, not retried"
+
+
+def test_atexit_flush_persists_to_file_db(tmp_path):
+    """The atexit hook writes the pending signal via its own connection."""
+    import sqlite3
+
+    import neurostack.cooccurrence as cooc_mod
+    from neurostack.schema import get_db
+
+    db_path = tmp_path / "atexit.db"
+    conn = get_db(db_path)
+    buffer_reinforcement(conn, [("Alpha", "Beta")])
+    conn.close()  # as if the request thread's connection were already gone
+
+    cooc_mod._flush_reinforcement_at_exit()
+
+    assert reinforcement_buffer_size() == 0
+    check = sqlite3.connect(str(db_path))
+    check.row_factory = sqlite3.Row
+    row = check.execute(
+        "SELECT entity_a, entity_b, reinforcement FROM entity_cooccurrence"
+    ).fetchone()
+    check.close()
+    assert (row["entity_a"], row["entity_b"], row["reinforcement"]) == (
+        "Alpha", "Beta", 1.0,
+    )
