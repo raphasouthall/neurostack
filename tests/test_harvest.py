@@ -4,10 +4,12 @@ import json
 from types import SimpleNamespace
 
 from neurostack.harvest import (
+    MAX_TRANSCRIPT_BYTES,
     AiderProvider,
     ClaudeCodeProvider,
     GeminiCLIProvider,
     Message,
+    OmpProvider,
     _extract_gemini_content,
     _extract_tags,
     _extract_text_claude,
@@ -17,6 +19,8 @@ from neurostack.harvest import (
     _parse_jsonl,
     _prefilter_classify,
     _save_harvest_state,
+    get_provider_names,
+    harvest_transcript,
 )
 
 # ---------------------------------------------------------------------------
@@ -604,3 +608,230 @@ class TestHarvestTtl:
         assert rows["context"]["ttl_h"] == 168
         assert rows["observation"]["ttl_h"] == 720
         assert rows["decision"]["expires_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# OmpProvider
+# ---------------------------------------------------------------------------
+
+class TestOmpProvider:
+    """Message lines carry typed content parts; only "text" parts on the
+    user/assistant roles are transcript. "toolResult" text is raw tool output."""
+
+    def test_extract_messages(self, tmp_path):
+        f = tmp_path / "session.jsonl"
+        lines = [
+            json.dumps({"type": "session", "cwd": "/tmp/proj", "title": "t",
+                        "version": "1"}),
+            json.dumps({"type": "message", "message": {
+                "role": "user",
+                "content": [{"type": "text", "text": "why did the build break"}]}}),
+            "{not json at all",
+            json.dumps({"type": "message", "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "text": "let me look"},
+                    {"type": "text", "text": "the root cause was a stale lockfile"},
+                    {"type": "text", "text": "the fix was to regenerate it"},
+                    {"type": "toolCall", "name": "bash"},
+                ]}}),
+            json.dumps({"type": "message", "message": {
+                "role": "toolResult",
+                "content": [{"type": "text", "text": "tool output noise"}]}}),
+            json.dumps({"type": "custom", "customType": "note", "data": {}}),
+        ]
+        f.write_text("\n".join(lines) + "\n")
+        msgs = OmpProvider().extract_messages(f)
+        assert msgs == [
+            Message(role="user", text="why did the build break"),
+            Message(role="assistant",
+                    text="the root cause was a stale lockfile\n"
+                         "the fix was to regenerate it"),
+        ]
+
+    def test_string_content_tolerated(self, tmp_path):
+        f = tmp_path / "session.jsonl"
+        f.write_text(json.dumps({"type": "message", "message": {
+            "role": "user", "content": "plain string body"}}) + "\n")
+        assert OmpProvider().extract_messages(f) == [
+            Message(role="user", text="plain string body"),
+        ]
+
+    def test_missing_content_skipped(self, tmp_path):
+        f = tmp_path / "session.jsonl"
+        lines = [
+            json.dumps({"type": "message", "message": {"role": "user"}}),
+            json.dumps({"type": "message", "message": "not a dict"}),
+        ]
+        f.write_text("\n".join(lines) + "\n")
+        assert OmpProvider().extract_messages(f) == []
+
+    def test_find_sessions(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        proj = tmp_path / ".omp" / "agent" / "sessions" / "-tools-neurostack"
+        proj.mkdir(parents=True)
+        f = proj / "2026-01-01T00-00-00Z_abc.jsonl"
+        f.write_text("{}\n")
+        found = OmpProvider().find_sessions(5)
+        assert [s.path for s in found] == [f]
+        assert found[0].provider == "omp"
+
+    def test_registered(self):
+        assert "omp" in get_provider_names()
+
+
+# ---------------------------------------------------------------------------
+# harvest_transcript — MCP-native harvest (issue #115)
+# ---------------------------------------------------------------------------
+
+# Same shape as a Google API key, none of its characters — assembled here so no
+# secret-shaped literal is ever committed.
+FAKE_GOOGLE_KEY = "AIza" + "Sy" + "B" * 33
+
+
+def _claude_line(role, text):
+    return json.dumps({"message": {"role": role, "content": text}})
+
+
+_BUG_INSIGHT = ("The root cause was a stale resolver cache, and the fix was to "
+                "invalidate the entry on every write.")
+_DECISION_INSIGHT = ("We decided to keep the harvest dedup threshold at 0.88 "
+                     "rather than tightening it for posted chunks.")
+
+
+class TestHarvestTranscript:
+    """The client posts its own transcript, so the server needs no access to the
+    client's filesystem (issue #115)."""
+
+    @staticmethod
+    def _setup(in_memory_db, tmp_path, monkeypatch):
+        import zlib
+
+        import numpy as np
+
+        import neurostack.embedder as embedder_mod
+        import neurostack.harvest as harvest_mod
+
+        monkeypatch.setattr(harvest_mod, "_harvest_state_path",
+                            lambda: tmp_path / "state.json")
+        monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
+        cfg = SimpleNamespace(embed_url="http://embed.test",
+                              llm_url="http://llm.test", llm_model="m",
+                              llm_api_key=None, writeback_enabled=False)
+        monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+
+        def embed(content, *a, **k):
+            # One-hot per distinct text: unrelated insights stay orthogonal,
+            # a re-posted identical insight still lands on cosine 1.0.
+            v = np.zeros(768, dtype=np.float32)
+            v[zlib.crc32(content.encode()) % 768] = 1.0
+            return v
+
+        monkeypatch.setattr(embedder_mod, "get_embedding", embed)
+
+    @staticmethod
+    def _memory_contents(conn):
+        return [r[0] for r in conn.execute("SELECT content FROM memories")]
+
+    def test_saves_and_cleans_up_temp_file(self, in_memory_db, tmp_path, monkeypatch):
+        self._setup(in_memory_db, tmp_path, monkeypatch)
+        seen = []
+        real = ClaudeCodeProvider.extract_messages
+
+        def spy(self, path):
+            seen.append(path)
+            return real(self, path)
+
+        monkeypatch.setattr(ClaudeCodeProvider, "extract_messages", spy)
+
+        report = harvest_transcript(
+            _claude_line("assistant", _BUG_INSIGHT) + "\n",
+            session_id="sess-1", source_agent="claude-code", use_llm=False,
+        )
+        assert [r["status"] for r in report["saved"]] == ["saved"]
+        assert report["session_id"] == "sess-1"
+        assert report["provider"] == "claude-code"
+        assert report["counts"] == {"bug": 1}
+        assert self._memory_contents(in_memory_db) == [_BUG_INSIGHT]
+        # The transcript went through a temp file that must not outlive the call.
+        assert seen and not seen[0].exists()
+
+    def test_unknown_source_agent(self, in_memory_db, tmp_path, monkeypatch):
+        self._setup(in_memory_db, tmp_path, monkeypatch)
+        report = harvest_transcript(
+            _claude_line("assistant", _BUG_INSIGHT), session_id="sess-1",
+            source_agent="not-a-provider", use_llm=False,
+        )
+        assert "not-a-provider" in report["error"]
+        for name in get_provider_names():
+            assert name in report["error"]
+        assert report["saved"] == [] and report["counts"] == {}
+        assert self._memory_contents(in_memory_db) == []
+
+    def test_empty_transcript(self, in_memory_db, tmp_path, monkeypatch):
+        self._setup(in_memory_db, tmp_path, monkeypatch)
+        report = harvest_transcript("   \n\n", session_id="s", source_agent="claude-code")
+        assert "error" in report
+        assert self._memory_contents(in_memory_db) == []
+
+    def test_over_cap_asks_for_newline_chunks(self, in_memory_db, tmp_path, monkeypatch):
+        self._setup(in_memory_db, tmp_path, monkeypatch)
+        report = harvest_transcript(
+            "x" * (MAX_TRANSCRIPT_BYTES + 1), session_id="s",
+            source_agent="claude-code", use_llm=False,
+        )
+        assert "newline" in report["error"]
+        assert report["saved"] == [] and report["counts"] == {}
+        assert self._memory_contents(in_memory_db) == []
+
+    def test_repost_guard(self, in_memory_db, tmp_path, monkeypatch):
+        self._setup(in_memory_db, tmp_path, monkeypatch)
+        transcript = _claude_line("assistant", _BUG_INSIGHT) + "\n"
+
+        first = harvest_transcript(transcript, session_id="sess-1",
+                                   source_agent="claude-code", use_llm=False)
+        assert [r["status"] for r in first["saved"]] == ["saved"]
+
+        again = harvest_transcript(transcript, session_id="sess-1",
+                                   source_agent="claude-code", use_llm=False)
+        assert again["note"] == "transcript already harvested"
+        assert again["saved"] == [] and again["counts"] == {}
+
+        # A changed transcript for the same session is harvested again: the
+        # repeated insight dedups, the new one saves. This is what makes
+        # client-side chunking with overlap safe.
+        grown = transcript + _claude_line("assistant", _DECISION_INSIGHT) + "\n"
+        changed = harvest_transcript(grown, session_id="sess-1",
+                                     source_agent="claude-code", use_llm=False)
+        assert "note" not in changed
+        assert [r["status"] for r in changed["saved"]] == ["saved"]
+        assert [r["status"] for r in changed["skipped"]] == ["skipped (duplicate)"]
+        assert sorted(self._memory_contents(in_memory_db)) == sorted(
+            [_BUG_INSIGHT, _DECISION_INSIGHT]
+        )
+
+    def test_redacts_before_storing(self, in_memory_db, tmp_path, monkeypatch):
+        # The #113 contract holds on the posted path too: the shared seam
+        # redacts before both the dedup check and the save.
+        self._setup(in_memory_db, tmp_path, monkeypatch)
+        text = (f"The root cause was the hardcoded apiKey: {FAKE_GOOGLE_KEY} in "
+                "the deploy script, which nothing ever rotated.")
+        report = harvest_transcript(
+            _claude_line("assistant", text) + "\n", session_id="sess-1",
+            source_agent="claude-code", use_llm=False,
+        )
+        assert report["saved"][0]["redacted"] == ["google-api-key"]
+        stored = self._memory_contents(in_memory_db)
+        assert len(stored) == 1
+        assert "***REDACTED***" in stored[0]
+        assert FAKE_GOOGLE_KEY not in stored[0]
+
+    def test_no_messages_is_not_an_error(self, in_memory_db, tmp_path, monkeypatch):
+        self._setup(in_memory_db, tmp_path, monkeypatch)
+        report = harvest_transcript(
+            json.dumps({"message": {"role": "system", "content": "ignored"}}) + "\n",
+            session_id="sess-1", source_agent="claude-code", use_llm=False,
+        )
+        assert "error" not in report
+        assert report["messages"] == 0
+        assert report["counts"] == {} and report["saved"] == []
