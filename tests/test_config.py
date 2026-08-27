@@ -152,3 +152,63 @@ class TestFeedbackConfig:
             cfg = load_config()
         assert cfg.feedback_enabled is True
         assert cfg.feedback_window_seconds == 600.0
+
+
+class TestDisabledTools:
+    """Tools kept off the MCP surface (issue #122). Every registered tool's
+    schema is injected into every client session, so one nobody calls costs
+    tokens on each turn."""
+
+    def test_default_is_empty(self):
+        assert Config().disabled_tools == []
+
+    def test_toml_list(self, tmp_path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text(
+            'disabled_tools = ["vault_merge", "vault_diff"]\n'
+        )
+        with patch("neurostack.config.CONFIG_PATH", config_file):
+            cfg = load_config()
+        assert cfg.disabled_tools == ["vault_merge", "vault_diff"]
+
+    def test_toml_string_is_split(self, tmp_path):
+        # A hand-edited config is as likely to hold a string as a list.
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('disabled_tools = "vault_merge, vault_diff"\n')
+        with patch("neurostack.config.CONFIG_PATH", config_file):
+            cfg = load_config()
+        assert cfg.disabled_tools == ["vault_merge", "vault_diff"]
+
+    def test_env_overrides_toml(self, tmp_path):
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('disabled_tools = ["vault_merge"]\n')
+        env = {"NEUROSTACK_DISABLED_TOOLS": "vault_diff vault_checkpoint"}
+        with patch("neurostack.config.CONFIG_PATH", config_file), \
+                patch.dict(os.environ, env):
+            cfg = load_config()
+        assert cfg.disabled_tools == ["vault_diff", "vault_checkpoint"]
+
+    def test_adapter_omits_disabled_tool(self):
+        from neurostack.tools import ensure_registered
+        from neurostack.tools.mcp_adapter import create_mcp_server
+
+        registry = ensure_registered()
+        assert "vault_merge" in {t.name for t in registry.list_tools()}
+
+        cfg = Config()
+        cfg.disabled_tools = ["vault_merge"]
+        with patch("neurostack.config.get_config", lambda: cfg):
+            mcp = create_mcp_server(name="test-disabled")
+        names = {t.name for t in mcp._tool_manager.list_tools()}
+        assert "vault_merge" not in names
+        assert "vault_search" in names
+
+    def test_adapter_registers_everything_by_default(self):
+        from neurostack.tools import ensure_registered
+        from neurostack.tools.mcp_adapter import create_mcp_server
+
+        registry = ensure_registered()
+        cfg = Config()
+        with patch("neurostack.config.get_config", lambda: cfg):
+            mcp = create_mcp_server(name="test-all")
+        assert len(mcp._tool_manager.list_tools()) == len(registry.list_tools())

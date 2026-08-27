@@ -26,14 +26,26 @@ log = logging.getLogger("neurostack.tools.mcp_adapter")
 def create_mcp_server(name: str = "neurostack", **server_kwargs) -> MCPServer:
     """Create an MCPServer with all registry tools auto-registered.
 
+    Tools named in ``disabled_tools`` are left off the surface. Every registered
+    tool's schema is injected into every client session, so one nobody calls
+    costs tokens on every turn and lengthens the menu the model picks from.
+
     Args:
         name: MCP server name
         **server_kwargs: Passed through to the MCPServer constructor
     """
+    from ..config import get_config
+
     mcp = MCPServer(name, **server_kwargs)
     registry = ensure_registered()
+    disabled = set(get_config().disabled_tools)
+    skipped: list[str] = []
 
     for tool_def in registry.list_tools():
+        if tool_def.name in disabled:
+            skipped.append(tool_def.name)
+            continue
+
         @functools.wraps(tool_def.fn)
         async def wrapper(_td=tool_def, **kwargs):
             return await asyncio.to_thread(_td.call, **kwargs)
@@ -54,5 +66,15 @@ def create_mcp_server(name: str = "neurostack", **server_kwargs) -> MCPServer:
 
         mcp.add_tool(wrapper, annotations=mcp_annotations)
 
-    log.debug("Registered %d tools on MCP server %r", len(registry), name)
+    log.debug(
+        "Registered %d of %d tools on MCP server %r",
+        len(registry) - len(skipped), len(registry), name,
+    )
+    if skipped:
+        log.info("Tools disabled by config: %s", ", ".join(sorted(skipped)))
+    unknown = disabled - {t.name for t in registry.list_tools()}
+    if unknown:
+        log.warning(
+            "disabled_tools names no such tool: %s", ", ".join(sorted(unknown))
+        )
     return mcp
