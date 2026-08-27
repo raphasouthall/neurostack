@@ -50,6 +50,11 @@ class Config:
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     api_key: str = ""
+    # Tools to keep out of the MCP surface. Every registered tool's schema is
+    # injected into every client session, so a tool nobody calls costs tokens on
+    # each turn and lengthens the menu the model chooses from. Names are the tool
+    # names as registered, e.g. ["vault_communities", "vault_checkpoint"].
+    disabled_tools: list[str] = field(default_factory=list)
     cooccurrence_boost_weight: float = 0.1
     # Link-section down-weighting (issue #41): a chunk that is mostly wiki-link
     # markup — ## Related blocks, index / map-of-content notes — is navigational,
@@ -172,6 +177,11 @@ def load_config() -> Config:
             cfg.embed_dim = int(data["embed_dim"])
         if "api_port" in data:
             cfg.api_port = int(data["api_port"])
+        if "disabled_tools" in data:
+            raw = data["disabled_tools"]
+            if isinstance(raw, str):
+                raw = [p for p in raw.replace(",", " ").split() if p]
+            cfg.disabled_tools = [str(t).strip() for t in raw if str(t).strip()]
         if "cooccurrence_boost_weight" in data:
             cfg.cooccurrence_boost_weight = float(data["cooccurrence_boost_weight"])
         if "link_section_penalty" in data:
@@ -254,6 +264,13 @@ def load_config() -> Config:
                 setattr(cfg, attr, val.lower() in ("1", "true", "yes"))
             else:
                 setattr(cfg, attr, typ(val))
+
+    # Comma- or space-separated, e.g. NEUROSTACK_DISABLED_TOOLS="vault_merge,vault_diff"
+    disabled_env = os.environ.get("NEUROSTACK_DISABLED_TOOLS")
+    if disabled_env is not None:
+        cfg.disabled_tools = [
+            p for p in disabled_env.replace(",", " ").split() if p
+        ]
 
     return cfg
 
