@@ -85,6 +85,10 @@ def main():
         "--no-index", action="store_false", dest="index",
         help="Skip indexing after init",
     )
+    p.add_argument(
+        "--no-hooks", action="store_false", dest="hooks", default=True,
+        help="Skip automation hook setup (harvest timer + session hooks)",
+    )
     p.add_argument("--pull-models", action="store_true", default=False,
                    help="Pull Ollama models (full mode)")
     p.add_argument("--embed-model", help="Embedding model override")
@@ -822,12 +826,12 @@ def main():
     hooks_sub = p.add_subparsers(dest="hooks_command")
     hp = hooks_sub.add_parser("install", help="Install automation hooks")
     hp.add_argument("--type", default="harvest-timer",
-                    choices=["harvest-timer", "decay-timer"],
+                    choices=["harvest-timer", "decay-timer", "claude-hook"],
                     help="Hook type (default: harvest-timer)")
     hooks_sub.add_parser("status", help="Show hook status")
     rp = hooks_sub.add_parser("remove", help="Remove automation hooks")
     rp.add_argument("--type", default="harvest-timer",
-                    choices=["harvest-timer", "decay-timer"],
+                    choices=["harvest-timer", "decay-timer", "claude-hook"],
                     help="Hook type to remove (default: harvest-timer)")
     p.set_defaults(func=cmd_hooks)
 

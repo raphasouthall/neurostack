@@ -218,6 +218,14 @@ _DECAY_TIMER = {
     "on_calendar": "*-*-* 03:00:00",
 }
 
+_HARVEST_TIMER = {
+    "unit": "neurostack-harvest",
+    "service_desc": "NeuroStack harvest - extract session insights",
+    "exec": "%h/.local/bin/neurostack harvest --sessions 3",
+    "timer_desc": "Run neurostack harvest every hour",
+    "on_calendar": "hourly",
+}
+
 
 def _install_user_timer(spec):
     """Write and enable a systemd --user timer/service pair; return the timer path."""
@@ -282,50 +290,15 @@ def cmd_hooks(args):
     subcmd = getattr(args, "hooks_command", None)
 
     if subcmd == "install":
-        import subprocess
-
         hook_type = args.type or "harvest-timer"
 
         if hook_type == "harvest-timer":
-            # Create a systemd user timer for periodic harvest
-            timer_dir = Path.home() / ".config" / "systemd" / "user"
-            timer_dir.mkdir(parents=True, exist_ok=True)
-
-            service_content = (
-                "[Unit]\n"
-                "Description=NeuroStack harvest - extract session insights\n\n"
-                "[Service]\n"
-                "Type=oneshot\n"
-                "ExecStart=%h/.local/bin/neurostack harvest --sessions 3\n"
-                "Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin\n"
-            )
-            timer_content = (
-                "[Unit]\n"
-                "Description=Run neurostack harvest every hour\n\n"
-                "[Timer]\n"
-                "OnCalendar=hourly\n"
-                "Persistent=true\n\n"
-                "[Install]\n"
-                "WantedBy=timers.target\n"
-            )
-
-            (timer_dir / "neurostack-harvest.service").write_text(service_content)
-            (timer_dir / "neurostack-harvest.timer").write_text(timer_content)
-
-            subprocess.run(
-                ["systemctl", "--user", "daemon-reload"],
-                check=False, capture_output=True,
-            )
-            subprocess.run(
-                ["systemctl", "--user", "enable", "--now", "neurostack-harvest.timer"],
-                check=False, capture_output=True,
-            )
-
+            timer_path = _install_user_timer(_HARVEST_TIMER)
             if args.json:
                 print(json.dumps({"installed": True, "type": hook_type}))
             else:
                 print(f"  \033[32m\u2713\033[0m Installed {hook_type}")
-                print(f"    Timer: {timer_dir / 'neurostack-harvest.timer'}")
+                print(f"    Timer: {timer_path}")
                 print("    Check: systemctl --user status neurostack-harvest.timer")
         elif hook_type == "decay-timer":
             timer_path = _install_user_timer(_DECAY_TIMER)
@@ -335,11 +308,30 @@ def cmd_hooks(args):
                 print(f"  \033[32m✓\033[0m Installed {hook_type}")
                 print(f"    Timer: {timer_path}")
                 print("    Check: systemctl --user status neurostack-decay.timer")
+        elif hook_type == "claude-hook":
+            from ..setup import _claude_settings_path, install_claude_session_hook
+
+            result = install_claude_session_hook()
+            if args.json:
+                print(json.dumps({"installed": result == "installed", "type": hook_type,
+                                  "result": result}))
+            elif result == "installed":
+                print(f"  \033[32m✓\033[0m Installed {hook_type}")
+                print(f"    Hook: SessionEnd in {_claude_settings_path()}")
+            elif result == "already":
+                print("  Claude Code SessionEnd hook already installed")
+            elif result == "not-detected":
+                print("  Claude Code not detected (~/.claude missing) — skipped")
+            else:
+                print("  \033[31m✗\033[0m neurostack binary not found on PATH"
+                      " or in ~/.local/bin — hook not installed")
         else:
             print(f"  Unknown hook type: {hook_type}")
 
     elif subcmd == "status":
         import subprocess
+
+        from ..setup import claude_session_hook_installed
 
         result = subprocess.run(
             ["systemctl", "--user", "is-active", "neurostack-harvest.timer"],
@@ -351,46 +343,43 @@ def cmd_hooks(args):
             capture_output=True, text=True,
         )
         decay_active = decay.stdout.strip() == "active"
+        claude_hook = claude_session_hook_installed()
         if args.json:
             print(json.dumps({
                 "harvest_timer": "active" if active else "inactive",
                 "decay_timer": "active" if decay_active else "inactive",
+                "claude_session_hook": "installed" if claude_hook else "absent",
             }))
         else:
             status = "\033[32mactive\033[0m" if active else "\033[31minactive\033[0m"
             d_status = "\033[32mactive\033[0m" if decay_active else "\033[31minactive\033[0m"
+            c_status = ("\033[32minstalled\033[0m" if claude_hook
+                        else "\033[31mabsent\033[0m")
             print(f"  harvest-timer: {status}")
             print(f"  decay-timer: {d_status}")
+            print(f"  claude-session-hook: {c_status}")
 
     elif subcmd == "remove":
-        import subprocess
-
         hook_type = getattr(args, "type", None) or "harvest-timer"
         if hook_type == "decay-timer":
             _remove_user_timer("neurostack-decay")
-            if args.json:
-                print(json.dumps({"removed": True, "type": hook_type}))
-            else:
-                print(f"  \033[32m✓\033[0m Removed {hook_type}")
-            return
+        elif hook_type == "claude-hook":
+            from ..setup import remove_claude_session_hook
 
-        subprocess.run(
-            ["systemctl", "--user", "disable", "--now", "neurostack-harvest.timer"],
-            check=False, capture_output=True,
-        )
-        timer_dir = Path.home() / ".config" / "systemd" / "user"
-        for f in ("neurostack-harvest.service", "neurostack-harvest.timer"):
-            p = timer_dir / f
-            if p.exists():
-                p.unlink()
-        subprocess.run(
-            ["systemctl", "--user", "daemon-reload"],
-            check=False, capture_output=True,
-        )
-        if args.json:
-            print(json.dumps({"removed": True}))
+            removed = remove_claude_session_hook()
+            if args.json:
+                print(json.dumps({"removed": removed, "type": hook_type}))
+            elif removed:
+                print(f"  \033[32m✓\033[0m Removed {hook_type}")
+            else:
+                print("  No Claude Code SessionEnd hook found")
+            return
         else:
-            print("  \033[32m\u2713\033[0m Removed harvest timer")
+            _remove_user_timer("neurostack-harvest")
+        if args.json:
+            print(json.dumps({"removed": True, "type": hook_type}))
+        else:
+            print(f"  \033[32m\u2713\033[0m Removed {hook_type}")
 
     else:
         print("Usage: neurostack hooks {install,status,remove}")
