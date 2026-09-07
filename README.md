@@ -394,9 +394,13 @@ neurostack harvest --sessions 5          # extract session insights
 neurostack sessions search "query"       # search transcripts
 neurostack hooks install                 # hourly harvest timer
 
-# Harness hooks (session brief, auto-RAG, trigger memories, transcript harvest)
+# Harness hooks (session brief, auto-RAG, trigger memories, checkpoints, harvest)
 neurostack hooks install --harness claude   # or: omp
 neurostack hooks status
+
+# Checkpoint: the harness's own model writes the memories, mid-session
+neurostack hook checkpoint --session <id>   # prints a prompt for the model
+neurostack hook checkpoint --save          # model's JSON reply on stdin
 
 # Client setup
 neurostack setup-client cursor           # or: windsurf, gemini, vscode, claude-code

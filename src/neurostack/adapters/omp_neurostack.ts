@@ -2,24 +2,44 @@
 // It maps omp events onto `neurostack hook <event>` and applies the verdict: exit 2
 // blocks the call and stdout is the reason, stdout otherwise gets injected. Every
 // retrieval and suppression decision belongs to the CLI, never to this file.
+//
+// The checkpoint (#143) needs the session's own model. omp's extension API has no
+// completion call, so the prompt goes in as a user message and the next assistant
+// message is piped to `checkpoint --save`.
 type Block = { type?: string; text?: string };
 type Content = string | Block[] | undefined;
 type Msg = { role?: string; content?: Content };
-type Ctx = { sessionManager?: { getSessionId?: () => string } };
-type Ev = { toolName?: string; input?: unknown; isError?: boolean; content?: Content; messages?: Msg[] };
-type Pi = { on: (e: string, h: (ev: Ev, ctx: Ctx) => unknown) => void; sendMessage: (m: object) => void };
+type Ctx = {
+  sessionManager?: { getSessionId?: () => string };
+  setInterval?: (fn: () => void, ms: number) => unknown;
+};
+type Ev = Msg & { toolName?: string; input?: unknown; isError?: boolean; messages?: Msg[]; message?: Msg };
+type Pi = {
+  on: (e: string, h: (ev: Ev, ctx: Ctx) => unknown) => void;
+  sendMessage: (m: object) => void;
+  sendUserMessage: (text: string, o?: object) => void;
+  registerCommand: (name: string, c: { description: string; handler: () => unknown }) => void;
+};
 
 const BIN = "__NEUROSTACK_BIN__";
 const SESSION = `omp-${Date.now().toString(36)}-${process.pid}`;
+// Checkpoint cadence: 40 new messages, or 30 quiet minutes with at least 5.
+const EVERY_MESSAGES = 40;
+const QUIET_MS = 30 * 60_000;
+const MIN_MESSAGES = 5;
+const TICK_MS = 60_000;
 
-function spawn(event: string, payload: Record<string, unknown>) {
-  const proc = Bun.spawn([BIN, "hook", event], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
-  proc.stdin.write(JSON.stringify({ session: SESSION, workspace: process.cwd(), ...payload }));
+function spawn(args: string[], stdin: string) {
+  const proc = Bun.spawn([BIN, "hook", ...args], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+  proc.stdin.write(stdin);
   proc.stdin.end();
   return proc;
 }
-async function hook(event: string, payload: Record<string, unknown>) {
-  const proc = spawn(event, payload);
+function event(name: string, payload: Record<string, unknown>, args: string[] = []) {
+  return spawn([name, ...args], JSON.stringify({ session: SESSION, workspace: process.cwd(), ...payload }));
+}
+async function hook(name: string, payload: Record<string, unknown>) {
+  const proc = event(name, payload);
   const text = (await new Response(proc.stdout).text()).trim();
   return { text, code: await proc.exited };
 }
@@ -29,9 +49,30 @@ const append = (c: Content, note: string): Content =>
   typeof c === "string" ? c + note : [...(c ?? []), { type: "text", text: note }];
 
 export default function neurostack(pi: Pi): void {
-  pi.on("session_start", async () => {
+  let seen: Msg[] = [];
+  let baseline = 0;
+  let lastMessageAt = Date.now();
+  let awaiting = false;
+
+  async function checkpoint() {
+    if (awaiting || seen.length <= baseline) return;
+    const { text } = await hook("checkpoint", { since_index: baseline, messages: seen.slice(baseline) });
+    if (!text) return;
+    baseline = seen.length;
+    awaiting = true;
+    pi.sendUserMessage(`<neurostack-checkpoint>\n${text}\n</neurostack-checkpoint>`, { deliverAs: "followUp" });
+  }
+
+  pi.on("session_start", async (_e, ctx) => {
     const { text } = await hook("session-start", {});
     if (text) pi.sendMessage({ customType: "neurostack-brief", content: text, display: true });
+    ctx?.setInterval?.(() => {
+      if (Date.now() - lastMessageAt >= QUIET_MS && seen.length - baseline >= MIN_MESSAGES) void checkpoint();
+    }, TICK_MS);
+  });
+  pi.registerCommand("save", {
+    description: "Checkpoint this session into NeuroStack memory",
+    handler: () => checkpoint(),
   });
   pi.on("tool_call", async (e) => {
     const { text, code } = await hook("tool-call", { tool: e.toolName, input: e.input });
@@ -44,6 +85,11 @@ export default function neurostack(pi: Pi): void {
   });
   pi.on("context", async (e) => {
     const messages = e.messages ?? [];
+    seen = messages;
+    lastMessageAt = Date.now();
+    // Compaction shortens the history; a baseline past its end would never fire.
+    if (baseline > messages.length) baseline = 0;
+    if (messages.length - baseline >= EVERY_MESSAGES) void checkpoint();
     const i = messages.map((m) => m.role).lastIndexOf("user");
     if (i < 0) return;
     const { text } = await hook("prompt", { prompt: textOf(messages[i].content) });
@@ -52,8 +98,16 @@ export default function neurostack(pi: Pi): void {
     next[i] = { ...messages[i], content: append(messages[i].content, `\n\n${text}`) };
     return { messages: next };
   });
+  // The model's answer to the checkpoint prompt arrives as an ordinary reply.
+  pi.on("message_end", (e) => {
+    const message = e.message ?? e;
+    if (!awaiting || message.role !== "assistant") return;
+    awaiting = false;
+    const reply = textOf(message.content).trim();
+    if (reply) spawn(["checkpoint", "--save", "--harness", "omp", "--session", SESSION], reply).unref();
+  });
   // Harvest outlives the session: hand the transcript id over and detach.
   pi.on("session_shutdown", (_e, ctx) => {
-    spawn("session-end", { session: ctx?.sessionManager?.getSessionId?.() ?? SESSION, format: "omp" }).unref();
+    event("session-end", { session: ctx?.sessionManager?.getSessionId?.() ?? SESSION, format: "omp" }).unref();
   });
 }

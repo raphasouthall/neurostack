@@ -3,6 +3,8 @@
 import json
 import sqlite3
 import textwrap
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -168,3 +170,83 @@ def populated_db(in_memory_db, tmp_vault):
 
     conn.commit()
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Fake MCP endpoint for the harness hook tests (issues #141 / #143)
+# ---------------------------------------------------------------------------
+
+class FakeMcpHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length") or 0)
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            body = {}
+        method = body.get("method")
+        if method == "initialize":
+            self._send({"jsonrpc": "2.0", "id": body.get("id"),
+                        "result": {"protocolVersion": "2025-06-18", "capabilities": {}}},
+                       sid="fake-session")
+            return
+        if method == "notifications/initialized":
+            self.send_response(202)
+            self.send_header("content-length", "0")
+            self.end_headers()
+            return
+        if method == "tools/call":
+            params = body.get("params") or {}
+            name = params.get("name")
+            args = params.get("arguments") or {}
+            self.server.calls.append((name, args))
+            reply = self.server.replies.get(name)
+            payload = reply(args) if callable(reply) else ({} if reply is None else reply)
+            self._send({"jsonrpc": "2.0", "id": body.get("id"),
+                        "result": {"content": [{"type": "text", "text": json.dumps(payload)}]}})
+            return
+        self._send({"jsonrpc": "2.0", "id": body.get("id"),
+                    "error": {"code": -32601, "message": f"unknown method {method}"}})
+
+    def _send(self, obj, sid=None):
+        raw = f"event: message\ndata: {json.dumps(obj)}\n\n".encode()
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        if sid:
+            self.send_header("mcp-session-id", sid)
+        self.send_header("content-length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def server():
+    """A fake MCP endpoint. `replies` maps tool name -> payload or callable."""
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), FakeMcpHandler)
+    httpd.calls = []
+    httpd.replies = {}
+    httpd.url = f"http://127.0.0.1:{httpd.server_address[1]}/mcp"
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield httpd
+    httpd.shutdown()
+    httpd.server_close()
+
+
+@pytest.fixture
+def isolated_home(tmp_path, monkeypatch):
+    """Keep state files, config, and adapter writes inside the test.
+
+    Not autouse: only the hook and checkpoint modules want a throwaway HOME,
+    and they opt in module-wide.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("NEUROSTACK_URL", raising=False)
+    return home
