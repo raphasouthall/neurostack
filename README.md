@@ -125,6 +125,8 @@ To uninstall: `neurostack uninstall`
 
 ## What it does
 
+![How NeuroStack works: vault, index, serve, clients, and the optimizer loop](docs/how-it-works-overview.png)
+
 - Hybrid search (FTS5 keyword + semantic) with tiered depth, so a client can fetch triples, summaries or full notes by token budget.
 - RAG answers with inline `[[citations]]` over the CLI, MCP, or an OpenAI-compatible API.
 - Stale detection. A note that keeps surfacing in contexts where it no longer fits is flagged and demoted in later results.
@@ -132,6 +134,15 @@ To uninstall: `neurostack uninstall`
 - Synthesis and promotion. Recurring memories become learnings; a promotion queue lists which ones are ready to become notes.
 - Wiki-link graph with PageRank, community detection, gap and bridge analysis.
 - Read-only by default. Opt-in write tools commit and push every change to your git remote.
+
+<details>
+<summary><strong>Technical pipeline</strong> (module by module)</summary>
+
+![NeuroStack technical pipeline: vault, indexer, store, serving and optimizer lanes with the module that owns each step](docs/how-it-works-technical.png)
+
+Editable sources live in the `.drawio` files next to the images.
+
+</details>
 
 ---
 
