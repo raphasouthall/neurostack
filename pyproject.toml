@@ -1,14 +1,14 @@
 [project]
 name = "neurostack"
 version = "0.19.0"
-description = "Build, maintain, and search your knowledge vault. CLI + MCP server with stale note detection, semantic search, and neuroscience-grounded memory."
+description = "Local RAG layer and optimizer for your Markdown knowledge base. CLI + MCP server: grounded answers for any AI client, stale-note detection, session harvesting."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
     { name = "Raphael Southall" },
 ]
-keywords = ["knowledge-management", "obsidian", "mcp", "neuroscience", "pkm", "zettelkasten", "rag", "local-first", "knowledge-graph", "semantic-search", "ai-memory", "second-brain"]
+keywords = ["knowledge-base", "rag", "retrieval-augmented-generation", "mcp", "obsidian", "local-first", "knowledge-graph", "semantic-search", "ai-memory", "stale-detection", "pkm", "zettelkasten"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
