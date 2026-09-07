@@ -82,4 +82,3 @@ def heuristic_labels(conn, *, n: int = 150, seed: int = 0) -> list[EvalQuery]:
             continue
         labels.append(EvalQuery(query=query, targets=[_target_for(path)], category=category))
     return labels
-
