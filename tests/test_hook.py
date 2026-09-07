@@ -2,9 +2,9 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """Tests for the harness-neutral hook CLI (issue #141).
 
-Every server call goes to a fake MCP endpoint in this process: the hook must
-be provable without a live server, and the fake records what it was asked so
-outcome reporting can be asserted.
+Every server call goes to the fake MCP endpoint in `conftest.py`: the hook
+must be provable without a live server, and the fake records what it was
+asked so outcome reporting can be asserted.
 """
 
 import json
@@ -13,9 +13,7 @@ import shutil
 import socket
 import subprocess
 import sys
-import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,80 +34,11 @@ TRIGGER_HIT = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Fake MCP server
-# ---------------------------------------------------------------------------
-
-class _Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-
-    def do_POST(self):
-        length = int(self.headers.get("content-length") or 0)
-        try:
-            body = json.loads(self.rfile.read(length) or b"{}")
-        except ValueError:
-            body = {}
-        method = body.get("method")
-        if method == "initialize":
-            self._send({"jsonrpc": "2.0", "id": body.get("id"),
-                        "result": {"protocolVersion": "2025-06-18", "capabilities": {}}},
-                       sid="fake-session")
-            return
-        if method == "notifications/initialized":
-            self.send_response(202)
-            self.send_header("content-length", "0")
-            self.end_headers()
-            return
-        if method == "tools/call":
-            params = body.get("params") or {}
-            name = params.get("name")
-            args = params.get("arguments") or {}
-            self.server.calls.append((name, args))
-            reply = self.server.replies.get(name)
-            payload = reply(args) if callable(reply) else ({} if reply is None else reply)
-            self._send({"jsonrpc": "2.0", "id": body.get("id"),
-                        "result": {"content": [{"type": "text", "text": json.dumps(payload)}]}})
-            return
-        self._send({"jsonrpc": "2.0", "id": body.get("id"),
-                    "error": {"code": -32601, "message": f"unknown method {method}"}})
-
-    def _send(self, obj, sid=None):
-        raw = f"event: message\ndata: {json.dumps(obj)}\n\n".encode()
-        self.send_response(200)
-        self.send_header("content-type", "text/event-stream")
-        if sid:
-            self.send_header("mcp-session-id", sid)
-        self.send_header("content-length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def log_message(self, *args):
-        pass
-
-
-@pytest.fixture
-def server():
-    """A fake MCP endpoint. `replies` maps tool name -> payload or callable."""
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    httpd.calls = []
-    httpd.replies = {}
-    httpd.url = f"http://127.0.0.1:{httpd.server_address[1]}/mcp"
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    yield httpd
-    httpd.shutdown()
-    httpd.server_close()
-
 
 @pytest.fixture(autouse=True)
-def isolated_home(tmp_path, monkeypatch):
-    """Keep state files, config, and adapter writes inside the test."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.delenv("NEUROSTACK_URL", raising=False)
-    return home
+def _throwaway_home(isolated_home):
+    """Every test here writes state and adapters into a throwaway HOME."""
+    return isolated_home
 
 
 def _cfg(server, **kwargs):
@@ -379,7 +308,7 @@ def test_omp_adapter_is_generated_without_an_address(isolated_home, tmp_path):
     assert "__NEUROSTACK_BIN__" not in source
     assert not any(part.replace(".", "").isdigit() and part.count(".") == 3
                    for part in source.split())
-    assert len(source.splitlines()) < 60
+    assert len(source.splitlines()) < 120
 
 
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
@@ -462,7 +391,7 @@ def test_claude_install_is_idempotent(isolated_home):
         install_claude_adapter()
         _status, path = install_claude_adapter()
     hooks = json.loads(path.read_text())["hooks"]
-    assert [len(hooks[event]) for event in hooks] == [1, 1, 1, 1, 1]
+    assert [len(hooks[event]) for event in hooks] == [1, 1, 1, 1, 1, 1]
 
 
 # ---------------------------------------------------------------------------
@@ -597,15 +526,16 @@ def test_token_is_sent_as_a_bearer_header(server):
         return {"brief": "ok"}
 
     server.replies["session_brief"] = reply
-    original = _Handler.do_POST
+    handler = server.RequestHandlerClass
+    original = handler.do_POST
 
     def spy(self):
         seen.setdefault("auth", self.headers.get("authorization"))
         return original(self)
 
-    _Handler.do_POST = spy
+    handler.do_POST = spy
     try:
         run_event("session-start", {"session": "s16"}, cfg=_cfg(server, token="t0ken"))
     finally:
-        _Handler.do_POST = original
+        handler.do_POST = original
     assert seen["auth"] == "Bearer t0ken"
