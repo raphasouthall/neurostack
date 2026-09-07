@@ -42,17 +42,10 @@ def cmd_sessions(args):
         return
 
     if sessions_cmd == "end":
-        from ..memories import end_session, summarize_session
+        from ..memories import end_session
         from ..schema import DB_PATH, get_db
         conn = get_db(DB_PATH)
-        summary = None
-        if getattr(args, "summarize", False):
-            print("  Generating session summary...")
-            summary = summarize_session(
-                conn, args.id,
-                llm_url=args.summarize_url,
-            )
-        result = end_session(conn, args.id, summary=summary)
+        result = end_session(conn, args.id, summary=getattr(args, "summary", None))
         if "error" in result:
             print(f"  Error: {result['error']}")
             return

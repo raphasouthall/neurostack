@@ -147,8 +147,8 @@ class SearchResult:
     summary: str = ""
     title: str = ""
     # Full text of the matched chunk (untruncated). `snippet` is the 300-char
-    # display form; consumers that synthesise answers (vault_ask) need the whole
-    # chunk so a fact past char 300 isn't invisible — see issue #40.
+    # display form; a caller reasoning over the evidence needs the whole chunk so
+    # a fact past char 300 isn't invisible — see issue #40.
     chunk_content: str = ""
     # Per-component score breakdown, populated only when hybrid_search(explain=True).
     explain: dict | None = None

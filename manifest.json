@@ -17,8 +17,8 @@
       "NEUROSTACK_MODE": "${user_config.mode}",
       "NEUROSTACK_EMBED_URL": "${user_config.embed_url}",
       "NEUROSTACK_EMBED_MODEL": "${user_config.embed_model}",
-      "NEUROSTACK_LLM_URL": "${user_config.llm_url}",
-      "NEUROSTACK_LLM_MODEL": "${user_config.llm_model}"
+      "NEUROSTACK_INDEX_LLM_URL": "${user_config.index_llm_url}",
+      "NEUROSTACK_INDEX_LLM_MODEL": "${user_config.index_llm_model}"
     }
   },
   "user_config": {
@@ -57,17 +57,17 @@
       "required": false,
       "default": "nomic-embed-text"
     },
-    "llm_url": {
+    "index_llm_url": {
       "type": "string",
-      "title": "LLM Server URL",
-      "description": "URL of the LLM server for summaries, triples extraction, and RAG. Only used in full/community modes.",
+      "title": "Index-time LLM Server URL",
+      "description": "URL of the LLM server used while indexing: note summaries, triple extraction, community labels. Never called while a query is waiting. Only used in full/community modes.",
       "required": false,
       "default": "http://localhost:11434"
     },
-    "llm_model": {
+    "index_llm_model": {
       "type": "string",
-      "title": "LLM Model",
-      "description": "Model name for AI-generated summaries and RAG Q&A. Must be served at llm_url.",
+      "title": "Index-time LLM Model",
+      "description": "Model name for indexing-time summaries and triples. Must be served at index_llm_url.",
       "required": false,
       "default": "phi3.5"
     }
@@ -76,11 +76,6 @@
     {
       "name": "vault_search",
       "description": "Hybrid FTS5 + semantic search across the vault with tiered depth control",
-      "annotations": { "readOnlyHint": true, "openWorldHint": false }
-    },
-    {
-      "name": "vault_ask",
-      "description": "RAG Q&A with inline [[citations]] from vault notes",
       "annotations": { "readOnlyHint": true, "openWorldHint": false }
     },
     {
@@ -155,7 +150,7 @@
     },
     {
       "name": "vault_session_end",
-      "description": "End a session with optional summary and auto-harvest",
+      "description": "End a session, storing a caller-written summary, plus auto-harvest",
       "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
     },
     {

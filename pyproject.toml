@@ -1,7 +1,7 @@
 [project]
 name = "neurostack"
 version = "0.19.0"
-description = "Local RAG layer and optimizer for your Markdown knowledge base. CLI + MCP server: grounded answers for any AI client, stale-note detection, session harvesting."
+description = "Local retrieval layer and optimizer for your Markdown knowledge base. CLI + MCP server: ranked evidence for any AI client, stale-note detection, session harvesting."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
@@ -47,6 +47,8 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
     "ruff>=0.4",
+    # The HTTP API's route surface is covered by tests, so the gate needs it.
+    "fastapi>=0.115",
 ]
 # OpenAI-compatible HTTP API
 api = [

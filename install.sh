@@ -124,8 +124,8 @@ if [ ! -f "$CONFIG_DIR/config.toml" ]; then
 
 vault_root = "$HOME/brain"
 embed_url = "http://localhost:11434"
-llm_url = "http://localhost:11434"
-llm_model = "phi3.5"  # phi3.5 is MIT licensed
+index_llm_url = "http://localhost:11434"
+index_llm_model = "phi3.5"  # phi3.5 is MIT licensed
 TOML
     info "Config written: $CONFIG_DIR/config.toml"
 else

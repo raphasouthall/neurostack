@@ -26,8 +26,8 @@ class OllamaCheckResult:
 def check_ollama(
     embed_url: str,
     embed_model: str,
-    llm_url: str,
-    llm_model: str,
+    index_llm_url: str,
+    index_llm_model: str,
     timeout: float = 5.0,
 ) -> OllamaCheckResult:
     """Check Ollama connectivity and model availability.
@@ -44,7 +44,7 @@ def check_ollama(
 
     # Check LLM service (may be same or different URL)
     result.llm_ok, result.llm_error = _check_model(
-        llm_url, llm_model, timeout
+        index_llm_url, index_llm_model, timeout
     )
 
     return result

@@ -15,7 +15,6 @@ NeuroStack has multiple retrieval tools. Pick the right one:
 | vault_search(depth="auto") | Unsure - let the system decide | Variable |
 | vault_triples | Structured SPO facts only | Cheapest |
 | vault_communities | Global/thematic questions across the vault | Expensive (LLM) |
-| vault_ask | RAG Q&A with citations | Expensive (LLM) |
 | vault_graph | Wiki-link neighborhood of a specific note | Cheap |
 | vault_related | Semantically similar notes | Moderate |
 | vault_memories | Search agent-written memories | Cheap |
@@ -30,7 +29,7 @@ NeuroStack has multiple retrieval tools. Pick the right one:
 2. Do you need an overview of a topic? -> vault_search(depth="summaries")
 3. Do you need actual note content? -> vault_search(depth="full")
 4. Is the question broad/thematic? -> vault_communities
-5. Need a cited answer? -> vault_ask
+5. Need a cited answer? -> vault_search, then cite the notes yourself — NeuroStack returns evidence, it does not write answers
 6. Want to explore connections from a note? -> vault_graph
 7. Want similar notes? -> vault_related
 8. Many likely hits but you'll open only 1-2? -> vault_search(reference_only=True), then read the winner

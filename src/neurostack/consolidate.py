@@ -12,7 +12,7 @@ is the nightly job that RUNS it:
 2. Cluster candidates by attractor basin: each memory maps to its nearest note
    (embedding argmax over chunks), the note to its coarse (level 0) Hopfield
    community. Memories with no resolvable basin group by workspace.
-3. One LLM synthesis per cluster (existing ``llm_url`` failover path) — a
+3. One LLM synthesis per cluster (existing ``index_llm_url`` failover path) — a
    consolidated section, not a raw dump.
 4. Write/extend the target vault note through the existing write path
    (``vault_write_file``: validation, flock, commit + push with
@@ -198,8 +198,8 @@ def cluster_candidates(
 
 def _synthesize(
     members: list[dict],
-    llm_url: str,
-    llm_model: str,
+    index_llm_url: str,
+    index_llm_model: str,
     api_key: str = "",
 ) -> dict:
     """One LLM synthesis for a cluster. Raises on failure — caller skips cluster."""
@@ -216,10 +216,10 @@ def _synthesize(
     prompt = _SYNTH_PROMPT.format(n=len(members), memories="\n\n".join(blocks))
 
     resp = httpx.post(
-        f"{llm_url}/v1/chat/completions",
+        f"{index_llm_url}/v1/chat/completions",
         headers=_auth_headers(api_key),
         json={
-            "model": llm_model,
+            "model": index_llm_model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
             "temperature": 0.2,
@@ -266,8 +266,8 @@ def consolidate_replay(
     cap: int = DEFAULT_CAP,
     dry_run: bool = True,
     workspace: str | None = None,
-    llm_url: str | None = None,
-    llm_model: str | None = None,
+    index_llm_url: str | None = None,
+    index_llm_model: str | None = None,
 ) -> dict:
     """Run one consolidation replay pass. Returns a report dict.
 
@@ -280,8 +280,8 @@ def consolidate_replay(
     from .config import get_config
 
     cfg = get_config()
-    llm_url = llm_url or cfg.llm_url
-    llm_model = llm_model or cfg.llm_model
+    index_llm_url = index_llm_url or cfg.index_llm_url
+    index_llm_model = index_llm_model or cfg.index_llm_model
 
     clusters = cluster_candidates(conn, workspace=workspace)
     planned = clusters[: max(0, cap)]
@@ -314,7 +314,7 @@ def consolidate_replay(
         plan = _plan(cluster)
         members = cluster["members"]
         try:
-            synth = _synthesize(members, llm_url, llm_model, cfg.llm_api_key)
+            synth = _synthesize(members, index_llm_url, index_llm_model, cfg.index_llm_api_key)
         except Exception as exc:
             plan["error"] = f"synthesis failed: {exc}"
             report["skipped"].append(plan)
