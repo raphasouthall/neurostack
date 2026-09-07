@@ -326,12 +326,20 @@ def _event_session_start(client: McpClient, payload: dict, state: SessionState,
     workspace = _workspace(cfg, payload)
     if workspace:
         args["workspace"] = workspace
-    brief = client.call_json("session_brief", args)
-    if not isinstance(brief, dict):
+    text = client.call("session_brief", args)
+    if not text:
         return Verdict()
-    text = brief.get("brief")
-    if not isinstance(text, str) or not text.strip():
-        return Verdict()
+    # The tool answers {"brief": "<markdown>"}; unwrap it, and take a plain
+    # text reply as the brief itself.
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        brief = parsed.get("brief")
+        if not isinstance(brief, str) or not brief.strip():
+            return Verdict()
+        text = brief
     return Verdict(
         "NeuroStack session brief (auto-injected at session start; recent vault "
         "changes, commits, memories):\n\n" + text.strip()
@@ -530,9 +538,12 @@ def run_event(event: str, payload: dict, cfg: ClientConfig | None = None,
     client = client or McpClient(cfg)
     session = _session_id(payload)
     state = load_state(session, fresh=(event == "session-start"))
-    verdict = _HANDLERS[event](client, payload, state, cfg)
-    if event != "session-end":
-        state.save()
+    try:
+        verdict = _HANDLERS[event](client, payload, state, cfg)
+    finally:
+        if event != "session-end":
+            state.save()
+        client.close()
     if client.errors:
         print(f"neurostack hook {event}: {client.errors[0]}", file=sys.stderr)
     return verdict
