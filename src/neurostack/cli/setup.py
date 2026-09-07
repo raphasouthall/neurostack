@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from .. import __version__
-from ..config import CONFIG_PATH, get_config
+from ..config import _LEGACY_LLM_KEYS, CONFIG_PATH, get_config
 from .utils import _get_vault_template_dir
 
 
@@ -177,13 +177,17 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
         with open(CONFIG_PATH, "rb") as f:
             existing = _tomllib.load(f)
 
+    # Rewriting the file is the moment to finish the #142 rename: leaving the old
+    # keys beside the new ones would make config load warn on every start.
+    for legacy in _LEGACY_LLM_KEYS:
+        existing.pop(legacy, None)
     existing["mode"] = cfg.mode
     existing["vault_root"] = str(vault_root)
     existing["embed_url"] = cfg.embed_url
-    existing["llm_url"] = cfg.llm_url
-    existing["llm_model"] = cfg.llm_model
-    if cfg.llm_api_key:
-        existing["llm_api_key"] = cfg.llm_api_key
+    existing["index_llm_url"] = cfg.index_llm_url
+    existing["index_llm_model"] = cfg.index_llm_model
+    if cfg.index_llm_api_key:
+        existing["index_llm_api_key"] = cfg.index_llm_api_key
     if cfg.embed_api_key:
         existing["embed_api_key"] = cfg.embed_api_key
 
@@ -221,7 +225,7 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
         full_index(
             vault_root=vault_root,
             embed_url=cfg.embed_url,
-            summarize_url=cfg.llm_url,
+            summarize_url=cfg.index_llm_url,
             skip_summary=True,
             skip_triples=True,
         )
@@ -303,7 +307,7 @@ def _create_cli_wrapper(project_root: Path) -> None:
         print(f"  \033[32m✓\033[0m CLI wrapper: {wrapper} (alias: ns)")
 
 
-def _setup_ollama(pull_models, embed_model, llm_model, cfg):
+def _setup_ollama(pull_models, embed_model, index_llm_model, cfg):
     """Check Ollama, optionally install and pull models."""
     import shutil
     import subprocess
@@ -324,18 +328,18 @@ def _setup_ollama(pull_models, embed_model, llm_model, cfg):
                   " https://ollama.com/download")
 
     if ollama and pull_models:
-        _pull_ollama_models(ollama, embed_model, llm_model, subprocess)
+        _pull_ollama_models(ollama, embed_model, index_llm_model, subprocess)
 
         cfg.embed_model = embed_model
-        cfg.llm_model = llm_model
+        cfg.index_llm_model = index_llm_model
         from ..config import CONFIG_PATH
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(
             f'vault_root = "{cfg.vault_root}"\n'
             f'embed_url = "{cfg.embed_url}"\n'
             f'embed_model = "{embed_model}"\n'
-            f'llm_url = "{cfg.llm_url}"\n'
-            f'llm_model = "{llm_model}"\n'
+            f'index_llm_url = "{cfg.index_llm_url}"\n'
+            f'index_llm_model = "{index_llm_model}"\n'
         )
         print(f"  \033[32m✓\033[0m Config updated: {CONFIG_PATH}")
 
@@ -353,22 +357,22 @@ def _full_index_pipeline(vault_root, cfg):
     full_index(
         vault_root=vault_root,
         embed_url=cfg.embed_url,
-        summarize_url=cfg.llm_url,
+        summarize_url=cfg.index_llm_url,
         skip_summary=False,
         skip_triples=False,
     )
     print("  \033[32m✓\033[0m Index complete")
 
     print("  Backfilling summaries...")
-    backfill_summaries(vault_root=vault_root, summarize_url=cfg.llm_url)
-    backfill_stale_summaries(vault_root=vault_root, summarize_url=cfg.llm_url)
+    backfill_summaries(vault_root=vault_root, summarize_url=cfg.index_llm_url)
+    backfill_stale_summaries(vault_root=vault_root, summarize_url=cfg.index_llm_url)
     print("  \033[32m✓\033[0m Summaries complete")
 
     print("  Backfilling triples...")
     backfill_triples(
         vault_root=vault_root,
         embed_url=cfg.embed_url,
-        summarize_url=cfg.llm_url,
+        summarize_url=cfg.index_llm_url,
     )
     print("  \033[32m✓\033[0m Triples complete")
 
@@ -381,7 +385,7 @@ def _full_index_pipeline(vault_root, cfg):
         print(f"  Detected {n_coarse} coarse, {n_fine} fine communities.")
         print("  Generating community summaries...")
         summarize_all_communities(
-            summarize_url=cfg.llm_url,
+            summarize_url=cfg.index_llm_url,
             embed_url=cfg.embed_url,
         )
         print("  \033[32m✓\033[0m Communities complete")
@@ -488,7 +492,7 @@ def cmd_init(args):
     mode = "lite"
     pull_models = False
     embed_model = cfg.embed_model
-    llm_model = cfg.llm_model
+    index_llm_model = cfg.index_llm_model
 
     _print_hardware_recommendation()
     print()
@@ -520,9 +524,9 @@ def cmd_init(args):
                 ("llama3.1:8b", "llama3.1:8b — Meta license"),
                 ("mistral:7b", "mistral:7b — Apache 2.0"),
             ]
-            llm_model = _prompt(
+            index_llm_model = _prompt(
                 "LLM model",
-                default=cfg.llm_model,
+                default=cfg.index_llm_model,
                 choices=model_choices,
             )
 
@@ -545,8 +549,8 @@ def cmd_init(args):
 
     # ── Step 5: LLM configuration (full mode only) ──
     embed_url = cfg.embed_url
-    llm_url = cfg.llm_url
-    llm_api_key = ""
+    index_llm_url = cfg.index_llm_url
+    index_llm_api_key = ""
     embed_api_key = ""
 
     if mode == "full":
@@ -555,19 +559,19 @@ def cmd_init(args):
         print("  (Ollama, vLLM, Together AI, Groq, OpenRouter, etc.)\n")
 
         embed_url = _prompt("Embedding endpoint", default=cfg.embed_url)
-        llm_url = _prompt("LLM endpoint", default=cfg.llm_url)
+        index_llm_url = _prompt("LLM endpoint", default=cfg.index_llm_url)
 
         is_local = any(
-            h in llm_url for h in ("localhost", "127.0.0.1", "0.0.0.0")
+            h in index_llm_url for h in ("localhost", "127.0.0.1", "0.0.0.0")
         )
         if not is_local:
             print("\n  \033[1mAPI Authentication\033[0m")
             print("  Cloud providers require an API key.\n")
-            llm_api_key = _prompt("LLM API key", default="")
-            if embed_url != llm_url:
+            index_llm_api_key = _prompt("LLM API key", default="")
+            if embed_url != index_llm_url:
                 embed_api_key = _prompt("Embedding API key", default="")
             else:
-                embed_api_key = llm_api_key
+                embed_api_key = index_llm_api_key
 
     # ── Step 6: Automation hooks ──
     print()
@@ -583,11 +587,11 @@ def cmd_init(args):
     print(f"  Profession: {profession}")
     if mode == "full":
         print(f"  Embed URL:  {embed_url}")
-        print(f"  LLM URL:    {llm_url}")
-        print(f"  LLM model:  {llm_model}")
+        print(f"  LLM URL:    {index_llm_url}")
+        print(f"  LLM model:  {index_llm_model}")
         if pull_models:
             print(f"  Embed model: {embed_model}")
-        auth_label = "yes" if (llm_api_key or embed_api_key) else "no"
+        auth_label = "yes" if (index_llm_api_key or embed_api_key) else "no"
         print(f"  API auth:   {auth_label}")
         print("  Index:      full (summaries + triples + communities)")
     else:
@@ -610,15 +614,15 @@ def cmd_init(args):
 
     # 2. Ollama setup (full mode)
     if mode == "full":
-        _setup_ollama(pull_models, embed_model, llm_model, cfg)
+        _setup_ollama(pull_models, embed_model, index_llm_model, cfg)
 
     # 3. Apply config + create vault structure
     cfg.mode = "local"
     cfg.vault_root = vault_root
     cfg.embed_url = embed_url
-    cfg.llm_url = llm_url
-    cfg.llm_model = llm_model
-    cfg.llm_api_key = llm_api_key
+    cfg.index_llm_url = index_llm_url
+    cfg.index_llm_model = index_llm_model
+    cfg.index_llm_api_key = index_llm_api_key
     cfg.embed_api_key = embed_api_key
 
     if mode == "full":
@@ -856,8 +860,8 @@ def cmd_onboard(args):
         CONFIG_PATH.write_text(
             f'vault_root = "{target}"\n'
             f'embed_url = "{cfg.embed_url}"\n'
-            f'llm_url = "{cfg.llm_url}"\n'
-            f'llm_model = "{cfg.llm_model}"\n'
+            f'index_llm_url = "{cfg.index_llm_url}"\n'
+            f'index_llm_model = "{cfg.index_llm_model}"\n'
         )
         print(f"  Config written to {CONFIG_PATH}")
 
@@ -894,7 +898,7 @@ def cmd_onboard(args):
         full_index(
             vault_root=target,
             embed_url=cfg.embed_url,
-            summarize_url=cfg.llm_url,
+            summarize_url=cfg.index_llm_url,
             skip_summary=False,
             skip_triples=False,
         )
@@ -1003,11 +1007,11 @@ def _get_ollama_models(ollama_bin, subprocess):
         return set()
 
 
-def _pull_ollama_models(ollama_bin, embed_model, llm_model, subprocess):
+def _pull_ollama_models(ollama_bin, embed_model, index_llm_model, subprocess):
     """Pull Ollama models, skipping any already available."""
     available = _get_ollama_models(ollama_bin, subprocess)
 
-    for model_name in (embed_model, llm_model):
+    for model_name in (embed_model, index_llm_model):
         base = model_name.split(":")[0] if ":" in model_name else model_name
         if model_name in available or base in available:
             print(f"  \033[32m✓\033[0m {model_name} already available")
@@ -1249,7 +1253,7 @@ def cmd_install(args):
         mode = args.mode or "lite"
         pull_models = args.pull_models
         embed_model = args.embed_model or cfg.embed_model
-        llm_model = args.llm_model or cfg.llm_model
+        index_llm_model = args.index_llm_model or cfg.index_llm_model
     else:
         # ── Interactive wizard ──
         print("\n  \033[1m━━━ NeuroStack Install ━━━\033[0m\n")
@@ -1312,7 +1316,7 @@ def cmd_install(args):
 
         pull_models = False
         embed_model = cfg.embed_model
-        llm_model = cfg.llm_model
+        index_llm_model = cfg.index_llm_model
         if mode == "full":
             print("\n  \033[1mOllama Models\033[0m")
             print(
@@ -1336,9 +1340,9 @@ def cmd_install(args):
                     ("mistral:7b",
                      "mistral:7b — Apache 2.0"),
                 ]
-                llm_model = _prompt(
+                index_llm_model = _prompt(
                     "LLM model",
-                    default=cfg.llm_model,
+                    default=cfg.index_llm_model,
                     choices=model_choices,
                 )
 
@@ -1346,7 +1350,7 @@ def cmd_install(args):
         print(f"  Mode:     {mode}")
         if pull_models:
             print(f"  Embed:    ollama pull {embed_model}")
-            print(f"  LLM:      ollama pull {llm_model}")
+            print(f"  LLM:      ollama pull {index_llm_model}")
         else:
             print("  Models:   skip")
         if not _confirm("\n  Proceed?", default=True):
@@ -1440,20 +1444,20 @@ def cmd_install(args):
 
         if ollama and pull_models:
             _pull_ollama_models(
-                ollama, embed_model, llm_model, subprocess
+                ollama, embed_model, index_llm_model, subprocess
             )
 
             # Update config with chosen models
             cfg.embed_model = embed_model
-            cfg.llm_model = llm_model
+            cfg.index_llm_model = index_llm_model
             from ..config import CONFIG_PATH
             CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
             CONFIG_PATH.write_text(
                 f'vault_root = "{cfg.vault_root}"\n'
                 f'embed_url = "{cfg.embed_url}"\n'
                 f'embed_model = "{embed_model}"\n'
-                f'llm_url = "{cfg.llm_url}"\n'
-                f'llm_model = "{llm_model}"\n'
+                f'index_llm_url = "{cfg.index_llm_url}"\n'
+                f'index_llm_model = "{index_llm_model}"\n'
             )
             print(f"  \033[32m✓\033[0m Config updated: {CONFIG_PATH}")
 
@@ -1638,31 +1642,31 @@ def cmd_doctor(args):
     # Check Ollama LLM endpoint
     try:
         import httpx
-        r = httpx.get(f"{cfg.llm_url}/api/tags", timeout=3)
+        r = httpx.get(f"{cfg.index_llm_url}/api/tags", timeout=3)
         if r.status_code == 200:
             models = [m["name"] for m in r.json().get("models", [])]
-            has_llm = any(cfg.llm_model in m for m in models)
+            has_llm = any(cfg.index_llm_model in m for m in models)
             status = "OK" if has_llm else "WARN"
             detail = (
-                f"{cfg.llm_url}"
+                f"{cfg.index_llm_url}"
                 f" ({', '.join(models[:3])})"
             )
             if not has_llm:
                 detail += (
-                    f"\n         {cfg.llm_model}"
+                    f"\n         {cfg.index_llm_model}"
                     " not found. Pull:"
-                    f" ollama pull {cfg.llm_model}"
+                    f" ollama pull {cfg.index_llm_model}"
                 )
             checks.append(("LLM", status, detail))
         else:
             checks.append((
                 "LLM", "WARN",
-                f"{cfg.llm_url} returned {r.status_code}",
+                f"{cfg.index_llm_url} returned {r.status_code}",
             ))
     except Exception:
         checks.append((
             "LLM", "WARN",
-            f"{cfg.llm_url} unreachable"
+            f"{cfg.index_llm_url} unreachable"
             " (search still works, summaries disabled)",
         ))
 

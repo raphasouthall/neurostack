@@ -222,34 +222,6 @@ def vault_search(
 
 
 @registry.tool(tags=["search", "retrieval"], annotations=_READ_ONLY)
-def vault_ask(
-    question: str,
-    top_k: int = 8,
-    workspace: str = None,
-) -> dict:
-    """Ask a natural language question and get an answer with citations from vault content.
-
-    Uses RAG (Retrieval-Augmented Generation) to search the vault for relevant
-    content, then synthesizes an answer with inline [[note-title]] citations.
-
-    Args:
-        question: Natural language question to answer
-        top_k: Number of chunks to retrieve for context (default 8)
-        workspace: Optional vault subdirectory prefix to restrict
-            results (e.g. "work/acme-cloud")
-    """
-    from ..ask import ask_vault
-
-    _, embed_url = _cfg()
-    return ask_vault(
-        question=question,
-        top_k=top_k,
-        embed_url=embed_url,
-        workspace=workspace,
-    )
-
-
-@registry.tool(tags=["search", "retrieval"], annotations=_READ_ONLY)
 def vault_summary(path_or_query: str) -> dict:
     """Get pre-computed summary for a note by path or search query.
 

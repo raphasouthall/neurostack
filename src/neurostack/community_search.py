@@ -141,8 +141,8 @@ def global_query(
     """
     cfg = get_config()
     embed_url = embed_url or cfg.embed_url
-    summarize_url = summarize_url or cfg.llm_url
-    model = model or cfg.llm_model
+    summarize_url = summarize_url or cfg.index_llm_url
+    model = model or cfg.index_llm_model
 
     if conn is None:
         conn = get_db(DB_PATH)
@@ -200,7 +200,7 @@ def global_query(
     for k in stale:
         del _MAP_CACHE[k]
 
-    llm_headers = _auth_headers(cfg.llm_api_key)
+    llm_headers = _auth_headers(cfg.index_llm_api_key)
     findings: list[str] = []
     for hit in hits:
         if hit["score"] < 0.15:

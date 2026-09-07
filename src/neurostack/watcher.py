@@ -164,7 +164,7 @@ def index_single_note(
     transaction.
     """
     embed_url = embed_url or get_config().embed_url
-    summarize_url = summarize_url or get_config().llm_url
+    summarize_url = summarize_url or get_config().index_llm_url
 
     rel_path = str(path.relative_to(vault_root))
 
@@ -592,7 +592,7 @@ def full_index(
 
     vault_root = vault_root or _vault_root()
     embed_url = embed_url or get_config().embed_url
-    summarize_url = summarize_url or get_config().llm_url
+    summarize_url = summarize_url or get_config().index_llm_url
 
     # Pre-flight: check Ollama before starting a long indexing run
     embeddings_ok = True
@@ -601,8 +601,8 @@ def full_index(
         result = check_ollama(
             embed_url=embed_url,
             embed_model=get_config().embed_model,
-            llm_url=summarize_url,
-            llm_model=get_config().llm_model,
+            index_llm_url=summarize_url,
+            index_llm_model=get_config().index_llm_model,
         )
         embeddings_ok = result.embed_ok
         report = preflight_report(result)
@@ -741,7 +741,7 @@ def incremental_index(
     """
     vault_root = vault_root or _vault_root()
     embed_url = embed_url or get_config().embed_url
-    summarize_url = summarize_url or get_config().llm_url
+    summarize_url = summarize_url or get_config().index_llm_url
     if conn is None:
         conn = get_db(DB_PATH)
     _has_vec = has_vec_index(conn)
@@ -780,7 +780,7 @@ def backfill_summaries(
 ):
     """Generate summaries for all notes that don't have one yet."""
     vault_root = vault_root or _vault_root()
-    summarize_url = summarize_url or get_config().llm_url
+    summarize_url = summarize_url or get_config().index_llm_url
     conn = get_db(DB_PATH)
     # Find notes without summaries
     rows = conn.execute(
@@ -841,7 +841,7 @@ def backfill_stale_summaries(
 ):
     """Regenerate summaries where content has changed since last summary."""
     vault_root = vault_root or _vault_root()
-    summarize_url = summarize_url or get_config().llm_url
+    summarize_url = summarize_url or get_config().index_llm_url
     conn = get_db(DB_PATH)
     rows = conn.execute(
         """SELECT n.path, n.title, n.content_hash FROM notes n
@@ -901,7 +901,7 @@ def backfill_triples(
     """Generate triples for all notes that don't have any yet."""
     vault_root = vault_root or _vault_root()
     embed_url = embed_url or get_config().embed_url
-    summarize_url = summarize_url or get_config().llm_url
+    summarize_url = summarize_url or get_config().index_llm_url
     conn = get_db(DB_PATH)
     now_iso = datetime.now(timezone.utc).isoformat()
     # Notes without triples, excluding those still in retry backoff (#28): a note
@@ -1044,7 +1044,7 @@ def run_watcher(
     """Run the watchdog file watcher."""
     vault_root = vault_root or _vault_root()
     embed_url = embed_url or get_config().embed_url
-    summarize_url = summarize_url or get_config().llm_url
+    summarize_url = summarize_url or get_config().index_llm_url
 
     log.info(f"Watching {vault_root} for changes...")
 
