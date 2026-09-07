@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Removed
+
+- **#142 — request-time answering.** NeuroStack returns evidence; the caller reasons over it. Gone: the `vault_ask` MCP tool and `ask.py`, the `neurostack-ask` API model, the `neurostack ask` CLI command (it now prints the replacement and exits 2), the LLM session summary behind `vault_session_end(summarize=True)`, and the model-written eval label tier in `autolabel.py`. `vault_session_end(session_id, summary="…")` stores a summary the caller writes; `neurostack sessions end ID --summary "…"` is the CLI form. `neurostack eval --autolabel` uses stored summaries and titles, so it needs no model — its `--autolabel-mode`, `--autolabel-k`, `--autolabel-cache`, `--llm-url` and `--llm-model` flags are gone. No LLM call now happens while a caller waits on a retrieval tool. Index-time work is untouched: summaries, triples, community labels, harvest classification, synthesize and consolidate all still call a model.
+
+### Changed
+
+- **#142 — config keys `llm_url` / `llm_model` / `llm_api_key` are now `index_llm_url` / `index_llm_model` / `index_llm_api_key`** (env `NEUROSTACK_INDEX_LLM_URL` / `_MODEL` / `_API_KEY`), naming what the endpoint is for now that nothing calls it on a query. The old TOML keys and `NEUROSTACK_LLM_*` env vars still load into the new fields and log one deprecation line per config load naming every old name seen; setting the new name wins when both appear. `neurostack init` / `install`'s `--llm-model` and `consolidate` / `synthesize`'s `--llm-model` are now `--index-llm-model`; `--summarize-url` keeps its name and feeds `index_llm_url`.
+
 ### Added
 
 - **#141 — `neurostack hook`, the harness-neutral client.** One JSON event on stdin, context on stdout, exit 2 to block: `session-start`, `prompt`, `tool-call`, `tool-result`, `session-end`. Trigger lookups, once-per-session suppression, outcome reporting (#136) and transcript posting now live in the package instead of once per harness. Client config `~/.config/neurostack/client.toml` (`url`, `fallback_url`, `token`, `timeout_s`, `harvest_timeout_s`, `workspace_map`; `NEUROSTACK_URL` overrides), per-session state in `~/.cache/neurostack/sessions/`. Every server problem fails open: one stderr line, exit 0, inside `timeout_s` across both URLs. `neurostack hooks install --harness claude|omp` generates the adapter — Claude Code settings entries, or a 59-line omp extension — and replaces the hand-written hook scripts it supersedes. `hooks install --type claude-hook` is gone; use `--harness claude`.

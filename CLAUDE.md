@@ -36,7 +36,7 @@ NEUROSTACK_API_KEY=secret neurostack api  # with auth
 ```
 
 Endpoints: `POST /v1/chat/completions`, `POST /v1/embeddings`, `GET /v1/models`, `GET /health`
-Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurostack-triples` (facts)
+Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurostack-triples` (facts)
 
 ## CLI Commands
 
@@ -44,7 +44,6 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | Command | Description |
 |---------|-------------|
 | `neurostack search "query"` | Hybrid FTS5 + semantic search. Flags: `--mode hybrid\|semantic\|keyword`, `--top-k N`, `--context "domain"`, `--workspace "path/"` |
-| `neurostack ask "question"` | RAG Q&A with inline `[[citations]]`. Uses Ollama LLM. Flags: `--top-k N`, `--workspace` |
 | `neurostack tiered "query"` | Token-efficient tiered retrieval. `--depth triples\|summaries\|full\|auto` |
 | `neurostack triples "query"` | Search knowledge graph triples (subject-predicate-object facts) |
 | `neurostack summary "note.md"` | Get pre-computed AI summary of a note |
@@ -74,7 +73,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 | Command | Description |
 |---------|-------------|
 | `neurostack sessions start` | Begin a memory session. `--source "agent-name"`, `--workspace` |
-| `neurostack sessions end ID` | End session. `--summarize` for LLM summary |
+| `neurostack sessions end ID` | End session. `--summary "text"` stores a summary you wrote |
 | `neurostack sessions list` | List recent sessions. `--workspace`, `--limit N` |
 | `neurostack sessions show ID` | Session details and memories |
 | `neurostack sessions search "query"` | Search session transcripts (delegates to session-index) |
@@ -127,7 +126,6 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 
 ### Search & Retrieval
 - `vault_search(query, top_k, mode, depth, context, workspace, max_tokens, reference_only)` - Hybrid search with tiered depth; `max_tokens` caps full-depth/reference output, `reference_only` returns lean {path, score, snippet} + fetch hint (issue #62)
-- `vault_ask(question, top_k, workspace)` - RAG Q&A with citations
 - `vault_summary(path_or_query)` - Pre-computed note summaries
 - `vault_graph(note, depth, workspace)` - Wiki-link neighborhood with PageRank
 - `vault_graph_analysis(top_k, min_shared)` - Structural gaps (unlinked but related pairs) + bridge notes (betweenness/articulation points) over the link graph (issue #12)
@@ -155,7 +153,7 @@ Models: `neurostack-ask` (RAG), `neurostack-search` (hybrid), `neurostack-tiered
 
 ### Sessions
 - `vault_session_start(source_agent, workspace)` - Begin memory session
-- `vault_session_end(session_id, summarize, auto_harvest)` - End session
+- `vault_session_end(session_id, summary, auto_harvest)` - End session, storing a caller-written summary
 
 ### Vault Files (raw markdown CRUD over MCP)
 - `vault_read_file(path, offset, limit)` - Read a .md file under vault_root; `offset`/`limit` (characters) page through large notes and report `truncated` (issue #62)
@@ -186,8 +184,8 @@ File: `~/.config/neurostack/config.toml`
 | `vault_root` | `~/brain` | `NEUROSTACK_VAULT_ROOT` |
 | `embed_url` | `http://localhost:11434` | `NEUROSTACK_EMBED_URL` |
 | `embed_model` | `nomic-embed-text` | `NEUROSTACK_EMBED_MODEL` |
-| `llm_url` | `http://localhost:11434` | `NEUROSTACK_LLM_URL` |
-| `llm_model` | `phi3.5` | `NEUROSTACK_LLM_MODEL` |
+| `index_llm_url` | `http://localhost:11434` | `NEUROSTACK_INDEX_LLM_URL` |
+| `index_llm_model` | `phi3.5` | `NEUROSTACK_INDEX_LLM_MODEL` |
 | `api_host` | `127.0.0.1` | `NEUROSTACK_API_HOST` |
 | `api_port` | `8000` | `NEUROSTACK_API_PORT` |
 | `api_key` | (none) | `NEUROSTACK_API_KEY` |

@@ -860,7 +860,7 @@ def _context_line(c: dict) -> str:
 
 
 def _classify_batch(
-    batch: list[dict], llm_url: str, llm_model: str
+    batch: list[dict], index_llm_url: str, index_llm_model: str
 ) -> dict[int, dict]:
     """One classifier call. Raises on transport/HTTP failure."""
     import httpx
@@ -879,10 +879,10 @@ def _classify_batch(
         n=len(batch), messages="\n---\n".join(numbered),
     )
     resp = httpx.post(
-        f"{llm_url}/v1/chat/completions",
-        headers=_auth_headers(get_config().llm_api_key),
+        f"{index_llm_url}/v1/chat/completions",
+        headers=_auth_headers(get_config().index_llm_api_key),
         json={
-            "model": llm_model,
+            "model": index_llm_model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
             "reasoning_effort": "none",
@@ -901,8 +901,8 @@ def _classify_batch(
 
 def _llm_classify(
     candidates: list[dict],
-    llm_url: str,
-    llm_model: str,
+    index_llm_url: str,
+    index_llm_model: str,
 ) -> list[dict]:
     """Use local LLM to classify and summarize candidate insights.
 
@@ -918,7 +918,7 @@ def _llm_classify(
     for batch_start in range(0, len(candidates), CLASSIFY_BATCH_SIZE):
         batch = candidates[batch_start:batch_start + CLASSIFY_BATCH_SIZE]
         try:
-            verdicts = _classify_batch(batch, llm_url, llm_model)
+            verdicts = _classify_batch(batch, index_llm_url, index_llm_model)
         except Exception as exc:
             log.warning("LLM classify failed: %s - falling back to regex", exc)
             # Fallback: keep only keyword-hit candidates (issue #125 widened
@@ -938,7 +938,7 @@ def _llm_classify(
             # The model stops early on some batches whatever the context
             # size; one retry on just the unanswered candidates recovers most.
             try:
-                retry = _classify_batch([batch[i] for i in missing], llm_url, llm_model)
+                retry = _classify_batch([batch[i] for i in missing], index_llm_url, index_llm_model)
             except Exception as exc:
                 log.warning("LLM classify retry failed: %s", exc)
                 retry = {}
@@ -1071,7 +1071,7 @@ def _harvest_messages(
 
     # Tier 2: LLM classification
     if use_llm and candidates:
-        classified = _llm_classify(candidates, cfg.llm_url, cfg.llm_model)
+        classified = _llm_classify(candidates, cfg.index_llm_url, cfg.index_llm_model)
     else:
         # Fallback: regex classification + naive summary
         classified = []

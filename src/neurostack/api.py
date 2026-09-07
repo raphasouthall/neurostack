@@ -25,12 +25,6 @@ log = logging.getLogger("neurostack")
 
 MODELS = [
     {
-        "id": "neurostack-ask",
-        "object": "model",
-        "created": 1700000000,
-        "owned_by": "neurostack",
-    },
-    {
         "id": "neurostack-search",
         "object": "model",
         "created": 1700000000,
@@ -59,7 +53,7 @@ class ChatMessage(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    model: str = "neurostack-ask"
+    model: str = "neurostack-search"
     messages: list[ChatMessage]
     temperature: float = 0.3
     max_tokens: int | None = None
@@ -263,29 +257,6 @@ def _build_completion_response(
 # -----------------------------------------------------------------------
 
 
-def _handle_ask(query: str, top_k: int, workspace: str | None) -> str:
-    from .ask import ask_vault
-    from .config import get_config
-
-    cfg = get_config()
-    result = ask_vault(
-        question=query,
-        top_k=top_k,
-        embed_url=cfg.embed_url,
-        llm_url=cfg.llm_url,
-        llm_model=cfg.llm_model,
-        workspace=workspace,
-    )
-    answer = result.get("answer", "")
-    sources = result.get("sources", [])
-    if sources:
-        source_list = ", ".join(
-            f"[[{s['title']}]]" for s in sources
-        )
-        answer += f"\n\nSources: {source_list}"
-    return answer
-
-
 def _handle_search(
     query: str, top_k: int, workspace: str | None,
 ) -> str:
@@ -391,11 +362,7 @@ def create_app() -> FastAPI:
             )
 
         try:
-            if model == "neurostack-ask":
-                content = _handle_ask(
-                    query, body.top_k, body.workspace,
-                )
-            elif model == "neurostack-search":
+            if model == "neurostack-search":
                 content = _handle_search(
                     query, body.top_k, body.workspace,
                 )

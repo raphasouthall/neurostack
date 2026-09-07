@@ -12,7 +12,7 @@ class TestConfig:
         cfg = Config()
         assert cfg.embed_model == "nomic-embed-text"
         assert cfg.embed_dim == 768
-        assert cfg.llm_model == "phi3.5"
+        assert cfg.index_llm_model == "phi3.5"
         assert isinstance(cfg.vault_root, Path)
         assert isinstance(cfg.db_dir, Path)
 
@@ -37,9 +37,9 @@ class TestLoadConfig:
             assert cfg.vault_root == tmp_path
 
     def test_env_var_string_override(self):
-        with patch.dict(os.environ, {"NEUROSTACK_LLM_MODEL": "llama3.2:3b"}):
+        with patch.dict(os.environ, {"NEUROSTACK_INDEX_LLM_MODEL": "llama3.2:3b"}):
             cfg = load_config()
-            assert cfg.llm_model == "llama3.2:3b"
+            assert cfg.index_llm_model == "llama3.2:3b"
 
     def test_toml_config(self, tmp_path):
         config_file = tmp_path / "config.toml"

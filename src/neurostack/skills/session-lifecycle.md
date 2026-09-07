@@ -22,10 +22,11 @@ Entity types: observation, decision, convention, learning, context, bug
 
 ## End of session
 ```
-vault_session_end(session_id=<id>)
+vault_session_end(session_id=<id>, summary="What this session settled, in 2-3 sentences.")
 ```
-This ends the session, generates a summary, optionally runs harvest,
-and clears the LLM result cache (vault_communities/vault_ask).
+This ends the session, stores the summary you wrote, optionally runs harvest,
+and clears the LLM result cache (vault_communities). NeuroStack never writes the
+summary for you — omit `summary` to close the session without one.
 
 ## Review past sessions
 ```

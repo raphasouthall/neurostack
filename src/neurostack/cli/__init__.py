@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--version", action="version", version=f"neurostack {__version__}")
     parser.add_argument("--vault", default=str(cfg.vault_root), help="Vault root path")
     parser.add_argument("--embed-url", default=cfg.embed_url, help="Ollama embed URL")
-    parser.add_argument("--summarize-url", default=cfg.llm_url, help="Ollama summarize URL")
+    parser.add_argument("--summarize-url", default=cfg.index_llm_url, help="Ollama summarize URL")
     parser.add_argument("--json", action="store_true", default=False, help="Output results as JSON")
 
     sub = parser.add_subparsers(dest="command")
@@ -95,7 +95,7 @@ def main():
     p.add_argument("--pull-models", action="store_true", default=False,
                    help="Pull Ollama models (full mode)")
     p.add_argument("--embed-model", help="Embedding model override")
-    p.add_argument("--llm-model", help="LLM model override")
+    p.add_argument("--index-llm-model", help="Index-time LLM model override")
     p.add_argument("--embed-url", help="Embedding endpoint override")
     p.add_argument("--summarize-url", help="LLM endpoint override")
     p.set_defaults(func=cmd_init)
@@ -212,7 +212,7 @@ def main():
         help="Pull Ollama models after syncing deps",
     )
     p.add_argument("--embed-model", help="Embedding model (default: nomic-embed-text)")
-    p.add_argument("--llm-model", help="LLM model (default: phi3.5)")
+    p.add_argument("--index-llm-model", help="Index-time LLM model (default: phi3.5)")
     p.set_defaults(func=cmd_install)
 
     # uninstall
@@ -354,8 +354,8 @@ def main():
     )
     sp.add_argument("id", type=int, help="Session ID")
     sp.add_argument(
-        "--summarize", action="store_true",
-        help="Generate LLM summary of session memories",
+        "--summary", default=None,
+        help="Session summary to store (you write it — NeuroStack does not)",
     )
     sp.add_argument(
         "--no-harvest", action="store_true",
@@ -498,34 +498,12 @@ def main():
         "hand-written queries.yaml (issue #66) — makes the benchmark vault-agnostic.",
     )
     p.add_argument(
-        "--autolabel-mode", default="auto", choices=("auto", "heuristic", "llm"),
-        help="auto = LLM queries when a model is reachable, else heuristic "
-        "(summary/title) queries; heuristic = never call the LLM; llm = require it.",
-    )
-    p.add_argument(
         "--autolabel-n", type=int, default=150,
         help="How many notes to sample for auto-labelling (default 150)",
     )
     p.add_argument(
-        "--autolabel-k", type=int, default=2,
-        help="LLM queries generated per sampled note (default 2)",
-    )
-    p.add_argument(
         "--autolabel-seed", type=int, default=0,
         help="Seed for the deterministic note sample (default 0)",
-    )
-    p.add_argument(
-        "--autolabel-cache", default=None,
-        help="Persist generated LLM queries here (JSON, keyed by note content hash) "
-        "so a re-run only re-generates changed notes",
-    )
-    p.add_argument(
-        "--llm-url", default=None,
-        help="LLM endpoint for --autolabel LLM query generation (default: configured llm_url)",
-    )
-    p.add_argument(
-        "--llm-model", default=None,
-        help="LLM model for --autolabel LLM query generation (default: configured llm_model)",
     )
     p.add_argument(
         "--tune-usage-signals", action="store_true",
@@ -555,16 +533,9 @@ def main():
     p.add_argument("--db", default=None, help="SQLite index to inspect (default: configured DB)")
     p.set_defaults(func=cmd_feedback)
 
-    # ask
-    p = sub.add_parser("ask", help="Ask a question using vault content (RAG)")
-    p.add_argument("question", help="Natural language question")
-    p.add_argument("--top-k", type=int, default=8, help="Number of chunks to retrieve for context")
-    p.add_argument(
-        "--workspace", "-w", default=None,
-        help="Restrict results to vault subdirectory "
-        "(e.g. 'work/acme-cloud'). "
-        "Also reads NEUROSTACK_WORKSPACE env var",
-    )
+    # ask — retired in #142, kept only to point at the replacement
+    p = sub.add_parser("ask", help="Removed in #142 — use `neurostack search`")
+    p.add_argument("question", nargs="?", help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_ask)
 
     # summary
@@ -776,7 +747,7 @@ def main():
                    " (default: dry run)")
     p.add_argument("--cap", type=int, default=5,
                    help="Max clusters consolidated per run (default: 5)")
-    p.add_argument("--llm-model", default=None,
+    p.add_argument("--index-llm-model", default=None,
                    help="Override the synthesis model")
     p.add_argument(
         "--workspace", "-w", default=None,
@@ -803,7 +774,7 @@ def main():
                    help="Cosine similarity floor for siblings (default: 0.65)")
     p.add_argument("--max-cluster", type=int, default=20,
                    help="Max observations consolidated per cluster (default: 20)")
-    p.add_argument("--llm-model", default=None,
+    p.add_argument("--index-llm-model", default=None,
                    help="Override the synthesis model")
     p.add_argument(
         "--workspace", "-w", default=None,

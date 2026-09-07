@@ -60,8 +60,8 @@ class TestGlobalQueryRawHits:
     def test_use_map_reduce_false_returns_raw_hits(self, mock_search, mock_config):
         cfg = MagicMock()
         cfg.embed_url = "http://localhost:11434"
-        cfg.llm_url = "http://localhost:11434"
-        cfg.llm_model = "phi3.5"
+        cfg.index_llm_url = "http://localhost:11434"
+        cfg.index_llm_model = "phi3.5"
         mock_config.return_value = cfg
 
         fake_hits = [
@@ -103,8 +103,8 @@ class TestGlobalQueryRawHits:
     def test_no_hits_returns_build_message(self, mock_search, mock_config):
         cfg = MagicMock()
         cfg.embed_url = "http://localhost:11434"
-        cfg.llm_url = "http://localhost:11434"
-        cfg.llm_model = "phi3.5"
+        cfg.index_llm_url = "http://localhost:11434"
+        cfg.index_llm_model = "phi3.5"
         mock_config.return_value = cfg
 
         mock_search.return_value = []
@@ -160,8 +160,8 @@ class TestGlobalQueryWorkspaceFilter:
     ):
         cfg = MagicMock()
         cfg.embed_url = "http://localhost:11434"
-        cfg.llm_url = "http://localhost:11434"
-        cfg.llm_model = "phi3.5"
+        cfg.index_llm_url = "http://localhost:11434"
+        cfg.index_llm_model = "phi3.5"
         mock_config.return_value = cfg
         mock_search.return_value = [
             self._hit(1, "Acme"),
@@ -184,8 +184,8 @@ class TestGlobalQueryWorkspaceFilter:
     def test_workspace_normalised_slashes(self, mock_search, mock_config):
         cfg = MagicMock()
         cfg.embed_url = "http://localhost:11434"
-        cfg.llm_url = "http://localhost:11434"
-        cfg.llm_model = "phi3.5"
+        cfg.index_llm_url = "http://localhost:11434"
+        cfg.index_llm_model = "phi3.5"
         mock_config.return_value = cfg
         mock_search.return_value = [self._hit(1, "Acme"), self._hit(2, "Recipes")]
 
@@ -203,8 +203,8 @@ class TestGlobalQueryWorkspaceFilter:
     def test_no_workspace_returns_all_hits(self, mock_search, mock_config):
         cfg = MagicMock()
         cfg.embed_url = "http://localhost:11434"
-        cfg.llm_url = "http://localhost:11434"
-        cfg.llm_model = "phi3.5"
+        cfg.index_llm_url = "http://localhost:11434"
+        cfg.index_llm_model = "phi3.5"
         mock_config.return_value = cfg
         mock_search.return_value = [self._hit(1, "Acme"), self._hit(2, "Recipes")]
 
@@ -223,8 +223,8 @@ class TestGlobalQueryWorkspaceFilter:
     ):
         cfg = MagicMock()
         cfg.embed_url = "http://localhost:11434"
-        cfg.llm_url = "http://localhost:11434"
-        cfg.llm_model = "phi3.5"
+        cfg.index_llm_url = "http://localhost:11434"
+        cfg.index_llm_model = "phi3.5"
         mock_config.return_value = cfg
         mock_search.return_value = [self._hit(2, "Recipes")]
 

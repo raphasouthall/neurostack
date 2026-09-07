@@ -2,6 +2,7 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """Unified configuration for NeuroStack."""
 
+import logging
 import os
 import sys
 from dataclasses import dataclass, field
@@ -11,6 +12,22 @@ try:
     import tomllib
 except ImportError:
     import tomli as tomllib  # Python 3.10 fallback
+
+log = logging.getLogger(__name__)
+
+# Pre-#142 names for the index-time LLM settings. They date from when the same
+# endpoint also answered questions while a caller waited; the split needs the
+# index_llm_* form, so the old names are still read and reported once.
+_LEGACY_LLM_KEYS = {
+    "llm_url": "index_llm_url",
+    "llm_model": "index_llm_model",
+    "llm_api_key": "index_llm_api_key",
+}
+_LEGACY_LLM_ENV = {
+    "NEUROSTACK_LLM_URL": "index_llm_url",
+    "NEUROSTACK_LLM_MODEL": "index_llm_model",
+    "NEUROSTACK_LLM_API_KEY": "index_llm_api_key",
+}
 
 
 def _data_dir() -> Path:
@@ -40,11 +57,15 @@ class Config:
     embed_url: str = "http://localhost:11434"
     embed_model: str = "nomic-embed-text"
     embed_dim: int = 768
-    llm_url: str = "http://localhost:11434"
+    # Index-time LLM: note summaries, triples, community labels, harvest
+    # classification, synthesize, consolidate. Nothing on a retrieval path calls
+    # it — #142 removed the request-time answering paths, so no user ever waits
+    # on this endpoint.
+    index_llm_url: str = "http://localhost:11434"
     # NOTE: Verify the license of any model you configure here.
     # phi3.5 is MIT licensed.
-    llm_model: str = "phi3.5"
-    llm_api_key: str = ""
+    index_llm_model: str = "phi3.5"
+    index_llm_api_key: str = ""
     embed_api_key: str = ""
     session_dir: Path = field(default_factory=lambda: Path.home() / ".claude" / "projects")
     api_host: str = "127.0.0.1"
@@ -158,6 +179,9 @@ class RankingWeights:
 def load_config() -> Config:
     """Load config from TOML file, then apply env var overrides."""
     cfg = Config()
+    # (old name, current name) for every pre-#142 LLM key seen in this load.
+    # Collected across TOML and env so the whole load reports once.
+    legacy: list[tuple[str, str]] = []
 
     # Load TOML if exists
     if CONFIG_PATH.exists():
@@ -169,10 +193,17 @@ def load_config() -> Config:
         for key in ("vault_root", "db_dir", "session_dir"):
             if key in data:
                 setattr(cfg, key, Path(os.path.expanduser(data[key])))
-        for key in ("embed_url", "embed_model", "llm_url", "llm_model",
-                    "llm_api_key", "embed_api_key", "api_host", "api_key"):
+        for key in ("embed_url", "embed_model", "index_llm_url", "index_llm_model",
+                    "index_llm_api_key", "embed_api_key", "api_host", "api_key"):
             if key in data:
                 setattr(cfg, key, data[key])
+        for old, new in _LEGACY_LLM_KEYS.items():
+            if old not in data:
+                continue
+            # The current name wins when a file carries both.
+            if new not in data:
+                setattr(cfg, new, data[old])
+            legacy.append((old, new))
         if "embed_dim" in data:
             cfg.embed_dim = int(data["embed_dim"])
         if "api_port" in data:
@@ -224,9 +255,9 @@ def load_config() -> Config:
         "NEUROSTACK_EMBED_URL": ("embed_url", str),
         "NEUROSTACK_EMBED_MODEL": ("embed_model", str),
         "NEUROSTACK_EMBED_DIM": ("embed_dim", int),
-        "NEUROSTACK_LLM_URL": ("llm_url", str),
-        "NEUROSTACK_LLM_MODEL": ("llm_model", str),
-        "NEUROSTACK_LLM_API_KEY": ("llm_api_key", str),
+        "NEUROSTACK_INDEX_LLM_URL": ("index_llm_url", str),
+        "NEUROSTACK_INDEX_LLM_MODEL": ("index_llm_model", str),
+        "NEUROSTACK_INDEX_LLM_API_KEY": ("index_llm_api_key", str),
         "NEUROSTACK_EMBED_API_KEY": ("embed_api_key", str),
         "NEUROSTACK_SESSION_DIR": ("session_dir", Path),
         "NEUROSTACK_API_HOST": ("api_host", str),
@@ -255,6 +286,15 @@ def load_config() -> Config:
         ),
     }
 
+    # Pre-#142 env names, applied before the current ones so a NEUROSTACK_INDEX_LLM_*
+    # override still wins.
+    for env_key, attr in _LEGACY_LLM_ENV.items():
+        val = os.environ.get(env_key)
+        if val is None:
+            continue
+        setattr(cfg, attr, val)
+        legacy.append((env_key, "NEUROSTACK_" + attr.upper()))
+
     for env_key, (attr, typ) in env_map.items():
         val = os.environ.get(env_key)
         if val is not None:
@@ -271,6 +311,14 @@ def load_config() -> Config:
         cfg.disabled_tools = [
             p for p in disabled_env.replace(",", " ").split() if p
         ]
+
+    if legacy:
+        # One line per load, however many old names appear — a per-key warning
+        # would repeat on every get_config() miss and bury the rename.
+        log.warning(
+            "deprecated LLM config name(s) in use; rename to the index_llm_* form: %s",
+            ", ".join(f"{old} -> {new}" for old, new in legacy),
+        )
 
     return cfg
 

@@ -7,9 +7,9 @@ import httpx
 from .config import _auth_headers, get_config
 
 _cfg = get_config()
-DEFAULT_SUMMARIZE_URL = _cfg.llm_url
-SUMMARIZE_MODEL = _cfg.llm_model
-_LLM_HEADERS = _auth_headers(_cfg.llm_api_key)
+DEFAULT_SUMMARIZE_URL = _cfg.index_llm_url
+SUMMARIZE_MODEL = _cfg.index_llm_model
+_LLM_HEADERS = _auth_headers(_cfg.index_llm_api_key)
 
 SUMMARY_PROMPT = """Summarize this note in 2-3 concise sentences. \
 Focus on the key purpose, decisions, and actionable information. \

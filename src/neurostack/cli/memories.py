@@ -338,8 +338,8 @@ def cmd_consolidate(args):
         cap=args.cap,
         dry_run=not args.run,
         workspace=_get_workspace(args),
-        llm_url=getattr(args, "summarize_url", None) or None,
-        llm_model=getattr(args, "llm_model", None),
+        index_llm_url=getattr(args, "summarize_url", None) or None,
+        index_llm_model=getattr(args, "index_llm_model", None),
     )
     if args.json:
         print(json.dumps(report, indent=2, default=str))
@@ -380,7 +380,7 @@ def cmd_synthesize(args):
         threshold=args.threshold,
         max_cluster=args.max_cluster,
         workspace=_get_workspace(args),
-        llm_model=getattr(args, "llm_model", None),
+        index_llm_model=getattr(args, "index_llm_model", None),
     )
     if args.json:
         print(json.dumps(report, indent=2, default=str))

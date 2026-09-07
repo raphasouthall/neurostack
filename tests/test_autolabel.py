@@ -1,7 +1,7 @@
 """Tests for neurostack.autolabel — vault-agnostic label generation (issue #66).
 
-Offline: the heuristic tier needs no network, and the LLM tier is exercised with
-a stubbed httpx.post so the caching and parsing are tested without a model.
+Offline by construction: labels come from stored summaries and titles, and #142
+removed the model-written tier, so nothing here needs a network stub.
 """
 
 import pytest
@@ -55,17 +55,6 @@ def test_first_sentence():
     assert autolabel._first_sentence("no end punctuation") == "no end punctuation"
 
 
-def test_parse_query_lines_strips_numbering_and_quotes():
-    raw = '1. "how to configure retries"\n- what owns the retry policy\n\n3) alpha subsystem setup'
-    got = autolabel._parse_query_lines(raw, k=2)
-    assert got == ["how to configure retries", "what owns the retry policy"]
-
-
-def test_parse_query_lines_drops_think_block():
-    raw = "<think>reasoning here</think>\nfind the alpha config"
-    assert autolabel._parse_query_lines(raw, k=5) == ["find the alpha config"]
-
-
 # ── heuristic tier ──────────────────────────────────────────────────────────
 
 
@@ -97,109 +86,3 @@ def test_sampling_respects_n(label_corpus):
     # at most n notes sampled → at most n labels (delta may drop out)
     assert len(labels) <= 2
 
-
-# ── LLM tier (stubbed) ──────────────────────────────────────────────────────
-
-
-class _FakeResp:
-    def __init__(self, text):
-        self._text = text
-
-    def raise_for_status(self):
-        pass
-
-    def json(self):
-        return {"choices": [{"message": {"content": self._text}}]}
-
-
-def test_llm_labels_generate_and_cache(label_corpus, tmp_path, monkeypatch):
-    calls = {"n": 0}
-
-    def fake_post(url, **kwargs):
-        calls["n"] += 1
-        return _FakeResp("query one\nquery two")
-
-    monkeypatch.setattr(autolabel.httpx, "post", fake_post)
-    cache_path = tmp_path / "qgen.json"
-
-    labels = autolabel.llm_labels(conn=label_corpus[1], n=10, seed=0, k_per_note=2,
-                                  cache_path=cache_path, llm_url="http://x")
-    # 3 notes have body content (alpha/beta/gamma); delta has a chunk too → 4 notes,
-    # 2 queries each = 8 labels, and one LLM call per note.
-    assert all(q.category == "autolabel-llm" for q in labels)
-    assert len(labels) == calls["n"] * 2
-    first_calls = calls["n"]
-    assert cache_path.exists()
-
-    # Second run hits the cache — no new LLM calls.
-    autolabel.llm_labels(conn=label_corpus[1], n=10, seed=0, k_per_note=2,
-                         cache_path=cache_path, llm_url="http://x")
-    assert calls["n"] == first_calls
-
-
-def test_llm_cache_key_includes_k(label_corpus, tmp_path, monkeypatch):
-    # Changing --autolabel-k on a reused cache must regenerate, not silently
-    # return the stale per-note count.
-    monkeypatch.setattr(autolabel.httpx, "post",
-                        lambda url, **kw: _FakeResp("q1\nq2\nq3\nq4"))
-    cache_path = tmp_path / "qgen.json"
-    conn = label_corpus[1]
-    two = autolabel.llm_labels(conn=conn, n=10, seed=0, k_per_note=2,
-                               cache_path=cache_path, llm_url="http://x")
-    three = autolabel.llm_labels(conn=conn, n=10, seed=0, k_per_note=3,
-                                 cache_path=cache_path, llm_url="http://x")
-    # 4 notes with content → k queries each; the k=3 run must not reuse the k=2 rows.
-    assert len(two) == 4 * 2
-    assert len(three) == 4 * 3
-
-
-def test_llm_cache_write_creates_parent_dir(label_corpus, tmp_path, monkeypatch):
-    # --autolabel-cache pointing into a missing dir must not lose all the LLM
-    # work at the final write.
-    monkeypatch.setattr(autolabel.httpx, "post", lambda url, **kw: _FakeResp("q1\nq2"))
-    cache_path = tmp_path / "nested" / "dir" / "qgen.json"
-    labels = autolabel.llm_labels(conn=label_corpus[1], n=10, seed=0, k_per_note=2,
-                                  cache_path=cache_path, llm_url="http://x")
-    assert labels
-    assert cache_path.exists()
-
-
-def test_auto_falls_back_on_malformed_llm_body(label_corpus, monkeypatch):
-    # A reachable endpoint that returns a 200 with a junk body must degrade to
-    # the heuristic floor under mode="auto", not crash the run.
-    class _Junk:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"unexpected": "shape"}  # no choices[0].message.content
-
-    monkeypatch.setattr(autolabel, "_llm_reachable", lambda *a, **k: True)
-    monkeypatch.setattr(autolabel.httpx, "post", lambda url, **kw: _Junk())
-    labels = autolabel.generate_labels(label_corpus[1], mode="auto", n=10)
-    assert labels
-    assert all(q.category in ("autolabel-summary", "autolabel-title") for q in labels)
-
-
-# ── dispatcher ──────────────────────────────────────────────────────────────
-
-
-def test_generate_labels_bad_mode(label_corpus):
-    with pytest.raises(ValueError, match="mode must be"):
-        autolabel.generate_labels(label_corpus[1], mode="magic")
-
-
-def test_generate_labels_auto_falls_back_when_llm_unreachable(label_corpus, monkeypatch):
-    monkeypatch.setattr(autolabel, "_llm_reachable", lambda *a, **k: False)
-    labels = autolabel.generate_labels(label_corpus[1], mode="auto", n=10)
-    # heuristic floor produced summary/title labels, not LLM ones
-    assert labels
-    assert all(q.category in ("autolabel-summary", "autolabel-title") for q in labels)
-
-
-def test_generate_labels_auto_uses_llm_when_reachable(label_corpus, monkeypatch):
-    monkeypatch.setattr(autolabel, "_llm_reachable", lambda *a, **k: True)
-    monkeypatch.setattr(autolabel.httpx, "post", lambda url, **k: _FakeResp("q1\nq2"))
-    labels = autolabel.generate_labels(label_corpus[1], mode="auto", n=10, k_per_note=2)
-    assert labels
-    assert all(q.category == "autolabel-llm" for q in labels)

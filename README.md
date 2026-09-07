@@ -6,9 +6,9 @@
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-24%20tools-green)](https://modelcontextprotocol.io)
 
-**A local RAG layer and optimizer for the Markdown knowledge base you already have.**
+**A local retrieval layer and optimizer for the Markdown knowledge base you already have.**
 
-NeuroStack indexes a folder of `.md` files (Obsidian, Logseq, Notion exports, plain Markdown) into SQLite with FTS5, embeddings and a wiki-link graph, and exposes it to any MCP client as search, RAG answers with citations, graph queries and agent memories. It then keeps the base accurate: it flags notes that have gone stale, harvests decisions and root causes from AI sessions into memories, synthesises recurring memories into learnings, and queues proven ones for promotion into notes. Indexing never modifies your files. Optional MCP write tools let a client author or edit notes through your git history.
+NeuroStack indexes a folder of `.md` files (Obsidian, Logseq, Notion exports, plain Markdown) into SQLite with FTS5, embeddings and a wiki-link graph, and exposes it to any MCP client as search, graph queries and agent memories. Retrieval returns ranked evidence and your AI does the reasoning — no model runs while you wait on a query. NeuroStack then keeps the base accurate: it flags notes that have gone stale, harvests decisions and root causes from AI sessions into memories, synthesises recurring memories into learnings, and queues proven ones for promotion into notes. Indexing never modifies your files. Optional MCP write tools let a client author or edit notes through your git history.
 
 ```bash
 npm install -g neurostack && neurostack init
@@ -128,7 +128,7 @@ To uninstall: `neurostack uninstall`
 ![How NeuroStack works: vault, index, serve, clients, and the optimizer loop](docs/how-it-works-overview.png)
 
 - Hybrid search (FTS5 keyword + semantic) with tiered depth, so a client can fetch triples, summaries or full notes by token budget.
-- RAG answers with inline `[[citations]]` over the CLI, MCP, or an OpenAI-compatible API.
+- Ranked evidence with note paths and excerpts over the CLI, MCP, or an OpenAI-compatible API, for your AI to cite and reason over.
 - Stale detection. A note that keeps surfacing in contexts where it no longer fits is flagged and demoted in later results.
 - Session harvest. A timer scans Claude Code, Codex, Gemini and omp transcripts and saves decisions, bugs, conventions and learnings as memories with TTLs.
 - Synthesis and promotion. Recurring memories become learnings; a promotion queue lists which ones are ready to become notes.
@@ -300,7 +300,6 @@ include_observations = false   # also write the noisier observation/context type
 | Tool | Description |
 |------|-------------|
 | `vault_search` | Hybrid search with tiered depth (`triples`, `summaries`, `full`, `auto`) |
-| `vault_ask` | RAG Q&A with inline citations |
 | `vault_summary` | Pre-computed note summary |
 | `vault_graph` | Wiki-link neighborhood with PageRank scores |
 | `vault_related` | Semantically similar notes by embedding distance |
@@ -334,7 +333,7 @@ include_observations = false   # also write the noisier observation/context type
 | Tool | Description |
 |------|-------------|
 | `vault_session_start` | Begin a memory session |
-| `vault_session_end` | End session with optional summary and auto-harvest |
+| `vault_session_end` | End session, storing a summary you write, plus auto-harvest |
 
 **Vault files** (opt-in write surface — git-backed)
 
@@ -362,7 +361,6 @@ neurostack uninstall                     # complete removal
 
 # Search & retrieval
 neurostack search "query"                # hybrid search
-neurostack ask "question"                # RAG Q&A with citations
 neurostack tiered "query"                # tiered: triples -> summaries -> full
 neurostack triples "query"               # knowledge graph triples
 neurostack summary "note.md"             # AI-generated note summary
