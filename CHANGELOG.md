@@ -4,6 +4,8 @@
 
 ### Added
 
+- **#136 — fired-but-ignored triggers.** `vault_triggers` logs every hit to a new `trigger_log` table; new tool `vault_trigger_outcome(memory_id, followed, note)` records whether the agent followed it. An ignored trigger becomes a `prediction_errors` row of type `trigger_ignored`; the promotion queue's `drift` bucket lists the memory once with `ignored_trigger` and `ignored_count`, and adds `suggest: retire` at three. Nothing is deleted or decayed automatically.
+
 - **#135 — harvest emits trigger tags.** Providers stamp each transcript message with the tool call, path and failed result that preceded it; the classifier sees that context and may return a `trigger` field, which harvest normalises and saves as a `when-*` tag. A malformed value is dropped with one log line and the memory still saves. Regex fallback emits none.
 
 - **#131 — trigger tags.** A memory tagged `when-editing:<glob>`, `when-calling:<tool>` or `when-error:<substring>` surfaces at the moment it applies. New `triggers.py` and MCP `vault_triggers(event, value)`; no schema change, per-session fire-once lives in the client hook.
@@ -15,6 +17,7 @@
 ### Schema
 
 - v21 → v22: `memories_archive` table (#90).
+- v24 → v25: `trigger_log` table (#136).
 
 ## v0.16.0 — Retrieval & extraction fixes (2026-06-11)
 
