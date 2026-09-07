@@ -767,7 +767,8 @@ _CLASSIFY_PROMPT_HEAD = (
     "No preamble, no code fence.\n\n"
     "Each object is either:\n"
     '{{"n": N, "verdict": "KEEP", "type": "<bug|decision|convention|learning|'
-    'observation|context>", "summary": "<one sentence>"}}\n'
+    'observation|context>", "summary": "<one sentence>", '
+    '"trigger": "<only when the trigger rule below applies>"}}\n'
     'or {{"n": N, "verdict": "SKIP"}}\n\n'
     "KEEP a message that records any of: an architectural or tooling "
     "decision, a bug's root cause or fix, a rule to follow, a discovered "
@@ -782,14 +783,17 @@ _CLASSIFY_PROMPT_HEAD = (
     "convention=rule to always follow, learning=discovered fact, "
     "observation=durable infrastructure fact, "
     "context=ephemeral/short-lived fact kept only short-term.\n\n"
-    "A message may carry a context line naming the tool the assistant had "
-    "just called and any tool error just before it. When a KEEP is a user "
-    "correction of that tool call, or a fix for that error, add one field "
-    '"trigger" so the memory surfaces next time the same thing happens: '
-    '"calling:<tool name>" for a correction after a tool call, '
-    '"editing:<file path>" for a correction after an edit or write, '
-    '"error:<short distinctive substring of the error>" for a fix after an '
-    "error. Omit the field otherwise.\n\n"
+    "Trigger rule. Some messages carry a line starting \"context:\" that names "
+    "the tool the assistant had just called (and its path) and any tool error "
+    "just before the message. If such a line is present AND the message is a "
+    "user correction or a fix, the KEEP object MUST include \"trigger\":\n"
+    '- user corrects what a tool call did -> "calling:<tool name from the '
+    'context line>"\n'
+    '- user corrects an edit or write to a file -> "editing:<path from the '
+    'context line>"\n'
+    '- assistant fixes the error from the context line -> "error:<short '
+    'distinctive substring of that error>"\n'
+    "No context line, or not a correction or fix: omit \"trigger\".\n\n"
     "Examples:\n"
     "(assistant) Cloning the repo now and reading the layout for you.\n"
     '-> {{"n": 1, "verdict": "SKIP"}}\n'
@@ -813,16 +817,22 @@ def _parse_classify_reply(response: str, batch_len: int) -> dict[int, dict]:
     """Map 0-based candidate index -> verdict object from the model's reply.
 
     Tolerates a code fence or stray prose around the array; ignores objects
-    with an out-of-range or missing ``n``.
+    with an out-of-range or missing ``n``. A bare object (what small models
+    return for a one-candidate batch, including every one-candidate retry)
+    counts as a one-element array.
     """
     response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
     start, end = response.find("["), response.rfind("]")
     if start < 0 or end <= start:
-        return {}
+        start, end = response.find("{"), response.rfind("}")
+        if start < 0 or end <= start:
+            return {}
     try:
         items = json.loads(response[start:end + 1])
     except json.JSONDecodeError:
         return {}
+    if isinstance(items, dict):
+        items = [items]
     if not isinstance(items, list):
         return {}
     verdicts: dict[int, dict] = {}
