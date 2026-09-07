@@ -653,6 +653,114 @@ def _fts_duplicate(conn, content: str, entity_type: str) -> bool:
 # LLM classification
 # ---------------------------------------------------------------------------
 
+# Classifier batch size. 10 let the model stop early ("answered 1 of 10")
+# even at a 16k context; 5 halves the answer it must sustain (issue #127).
+CLASSIFY_BATCH_SIZE = 5
+
+_VALID_TYPES = frozenset(
+    {"bug", "decision", "convention", "learning", "observation", "context"}
+)
+
+_CLASSIFY_PROMPT_HEAD = (
+    "You are analyzing an AI coding session transcript.\n\n"
+    "There are {n} numbered messages below. Reply with ONLY a JSON array of "
+    "EXACTLY {n} objects, one per message, in order, n from 1 to {n}. "
+    "No preamble, no code fence.\n\n"
+    "Each object is either:\n"
+    '{{"n": N, "verdict": "KEEP", "type": "<bug|decision|convention|learning|'
+    'observation|context>", "summary": "<one sentence>"}}\n'
+    'or {{"n": N, "verdict": "SKIP"}}\n\n'
+    "KEEP a message that records any of: an architectural or tooling "
+    "decision, a bug's root cause or fix, a rule to follow, a discovered "
+    "fact about a system, a user correction or preference, or a short-lived "
+    "operational fact such as an endpoint, credential location or "
+    "current-state note.\n"
+    "SKIP a message that is only progress narration, a restatement of the "
+    "task, a question back to the user, or raw command output. A message "
+    "that says what the user asked for, or what the assistant is about to "
+    "do, is narration - SKIP it.\n\n"
+    "Type guide: bug=root cause/fix, decision=choice made, "
+    "convention=rule to always follow, learning=discovered fact, "
+    "observation=durable infrastructure fact, "
+    "context=ephemeral/short-lived fact kept only short-term.\n\n"
+    "Examples:\n"
+    "(assistant) Cloning the repo now and reading the layout for you.\n"
+    '-> {{"n": 1, "verdict": "SKIP"}}\n'
+    "(user) Get context on the website and review its content.\n"
+    '-> {{"n": 2, "verdict": "SKIP"}}\n'
+    "(assistant) The 502s came from the ingress timeout at 30s; raised to 120s.\n"
+    '-> {{"n": 3, "verdict": "KEEP", "type": "bug", "summary": "502s were the '
+    'ingress 30s timeout; raised to 120s"}}\n'
+    "(assistant) We will use merge commits, not squash, for this repo.\n"
+    '-> {{"n": 4, "verdict": "KEEP", "type": "decision", "summary": "Repo uses '
+    'merge commits, not squash"}}\n\n'
+    "Messages:\n{messages}\n\nAnswer:"
+)
+
+
+def _parse_classify_reply(response: str, batch_len: int) -> dict[int, dict]:
+    """Map 0-based candidate index -> verdict object from the model's reply.
+
+    Tolerates a code fence or stray prose around the array; ignores objects
+    with an out-of-range or missing ``n``.
+    """
+    response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
+    start, end = response.find("["), response.rfind("]")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        items = json.loads(response[start:end + 1])
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(items, list):
+        return {}
+    verdicts: dict[int, dict] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        n = item.get("n")
+        if not isinstance(n, int) or not (1 <= n <= batch_len):
+            continue
+        verdicts[n - 1] = item
+    return verdicts
+
+
+def _classify_batch(
+    batch: list[dict], llm_url: str, llm_model: str
+) -> dict[int, dict]:
+    """One classifier call. Raises on transport/HTTP failure."""
+    import httpx
+
+    from .config import _auth_headers, get_config
+
+    numbered = []
+    for i, c in enumerate(batch):
+        role = c.get("role", "assistant")
+        numbered.append(f"[{i + 1}] ({role}) {c['text'][:800]}")
+    prompt = _CLASSIFY_PROMPT_HEAD.format(
+        n=len(batch), messages="\n---\n".join(numbered),
+    )
+    resp = httpx.post(
+        f"{llm_url}/v1/chat/completions",
+        headers=_auth_headers(get_config().llm_api_key),
+        json={
+            "model": llm_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "reasoning_effort": "none",
+            "temperature": 0.1,
+            # One JSON object per candidate, each carrying a summary: 500
+            # truncated a 10-message answer mid-line (issue #117).
+            "max_tokens": 2000,
+        },
+        timeout=60.0,
+    )
+    resp.raise_for_status()
+    return _parse_classify_reply(
+        resp.json()["choices"][0]["message"]["content"], len(batch),
+    )
+
+
 def _llm_classify(
     candidates: list[dict],
     llm_url: str,
@@ -660,78 +768,19 @@ def _llm_classify(
 ) -> list[dict]:
     """Use local LLM to classify and summarize candidate insights.
 
-    Sends a batch prompt with candidates. Returns only those the LLM
-    judges as genuinely worth remembering long-term.
+    Sends batches of CLASSIFY_BATCH_SIZE, JSON in and out, validated against
+    the batch size; candidates the model left unanswered get ONE retry as a
+    smaller batch (issue #127). Returns only those the LLM judges worth
+    remembering long-term.
     """
-    import httpx
-
     if not candidates:
         return []
 
-    # Process in batches of 10
     results = []
-    for batch_start in range(0, len(candidates), 10):
-        batch = candidates[batch_start:batch_start + 10]
-        numbered = []
-        for i, c in enumerate(batch):
-            role = c.get("role", "assistant")
-            text = c["text"][:800]
-            numbered.append(f"[{i + 1}] ({role}) {text}")
-
-        batch_text = "\n---\n".join(numbered)
-
-        # The instruction to answer EVERY message, with the expected line count
-        # stated, is load-bearing (issue #117). The previous prompt led with the
-        # keep/skip criteria and offered the two line shapes as alternatives;
-        # measured against one session's 10 candidates it answered only 5 of
-        # them and kept 0, five runs in a row. Naming the count and forbidding
-        # merged or reordered lines took the same 10 to 10 answered and 9 kept,
-        # stable over five runs.
-        prompt = (
-            "You are analyzing an AI coding session transcript.\n\n"
-            f"There are {len(batch)} numbered messages below. Answer with "
-            f"EXACTLY {len(batch)} lines, one per message, in order, numbered "
-            f"[1] to [{len(batch)}]. Do not merge, skip or reorder lines. "
-            "No preamble.\n\n"
-            "Each line is either:\n"
-            "[N] KEEP type=<bug|decision|convention|learning|observation|"
-            "context> summary=<one sentence>\n"
-            "[N] SKIP\n\n"
-            "KEEP a message that records any of: an architectural or tooling "
-            "decision, a bug's root cause or fix, a rule to follow, a "
-            "discovered fact about a system, a user correction or preference, "
-            "or a short-lived operational fact such as an endpoint, credential "
-            "location or current-state note.\n"
-            "SKIP a message that is only progress narration, a restatement of "
-            "the task, or raw command output.\n\n"
-            "Type guide: bug=root cause/fix, decision=choice made, "
-            "convention=rule to always follow, learning=discovered fact, "
-            "observation=durable infrastructure fact, "
-            "context=ephemeral/short-lived fact kept only short-term.\n\n"
-            "Messages:\n" + batch_text + "\n\nAnswer:"
-        )
-
+    for batch_start in range(0, len(candidates), CLASSIFY_BATCH_SIZE):
+        batch = candidates[batch_start:batch_start + CLASSIFY_BATCH_SIZE]
         try:
-            from .config import _auth_headers, get_config
-            resp = httpx.post(
-                f"{llm_url}/v1/chat/completions",
-                headers=_auth_headers(get_config().llm_api_key),
-                json={
-                    "model": llm_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "stream": False,
-                    "reasoning_effort": "none",
-                    "temperature": 0.1,
-                    # One line per candidate, each carrying a summary: 500
-                    # truncated a 10-message answer mid-line (issue #117).
-                    "max_tokens": 2000,
-                },
-                timeout=60.0,
-            )
-            resp.raise_for_status()
-            response = resp.json()["choices"][0]["message"]["content"]
-            # Strip think tags if present
-            response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
+            verdicts = _classify_batch(batch, llm_url, llm_model)
         except Exception as exc:
             log.warning("LLM classify failed: %s - falling back to regex", exc)
             # Fallback: keep only keyword-hit candidates (issue #125 widened
@@ -746,42 +795,41 @@ def _llm_classify(
                 results.append(c)
             continue
 
-        answered: set[int] = set()
-        for line in response.strip().splitlines():
-            line = line.strip()
-            skip = re.match(r"\[(\d+)\]\s+SKIP\b", line)
-            if skip:
-                idx = int(skip.group(1)) - 1
-                if 0 <= idx < len(batch):
-                    answered.add(idx)
+        missing = [i for i in range(len(batch)) if i not in verdicts]
+        if missing:
+            # The model stops early on some batches whatever the context
+            # size; one retry on just the unanswered candidates recovers most.
+            try:
+                retry = _classify_batch([batch[i] for i in missing], llm_url, llm_model)
+            except Exception as exc:
+                log.warning("LLM classify retry failed: %s", exc)
+                retry = {}
+            for j, v in retry.items():
+                verdicts[missing[j]] = v
+
+        for idx, item in sorted(verdicts.items()):
+            if str(item.get("verdict", "")).upper() != "KEEP":
                 continue
-            m = re.match(
-                r"\[(\d+)\]\s+KEEP\s+type=(\w+)\s+summary=(.+)",
-                line,
+            summary = str(item.get("summary", "")).strip()
+            if not summary:
+                continue
+            c = batch[idx].copy()
+            etype = str(item.get("type", "")).strip()
+            c["entity_type"] = (
+                etype if etype in _VALID_TYPES
+                else c["prefilter_type"] or "observation"
             )
-            if not m:
-                continue
-            idx = int(m.group(1)) - 1
-            if 0 <= idx < len(batch):
-                answered.add(idx)
-                c = batch[idx].copy()
-                etype = m.group(2).strip()
-                valid = {"bug", "decision", "convention", "learning", "observation", "context"}
-                if etype in valid:
-                    c["entity_type"] = etype
-                else:
-                    c["entity_type"] = c["prefilter_type"] or "observation"
-                c["summary"] = m.group(3).strip()
-                results.append(c)
+            c["summary"] = summary
+            results.append(c)
 
         # A batch the model only partly answered is a silent capture loss: the
         # unanswered candidates are dropped, and an all-SKIP reply is otherwise
         # indistinguishable from a reply that never arrived (issue #117). Say so.
-        missing = len(batch) - len(answered)
-        if missing:
+        dropped = len(batch) - len(verdicts)
+        if dropped:
             log.warning(
                 "LLM classify answered %d of %d candidates - %d dropped unclassified",
-                len(answered), len(batch), missing,
+                len(verdicts), len(batch), dropped,
             )
 
     return results
