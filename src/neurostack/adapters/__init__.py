@@ -78,18 +78,19 @@ def _strip_neurostack_hooks(settings: dict, events: tuple[str, ...]) -> bool:
             continue
         kept = []
         for matcher in matchers:
-            if not isinstance(matcher, dict):
-                kept.append(matcher)
+            inner = matcher.get("hooks") if isinstance(matcher, dict) else None
+            if not isinstance(inner, list):
+                kept.append(matcher)  # not a shape we wrote — leave it alone
                 continue
-            inner = [
-                h for h in matcher.get("hooks", [])
-                if not _is_neurostack_command(h.get("command", ""))
+            trimmed = [
+                h for h in inner
+                if not (isinstance(h, dict) and _is_neurostack_command(h.get("command", "")))
             ]
-            if len(inner) != len(matcher.get("hooks", [])):
+            if len(trimmed) != len(inner):
                 removed = True
-            if not inner:
-                continue
-            matcher["hooks"] = inner
+                if not trimmed:
+                    continue
+            matcher["hooks"] = trimmed
             kept.append(matcher)
         if kept:
             hooks[event] = kept

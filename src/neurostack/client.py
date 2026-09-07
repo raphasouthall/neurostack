@@ -149,12 +149,14 @@ def _result_text(reply: dict | None) -> str | None:
 
 
 class McpClient:
-    """One-shot MCP tool caller with a hard wall-clock budget.
+    """MCP tool caller with a hard wall-clock budget.
 
-    Each ``call`` re-initializes: hooks are short-lived processes, so there is
-    no session to keep warm. Transport failures move on to ``fallback_url``;
-    everything that goes wrong is recorded in ``errors`` and reported as
-    ``None`` so callers can degrade instead of crashing.
+    Each ``call`` re-initializes, because a hook process is short-lived and
+    there is no session worth keeping warm; the connection pool is shared, so
+    a hook that fires several lookups pays for one handshake. Transport
+    failures move on to ``fallback_url``; everything that goes wrong is
+    recorded in ``errors`` and reported as ``None`` so callers can degrade
+    instead of crashing.
     """
 
     def __init__(
@@ -165,6 +167,7 @@ class McpClient:
         self.config = config
         self.errors: list[str] = []
         self._transport = transport
+        self._http: httpx.Client | None = None
 
     def call(
         self,
@@ -215,25 +218,35 @@ class McpClient:
             headers["authorization"] = f"Bearer {self.config.token}"
         return headers
 
+    def _client(self) -> httpx.Client:
+        if self._http is None:
+            self._http = httpx.Client(transport=self._transport, headers=self._headers())
+        return self._http
+
+    def close(self) -> None:
+        if self._http is not None:
+            self._http.close()
+            self._http = None
+
     def _call_once(self, url: str, name: str, arguments: dict, deadline: float) -> str | None:
-        with httpx.Client(transport=self._transport, headers=self._headers()) as http:
-            sid, init = self._rpc(
-                http, url, "initialize",
-                {
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": CLIENT_NAME, "version": "1"},
-                },
-                deadline, rpc_id=1,
-            )
-            if not sid and not (init or {}).get("result"):
-                raise RuntimeError("initialize returned no session and no result")
-            self._rpc(http, url, "notifications/initialized", {}, deadline, sid=sid)
-            _, reply = self._rpc(
-                http, url, "tools/call",
-                {"name": name, "arguments": arguments},
-                deadline, sid=sid, rpc_id=2,
-            )
+        http = self._client()
+        sid, init = self._rpc(
+            http, url, "initialize",
+            {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": CLIENT_NAME, "version": "1"},
+            },
+            deadline, rpc_id=1,
+        )
+        if not sid and not (init or {}).get("result"):
+            raise RuntimeError("initialize returned no session and no result")
+        self._rpc(http, url, "notifications/initialized", {}, deadline, sid=sid)
+        _, reply = self._rpc(
+            http, url, "tools/call",
+            {"name": name, "arguments": arguments},
+            deadline, sid=sid, rpc_id=2,
+        )
         if reply and reply.get("error"):
             self.errors.append(f"{name}: {reply['error']}")
             return None
