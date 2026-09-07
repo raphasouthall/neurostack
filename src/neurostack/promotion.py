@@ -10,7 +10,9 @@ worklist in four buckets — no LLM calls, no writes — for a downstream agent
 - **debt**: memories explicitly tagged ``promotion-debt`` by a session that
   ended without running its vault-save step.
 - **drift**: unresolved ``memory_drift`` prediction errors (issue #38) — the
-  memory no longer matches the notes it references.
+  memory no longer matches the notes it references — and, since issue #136,
+  memories whose trigger fired but was ignored (``trigger_ignored`` rows, one
+  entry per memory with the running count; ``suggest: retire`` at three).
 - **dead_handoffs**: ``context`` memories that read as handoff/continuation
   state and are older than a grace window. Consumed handoffs stored as if
   live are the single biggest volatile-layer polluter. Memories tagged
@@ -76,7 +78,7 @@ def _drift_bucket(conn: sqlite3.Connection, workspace: str | None) -> list[dict]
         sql += " AND m.workspace = ?"
         params.append(workspace)
     sql += " ORDER BY p.cosine_distance DESC"
-    return [
+    out = [
         _entry(
             dict(r),
             drifted_from=r["note_path"],
@@ -85,6 +87,38 @@ def _drift_bucket(conn: sqlite3.Connection, workspace: str | None) -> list[dict]
         )
         for r in conn.execute(sql, params).fetchall()
     ]
+    out.extend(_ignored_trigger_entries(conn, workspace))
+    return out
+
+
+def _ignored_trigger_entries(
+    conn: sqlite3.Connection, workspace: str | None
+) -> list[dict]:
+    """One entry per memory whose trigger fired and was ignored (issue #136)."""
+    from .triggers import IGNORED_ERROR_TYPE, RETIRE_AFTER_IGNORES
+
+    sql = (
+        "SELECT m.*, COUNT(*) AS ignored_count, MAX(p.detected_at) AS detected_at,"
+        " MAX(p.context) AS ignored_trigger"
+        " FROM prediction_errors p JOIN memories m ON m.memory_id = p.memory_id"
+        " WHERE p.resolved_at IS NULL AND p.error_type = ?"
+    )
+    params: list = [IGNORED_ERROR_TYPE]
+    if workspace:
+        sql += " AND m.workspace = ?"
+        params.append(workspace)
+    sql += " GROUP BY m.memory_id ORDER BY ignored_count DESC, detected_at DESC"
+    out = []
+    for r in conn.execute(sql, params).fetchall():
+        extra = {
+            "ignored_trigger": r["ignored_trigger"],
+            "ignored_count": r["ignored_count"],
+            "detected_at": r["detected_at"],
+        }
+        if r["ignored_count"] >= RETIRE_AFTER_IGNORES:
+            extra["suggest"] = "retire"
+        out.append(_entry(dict(r), **extra))
+    return out
 
 
 def _dead_handoff_bucket(
