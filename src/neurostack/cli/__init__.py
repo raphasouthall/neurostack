@@ -819,8 +819,12 @@ def main():
         help="Handle one harness event (JSON on stdin; exit 2 blocks the call)",
     )
     p.add_argument("event", choices=list(HOOK_EVENTS), help="Harness event name")
-    p.add_argument("--harness", default=None, choices=["claude"],
+    p.add_argument("--harness", default=None, choices=["claude", "omp"],
                    help="Harness quirks: 'claude' reads the block reason from stderr")
+    p.add_argument("--save", action="store_true",
+                   help="checkpoint only: stdin is the model's JSON reply, not an event")
+    p.add_argument("--session", default=None,
+                   help="Session id, for callers outside the session (herdr, /save)")
     p.set_defaults(func=cmd_hook)
 
     # context

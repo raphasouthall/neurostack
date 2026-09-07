@@ -31,8 +31,15 @@ _CLAUDE_EVENTS = (
     ("UserPromptSubmit", "prompt", 15),
     ("PreToolUse", "tool-call", 10),
     ("PostToolUse", "tool-result", 10),
+    ("Stop", "checkpoint", 20),
     ("SessionEnd", "session-end", None),
 )
+
+# Checkpoint cadence (issue #143), stated here because the adapters own the
+# trigger and the CLI owns the skip rules.
+CHECKPOINT_EVERY_MESSAGES = 40
+CHECKPOINT_QUIET_MINUTES = 30
+CHECKPOINT_MIN_MESSAGES = 5
 
 
 def _hook_log() -> Path:
@@ -44,6 +51,11 @@ def claude_hook_command(binary: str, event: str) -> str:
     command = f"{binary} hook {event} --harness claude"
     if event == "session-end":
         return f"nohup {command} >>{_hook_log()} 2>&1 &"
+    if event == "checkpoint":
+        # A Stop hook that exits 0 shows its stdout to the user; only the
+        # exit-2 block reason reaches the model, which is who has to answer.
+        return (f'out=$({command}); '
+                '[ -z "$out" ] || { printf \'%s\\n\' "$out" >&2; exit 2; }')
     return command
 
 
@@ -55,7 +67,9 @@ def claude_hook_entries(binary: str) -> dict[str, list[dict]]:
         if timeout is not None:
             hook["timeout"] = timeout
         matcher: dict = {"hooks": [hook]}
-        if claude_event not in ("SessionEnd",):
+        # SessionEnd and Stop are session-wide: Claude Code has nothing to
+        # match them against.
+        if claude_event not in ("SessionEnd", "Stop"):
             matcher["matcher"] = "*"
         entries[claude_event] = [matcher]
     return entries
@@ -111,6 +125,34 @@ def claude_adapter_installed() -> bool:
     return False
 
 
+def claude_save_command_path() -> Path:
+    """The `/save` slash command file Claude Code reads."""
+    return Path.home() / ".claude" / "commands" / "save.md"
+
+
+_CLAUDE_SAVE_COMMAND = """\
+---
+description: Checkpoint this session into NeuroStack memory
+---
+
+Run `{binary} hook checkpoint --harness claude </dev/null`.
+
+It prints nothing when there is nothing new to save — say so and stop.
+
+Otherwise it prints a prompt. Answer it: decide what a future session would
+need from this one, then pipe your JSON array on stdin to
+`{binary} hook checkpoint --save --harness claude`. Report the count it prints.
+"""
+
+
+def write_claude_save_command(binary: str) -> Path:
+    """Write the `/save` command file. Overwrites, so re-installing is safe."""
+    path = claude_save_command_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_CLAUDE_SAVE_COMMAND.format(binary=binary), encoding="utf-8")
+    return path
+
+
 def install_claude_adapter() -> tuple[str, Path]:
     """Write the Claude Code hook entries. Returns (status, settings path).
 
@@ -136,16 +178,22 @@ def install_claude_adapter() -> tuple[str, Path]:
             hooks[event] = []
         hooks[event].extend(matchers)
     _hook_log().parent.mkdir(parents=True, exist_ok=True)
+    write_claude_save_command(binary)
     _write_json(path, settings)
     return "installed", path
 
 
 def remove_claude_adapter() -> bool:
-    """Strip our hook entries from Claude Code settings."""
+    """Strip our hook entries and the `/save` command from Claude Code."""
     path = _claude_settings_path()
     settings = _read_json(path)
     events = tuple(event for event, _h, _t in _CLAUDE_EVENTS)
-    if not _strip_neurostack_hooks(settings, events):
+    removed = _strip_neurostack_hooks(settings, events)
+    save_command = claude_save_command_path()
+    if save_command.exists():
+        save_command.unlink()
+        removed = True
+    if not removed:
         return False
     _write_json(path, settings)
     return True
