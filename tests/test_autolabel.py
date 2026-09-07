@@ -85,4 +85,3 @@ def test_sampling_respects_n(label_corpus):
     labels = autolabel.heuristic_labels(conn, n=2, seed=0)
     # at most n notes sampled → at most n labels (delta may drop out)
     assert len(labels) <= 2
-
