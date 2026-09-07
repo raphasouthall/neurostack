@@ -6,13 +6,13 @@
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
 [![MCP](https://img.shields.io/badge/MCP-24%20tools-green)](https://modelcontextprotocol.io)
 
-**Not a note-taking app. A memory layer for the notes you already have.**
+**A local RAG layer and optimizer for the Markdown knowledge base you already have.**
 
-Your AI assistant forgets everything when the conversation ends. You ask it about the paper you summarised last week — it has no idea. You ask it to continue the chapter outline you built together — it starts from scratch.
+Your AI assistant forgets everything when the conversation ends. You ask it about the paper you summarised last week and it has no idea. You ask it to continue the chapter outline you built together and it starts from scratch.
 
-And even when it does find your notes, it might find the wrong version. The thesis argument you reversed, the runbook endpoint you deprecated, the decision you made in April that you overturned in June. It cites these confidently. It has no idea they're wrong.
+And when it does find your notes, it may find the wrong version. The thesis argument you reversed, the runbook endpoint you deprecated, the decision you made in April that you overturned in June. It cites these confidently. It has no idea they are wrong.
 
-NeuroStack reads your existing Markdown notes — from Obsidian, Logseq, Notion exports, or any folder of `.md` files — indexes them into a searchable knowledge graph, and connects that graph to your AI. It detects when notes have gone stale before your AI cites them. Indexing never modifies your files; optional MCP write tools let an AI client author or edit notes through your git history when you want it to.
+NeuroStack does two jobs. **RAG**: it indexes your existing Markdown notes (Obsidian, Logseq, Notion exports, any folder of `.md` files) into a searchable knowledge graph and serves grounded, cited answers to any MCP-capable AI client. **Optimizer**: it keeps that base sharp over time. It flags stale notes before your AI cites them, harvests decisions and root causes from your AI sessions into memories, synthesises recurring memories into learnings, and queues the proven ones for promotion into notes. Indexing never modifies your files; optional MCP write tools let an AI client author or edit notes through your git history when you want it to.
 
 ```bash
 npm install -g neurostack && neurostack init

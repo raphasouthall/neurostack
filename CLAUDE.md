@@ -1,6 +1,6 @@
 # NeuroStack - Claude Code Guide
 
-NeuroStack is a neuroscience-grounded knowledge management system. CLI + MCP server + OpenAI-compatible API. Everything runs locally against a Markdown vault indexed in SQLite + FTS5.
+NeuroStack is a local RAG layer and optimizer for a Markdown knowledge base. CLI + MCP server + OpenAI-compatible API. It indexes the vault into SQLite + FTS5 with embeddings and a link graph, serves grounded answers to any AI client, and keeps the base sharp: stale-note detection, session harvesting into memories, synthesis, and promotion of proven memories into notes. Ranking heuristics borrow from memory neuroscience (docs/neuroscience-appendix.md); that is implementation detail, not the pitch.
 
 ## Quick Reference
 
