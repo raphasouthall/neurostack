@@ -734,8 +734,13 @@ def _llm_classify(
             response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
         except Exception as exc:
             log.warning("LLM classify failed: %s - falling back to regex", exc)
-            # Fallback: keep all candidates with regex classification
+            # Fallback: keep only keyword-hit candidates (issue #125 widened
+            # the batch to every qualified message; without a keyword type
+            # there is nothing to classify them as, and saving them all would
+            # turn one LLM outage into a hundred junk memories).
             for c in batch:
+                if not c["prefilter_type"]:
+                    continue
                 c["summary"] = _make_summary(c["text"])
                 c["entity_type"] = c["prefilter_type"]
                 results.append(c)
@@ -765,7 +770,7 @@ def _llm_classify(
                 if etype in valid:
                     c["entity_type"] = etype
                 else:
-                    c["entity_type"] = c["prefilter_type"]
+                    c["entity_type"] = c["prefilter_type"] or "observation"
                 c["summary"] = m.group(3).strip()
                 results.append(c)
 
@@ -812,6 +817,11 @@ def _harvest_messages(
 
     candidates = []
 
+    # The keyword prefilter gates only the regex paths. With an LLM available
+    # every qualified message is a candidate: measured on a real 167-message
+    # session, the keyword gate passed 0 of 145 length-qualified messages, so
+    # whole sessions never reached the classifier (issue #125). The keyword
+    # hit survives as a type hint the LLM path falls back on.
     for msg in messages:
         if not msg.text or len(msg.text) < _MIN_LEN:
             continue
@@ -820,7 +830,7 @@ def _harvest_messages(
             continue
 
         prefilter_type = _prefilter_classify(msg.text, msg.role)
-        if not prefilter_type:
+        if not prefilter_type and not use_llm:
             continue
 
         candidates.append({
