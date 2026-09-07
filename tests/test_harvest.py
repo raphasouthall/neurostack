@@ -17,6 +17,7 @@ from neurostack.harvest import (
     _llm_classify,
     _load_harvest_state,
     _make_summary,
+    _parse_classify_reply,
     _parse_jsonl,
     _prefilter_classify,
     _save_harvest_state,
@@ -1071,6 +1072,22 @@ def _keep(summary, trigger=None, etype="convention"):
     if trigger is not None:
         item["trigger"] = trigger
     return json.dumps([item])
+
+
+class TestParseClassifyReply:
+    def test_bare_object_is_one_element_batch(self):
+        # Small models answer a one-candidate batch (and every one-candidate
+        # retry) with a bare object; before this it parsed as nothing.
+        raw = '{"n": 1, "verdict": "KEEP", "type": "convention", "summary": "s"}'
+        assert _parse_classify_reply(raw, 1) == {0: json.loads(raw)}
+
+    def test_array_still_preferred(self):
+        raw = 'sure: [{"n": 1, "verdict": "SKIP"}, {"n": 2, "verdict": "SKIP"}]'
+        assert set(_parse_classify_reply(raw, 2)) == {0, 1}
+
+    def test_garbage(self):
+        assert _parse_classify_reply("no json here", 1) == {}
+        assert _parse_classify_reply("{broken", 1) == {}
 
 
 class TestTriggerTag:
