@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -259,6 +259,19 @@ CREATE INDEX IF NOT EXISTS idx_pred_errors_memory
     ON prediction_errors(memory_id) WHERE memory_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved
     ON prediction_errors(resolved_at) WHERE resolved_at IS NULL;
+
+-- Trigger firings (issue #136): one row each time vault_triggers returned a
+-- memory. Together with prediction_errors rows of type 'trigger_ignored' this
+-- tells the promotion queue which triggers fire but get ignored.
+CREATE TABLE IF NOT EXISTS trigger_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id INTEGER NOT NULL REFERENCES memories(memory_id) ON DELETE CASCADE,
+    event TEXT NOT NULL,
+    value TEXT NOT NULL,
+    session_hint TEXT,
+    fired_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_trigger_log_memory ON trigger_log(memory_id);
 
 -- Agent-written memories (write-back layer)
 CREATE TABLE IF NOT EXISTS memories (
@@ -1165,6 +1178,29 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (24)")
         conn.commit()
         log.info("Migration to v24 complete.")
+
+    if current < 25:
+        log.info(
+            "Migrating schema v24 -> v25: trigger_log — "
+            "record each trigger firing so ignored triggers are measurable "
+            "(issue #136)..."
+        )
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS trigger_log (
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL
+                    REFERENCES memories(memory_id) ON DELETE CASCADE,
+                event TEXT NOT NULL,
+                value TEXT NOT NULL,
+                session_hint TEXT,
+                fired_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_trigger_log_memory
+                ON trigger_log(memory_id);
+        """)
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (25)")
+        conn.commit()
+        log.info("Migration to v25 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:

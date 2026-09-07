@@ -303,12 +303,13 @@ def vault_promotion_queue(
     )
 
 
-@registry.tool(tags=["memory", "read"], annotations=_READ_ONLY)
+@registry.tool(tags=["memory", "read"])
 def vault_triggers(
     event: str,
     value: str,
     workspace: str = None,
     limit: int = 10,
+    session_hint: str = None,
 ) -> dict:
     """Memories whose trigger tag matches the current moment (issue #131).
 
@@ -316,17 +317,47 @@ def vault_triggers(
     (file path of an Edit/Write), 'when-calling:<tool>' (tool name),
     'when-error:<substring>' (tool error text). Harness hooks call this on
     tool events and inject the hits; the caller owns once-per-session
-    suppression. Pure read; untagged memories are never returned.
+    suppression. Each hit is logged to trigger_log (issue #136) so the hook
+    can later report with vault_trigger_outcome whether it was followed.
+    Untagged memories are never returned.
 
     Args:
         event: One of "editing", "calling", "error"
         value: The path, tool name, or error text to match against
         workspace: Optional vault subdirectory scope
         limit: Max hits, newest first (default 10)
+        session_hint: Optional opaque client session id stored with the log row
     """
     from ..schema import DB_PATH, get_db
-    from ..triggers import match_triggers
+    from ..triggers import match_triggers, record_fired
 
     conn = get_db(DB_PATH)
     hits = match_triggers(conn, event, value, workspace=workspace, limit=limit)
+    record_fired(conn, hits, event, value, session_hint=session_hint)
     return {"event": event, "value": value, "hits": hits, "count": len(hits)}
+
+
+@registry.tool(tags=["memory", "write"])
+def vault_trigger_outcome(
+    memory_id: int,
+    followed: bool,
+    note: str = None,
+) -> dict:
+    """Report whether a fired trigger memory was followed (issue #136).
+
+    Call once per fired memory, a few tool calls after vault_triggers returned
+    it. followed=true writes nothing. followed=false records a
+    'trigger_ignored' prediction error; the promotion queue's drift bucket
+    lists the memory with its running ignore count and suggests retiring the
+    trigger after three. Nothing is deleted automatically.
+
+    Args:
+        memory_id: The memory vault_triggers returned
+        followed: True if the agent changed course because of it
+        note: Optional short reason, e.g. "re-issued the same call unchanged"
+    """
+    from ..schema import DB_PATH, get_db
+    from ..triggers import record_outcome
+
+    conn = get_db(DB_PATH)
+    return record_outcome(conn, memory_id, followed=followed, note=note)
