@@ -8,11 +8,7 @@
 
 **A local RAG layer and optimizer for the Markdown knowledge base you already have.**
 
-Your AI assistant forgets everything when the conversation ends. Ask it about the paper you summarised last week and it has no idea. Ask it to continue the chapter outline you built together and it starts over.
-
-When it does find your notes, it may find the wrong version: the thesis argument you reversed, or the decision you made in April and overturned in June. It cites the old version as if it were current.
-
-NeuroStack does two jobs. As a RAG layer, it indexes your existing Markdown notes (Obsidian, Logseq, Notion exports, any folder of `.md` files) into a searchable knowledge graph and gives any MCP client grounded, cited answers from them. As an optimizer, it keeps that base accurate over time. It flags a note as stale before your AI cites it, harvests decisions and root causes from your AI sessions into memories, and turns memories that keep recurring into learnings and, once proven, into notes. Indexing never modifies your files. Optional MCP write tools let an AI client author or edit notes through your git history when you want it to.
+NeuroStack indexes a folder of `.md` files (Obsidian, Logseq, Notion exports, plain Markdown) into SQLite with FTS5, embeddings and a wiki-link graph, and exposes it to any MCP client as search, RAG answers with citations, graph queries and agent memories. It then keeps the base accurate: it flags notes that have gone stale, harvests decisions and root causes from AI sessions into memories, synthesises recurring memories into learnings, and queues proven ones for promotion into notes. Indexing never modifies your files. Optional MCP write tools let a client author or edit notes through your git history.
 
 ```bash
 npm install -g neurostack && neurostack init
@@ -127,17 +123,15 @@ To uninstall: `neurostack uninstall`
 
 ---
 
-## What it feels like in use
+## What it does
 
-A researcher asks Claude to help write the methodology section. Claude already knows she has read 50 papers on complementary learning systems, that she settled on a framing in January, and that the meta-analysis she was relying on is flagged as stale because it keeps appearing in searches where it no longer fits. She checks it, updates the note, and the next answer reflects her current thinking.
-
-A novelist asks Cursor to help with chapter eleven. Cursor knows Elena's backstory from chapter two, the decision in the world-building notes to keep magic systems implicit, and that Elena's last name changed in a revision three weeks ago, so the new chapter matches the old ones.
-
-A DevOps engineer asks about the deployment runbook for the auth service. NeuroStack surfaces it and flags it as stale, because the endpoint was renamed six weeks ago. She fixes the note, and the next person who asks gets the current endpoint.
-
-A student revising three weeks before exams asks what is on the syllabus for Module 4. Stale detection points out that two of the topics belonged to last year's module structure, which was replaced when the course changed, so he skips them.
-
-A data scientist asks for the hyperparameters from her best experiment and gets the values from the rerun, because she updated that note and the index picked up the change.
+- Hybrid search (FTS5 keyword + semantic) with tiered depth, so a client can fetch triples, summaries or full notes by token budget.
+- RAG answers with inline `[[citations]]` over the CLI, MCP, or an OpenAI-compatible API.
+- Stale detection. A note that keeps surfacing in contexts where it no longer fits is flagged and demoted in later results.
+- Session harvest. A timer scans Claude Code, Codex, Gemini and omp transcripts and saves decisions, bugs, conventions and learnings as memories with TTLs.
+- Synthesis and promotion. Recurring memories become learnings; a promotion queue lists which ones are ready to become notes.
+- Wiki-link graph with PageRank, community detection, gap and bridge analysis.
+- Read-only by default. Opt-in write tools commit and push every change to your git remote.
 
 ---
 
@@ -156,7 +150,7 @@ NeuroStack is not a replacement for Obsidian, Notion, or any note-taking app. It
 | Profession-specific workflows | No | No | Yes |
 | Open source, self-hostable | Varies | Varies | Yes (Apache 2.0) |
 
-No other tool we know of does stale detection. When a note keeps appearing in contexts where it no longer fits, such as a deprecated API or a superseded paper, NeuroStack flags it and demotes it in later results. Without this, your AI cites information that is no longer true.
+Stale detection is the part other tools lack. When a note keeps appearing in contexts where it no longer fits, such as a deprecated API or a superseded paper, NeuroStack flags it and demotes it in later results.
 
 ---
 
@@ -458,7 +452,7 @@ npm install -g neurostack
 neurostack init
 ```
 
-Setup takes about two minutes through one wizard, after which your AI can answer from your notes.
+`neurostack init` picks a tier, installs dependencies, indexes the vault and configures your MCP client.
 
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
 - **GitHub:** [github.com/raphasouthall/neurostack](https://github.com/raphasouthall/neurostack)
