@@ -499,6 +499,11 @@ class TestHarvestState:
 # _llm_classify — type validation (regression for #30)
 # ---------------------------------------------------------------------------
 
+def _skip_all(n):
+    """A well-formed all-SKIP JSON reply covering n candidates."""
+    return json.dumps([{"n": i + 1, "verdict": "SKIP"} for i in range(n)])
+
+
 class TestLlmClassify:
     """The LLM classifier's valid-type set gates which entity types harvest emits."""
 
@@ -524,7 +529,8 @@ class TestLlmClassify:
         # classifier's valid set, so harvest could never emit it — see issue #30.
         self._stub_llm(
             monkeypatch,
-            "[1] KEEP type=context summary=Vault LXC token expires Friday, rotate before then",
+            '[{"n": 1, "verdict": "KEEP", "type": "context", '
+            '"summary": "Vault LXC token expires Friday, rotate before then"}]',
         )
         candidates = [{
             "text": "The vault LXC token expires Friday — rotate it before then.",
@@ -536,7 +542,10 @@ class TestLlmClassify:
         assert out[0]["entity_type"] == "context"
 
     def test_unknown_type_falls_back_to_prefilter(self, monkeypatch):
-        self._stub_llm(monkeypatch, "[1] KEEP type=banana summary=nonsense label")
+        self._stub_llm(
+            monkeypatch,
+            '[{"n": 1, "verdict": "KEEP", "type": "banana", "summary": "nonsense label"}]',
+        )
         candidates = [{
             "text": "Some candidate insight text long enough to be considered.",
             "role": "assistant",
@@ -578,37 +587,97 @@ class TestLlmClassify:
             "prefilter_type": "bug",
         } for i in range(n)]
 
-    def test_prompt_demands_one_line_per_candidate(self, monkeypatch):
+    def test_prompt_demands_one_object_per_candidate(self, monkeypatch):
         # Issue #117: without the explicit count the model answered 5 of 10 and
         # kept none. The count instruction is the fix, so it is pinned here.
-        sent = self._capture_prompt(monkeypatch, "[1] SKIP\n[2] SKIP\n[3] SKIP")
+        # Issue #127 moved the reply to JSON and added few-shot SKIP examples.
+        sent = self._capture_prompt(monkeypatch, _skip_all(3))
         _llm_classify(self._candidates(3), "http://llm.test", "model")
-        assert "EXACTLY 3 lines" in sent["prompt"]
-        assert "[1] to [3]" in sent["prompt"]
-        # One summary-carrying line per candidate does not fit in 500 tokens.
+        assert "EXACTLY 3 objects" in sent["prompt"]
+        assert '"verdict": "SKIP"' in sent["prompt"]
+        assert "narration - SKIP it" in sent["prompt"]
+        # One summary-carrying object per candidate does not fit in 500 tokens.
         assert sent["max_tokens"] >= 2000
 
-    def test_partial_answer_is_logged(self, monkeypatch, caplog):
+    def test_batches_are_five(self, monkeypatch):
+        # Issue #127: 10 let the model stop early even at 16k context.
+        calls = []
+        self._stub_llm(monkeypatch, _skip_all(5))
+        import httpx
+        real = httpx.post
+        monkeypatch.setattr(httpx, "post", lambda *a, **k: calls.append(
+            k["json"]["messages"][0]["content"]) or real(*a, **k))
+        _llm_classify(self._candidates(12), "http://llm.test", "model")
+        assert [p.count("EXACTLY") for p in calls] == [1, 1, 1]
+        assert "EXACTLY 5 objects" in calls[0]
+        assert "EXACTLY 2 objects" in calls[2]
+
+    def test_partial_answer_retries_missing_then_logs(self, monkeypatch, caplog):
         # A dropped candidate is a silent capture loss unless it is announced.
-        self._stub_llm(monkeypatch, "[1] SKIP\n[2] KEEP type=bug summary=Second one mattered")
+        # Issue #127: the unanswered indices get exactly one retry first.
+        replies = iter([
+            '[{"n": 1, "verdict": "SKIP"}, {"n": 2, "verdict": "KEEP", '
+            '"type": "bug", "summary": "Second one mattered"}]',
+            '[{"n": 1, "verdict": "KEEP", "type": "bug", "summary": "Third recovered"}]',
+        ])
+        prompts = []
+        self._stub_llm(monkeypatch, "")
+        import httpx
+
+        class _Resp:
+            def __init__(self, content):
+                self.content = content
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"choices": [{"message": {"content": self.content}}]}
+
+        def _post(*_a, **kwargs):
+            prompts.append(kwargs["json"]["messages"][0]["content"])
+            return _Resp(next(replies, "[]"))
+
+        monkeypatch.setattr(httpx, "post", _post)
         with caplog.at_level(logging.WARNING, logger="neurostack"):
             out = _llm_classify(self._candidates(5), "http://llm.test", "model")
-        assert len(out) == 1
-        assert "answered 2 of 5" in caplog.text
-        assert "3 dropped unclassified" in caplog.text
+        assert len(prompts) == 2
+        assert "EXACTLY 3 objects" in prompts[1]
+        assert [c["summary"] for c in out] == ["Second one mattered", "Third recovered"]
+        assert "answered 3 of 5" in caplog.text
+        assert "2 dropped unclassified" in caplog.text
 
     def test_full_answer_logs_nothing(self, monkeypatch, caplog):
         # An all-SKIP reply that covers every candidate is a real verdict, not a
         # failure — it must not cry wolf.
-        self._stub_llm(monkeypatch, "[1] SKIP\n[2] SKIP\n[3] SKIP")
+        self._stub_llm(monkeypatch, _skip_all(3))
         with caplog.at_level(logging.WARNING, logger="neurostack"):
             out = _llm_classify(self._candidates(3), "http://llm.test", "model")
         assert out == []
         assert "dropped unclassified" not in caplog.text
 
+    def test_reply_tolerates_code_fence_and_prose(self, monkeypatch):
+        self._stub_llm(
+            monkeypatch,
+            'Sure, here it is:\n```json\n[{"n": 1, "verdict": "KEEP", '
+            '"type": "learning", "summary": "Fenced but fine"}]\n```',
+        )
+        out = _llm_classify(self._candidates(1), "http://llm.test", "model")
+        assert out[0]["summary"] == "Fenced but fine"
+
+    def test_malformed_reply_counts_as_unanswered(self, monkeypatch, caplog):
+        self._stub_llm(monkeypatch, "not json at all")
+        with caplog.at_level(logging.WARNING, logger="neurostack"):
+            out = _llm_classify(self._candidates(2), "http://llm.test", "model")
+        assert out == []
+        assert "answered 0 of 2" in caplog.text
+
     def test_invalid_type_without_keyword_hint_becomes_observation(self, monkeypatch):
         # Issue #125: candidates without a keyword hit carry prefilter_type None.
-        self._stub_llm(monkeypatch, "[1] KEEP type=wat summary=Something worth keeping")
+        self._stub_llm(
+            monkeypatch,
+            '[{"n": 1, "verdict": "KEEP", "type": "wat", "summary": "Something worth keeping"}]',
+        )
         candidates = [{"text": "x" * 50, "role": "assistant", "prefilter_type": None}]
         out = _llm_classify(candidates, "http://llm.test", "model")
         assert out[0]["entity_type"] == "observation"
