@@ -7,8 +7,11 @@ import sys
 from pathlib import Path
 
 from .. import __version__
+from ..adapters import HARNESSES as ADAPTER_HARNESSES
 from ..config import get_config
 from .api import cmd_api, cmd_bundle, cmd_serve
+from .hook import EVENTS as HOOK_EVENTS
+from .hook import cmd_hook
 from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
 from .memories import cmd_consolidate, cmd_memories, cmd_promote, cmd_synthesize
 from .search import (
@@ -822,18 +825,32 @@ def main():
     p.set_defaults(func=cmd_record_usage)
 
     # hooks
-    p = sub.add_parser("hooks", help="Manage automation hooks (harvest + decay timers)")
+    p = sub.add_parser("hooks", help="Manage automation hooks (harness adapters + timers)")
     hooks_sub = p.add_subparsers(dest="hooks_command")
     hp = hooks_sub.add_parser("install", help="Install automation hooks")
+    hp.add_argument("--harness", default=None, choices=list(ADAPTER_HARNESSES),
+                    help="Install the harness adapter that invokes 'neurostack hook'")
     hp.add_argument("--type", default="harvest-timer",
-                    choices=["harvest-timer", "decay-timer", "claude-hook"],
-                    help="Hook type (default: harvest-timer)")
+                    choices=["harvest-timer", "decay-timer"],
+                    help="Timer to install when --harness is absent (default: harvest-timer)")
     hooks_sub.add_parser("status", help="Show hook status")
     rp = hooks_sub.add_parser("remove", help="Remove automation hooks")
+    rp.add_argument("--harness", default=None, choices=list(ADAPTER_HARNESSES),
+                    help="Remove the harness adapter")
     rp.add_argument("--type", default="harvest-timer",
-                    choices=["harvest-timer", "decay-timer", "claude-hook"],
-                    help="Hook type to remove (default: harvest-timer)")
+                    choices=["harvest-timer", "decay-timer"],
+                    help="Timer to remove when --harness is absent (default: harvest-timer)")
     p.set_defaults(func=cmd_hooks)
+
+    # hook (issue #141): one harness event in on stdin, context or a block out
+    p = sub.add_parser(
+        "hook",
+        help="Handle one harness event (JSON on stdin; exit 2 blocks the call)",
+    )
+    p.add_argument("event", choices=list(HOOK_EVENTS), help="Harness event name")
+    p.add_argument("--harness", default=None, choices=["claude"],
+                   help="Harness quirks: 'claude' reads the block reason from stderr")
+    p.set_defaults(func=cmd_hook)
 
     # context
     p = sub.add_parser("context", help="Assemble task-scoped context for session recovery")
@@ -929,6 +946,9 @@ def main():
         # export reads only the SQLite index — it must keep working when the
         # vault dir is gone but the DB survives (the get-my-data-out case)
         "export",
+        # hook and hooks are client-side: the vault lives on the server, which
+        # may be another machine entirely (issue #141)
+        "hook", "hooks",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():

@@ -4,6 +4,8 @@
 
 ### Added
 
+- **#141 — `neurostack hook`, the harness-neutral client.** One JSON event on stdin, context on stdout, exit 2 to block: `session-start`, `prompt`, `tool-call`, `tool-result`, `session-end`. Trigger lookups, once-per-session suppression, outcome reporting (#136) and transcript posting now live in the package instead of once per harness. Client config `~/.config/neurostack/client.toml` (`url`, `fallback_url`, `token`, `timeout_s`, `harvest_timeout_s`, `workspace_map`; `NEUROSTACK_URL` overrides), per-session state in `~/.cache/neurostack/sessions/`. Every server problem fails open: one stderr line, exit 0, inside `timeout_s` across both URLs. `neurostack hooks install --harness claude|omp` generates the adapter — Claude Code settings entries, or a 59-line omp extension — and replaces the hand-written hook scripts it supersedes. `hooks install --type claude-hook` is gone; use `--harness claude`.
+
 - **#136 — fired-but-ignored triggers.** `vault_triggers` logs every hit to a new `trigger_log` table; new tool `vault_trigger_outcome(memory_id, followed, note)` records whether the agent followed it. An ignored trigger becomes a `prediction_errors` row of type `trigger_ignored`; the promotion queue's `drift` bucket lists the memory once with `ignored_trigger` and `ignored_count`, and adds `suggest: retire` at three. Nothing is deleted or decayed automatically.
 
 - **#135 — harvest emits trigger tags.** Providers stamp each transcript message with the tool call, path and failed result that preceded it; the classifier sees that context and may return a `trigger` field, which harvest normalises and saves as a `when-*` tag. A malformed value is dropped with one log line and the memory still saves. Regex fallback emits none.
