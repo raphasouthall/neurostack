@@ -82,9 +82,83 @@ class SessionFile:
 
 @dataclass
 class Message:
-    """A single extracted message from a session transcript."""
+    """A single extracted message from a session transcript.
+
+    ``prev_*`` carry the tool context that preceded this message (issue #135):
+    the last tool the assistant called, the path that call targeted, and the
+    first line of the most recent failed tool result. The classifier uses them
+    to attach a trigger to a user correction or an error-then-fix.
+    """
     role: str  # "user" or "assistant"
     text: str
+    prev_tool: str | None = None
+    prev_path: str | None = None
+    prev_error: str | None = None
+
+
+# A failed tool result stays attached to this many following messages: the fix
+# usually lands in the next assistant turn, sometimes one or two later.
+_ERROR_CONTEXT_MESSAGES = 3
+_PATH_KEYS = ("file_path", "filePath", "path", "notebook_path")
+_HASHLINE_HEADER = re.compile(r"^\[([^\]#]+)#[0-9A-Fa-f]{4}\]", re.MULTILINE)
+
+
+class _ToolContext:
+    """Rolling tool state a provider stamps onto each message it emits."""
+
+    def __init__(self) -> None:
+        self.tool: str | None = None
+        self.path: str | None = None
+        self.error: str | None = None
+        self._error_left = 0
+
+    def call(self, name, args) -> None:
+        if not isinstance(name, str) or not name:
+            return
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except (json.JSONDecodeError, ValueError):
+                args = {}
+        if not isinstance(args, dict):
+            args = {}
+        path = next((args[k] for k in _PATH_KEYS if isinstance(args.get(k), str)), None)
+        if path is None and isinstance(args.get("input"), str):
+            # omp hashline edits name the file in a ``[path#TAG]`` header.
+            m = _HASHLINE_HEADER.search(args["input"])
+            path = m.group(1) if m else None
+        # Claude Code exposes MCP tools as ``mcp__<server>__<tool>``; omp routes
+        # them through ``write`` to ``xd://mcp__<server>_<tool>``. Record the
+        # name the harness would report for the call, minus the MCP plumbing.
+        if path and path.startswith("xd://"):
+            name = path[len("xd://"):].removeprefix("mcp__")
+        elif name.startswith("mcp__") and "__" in name[5:]:
+            name = name.rsplit("__", 1)[1]
+        self.tool, self.path = name, path
+
+    def result(self, is_error, content) -> None:
+        if not is_error:
+            return
+        if isinstance(content, list):
+            content = "\n".join(
+                p["text"] for p in content
+                if isinstance(p, dict) and isinstance(p.get("text"), str)
+            )
+        if not isinstance(content, str):
+            return
+        first = next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
+        if first:
+            self.error = first[:200]
+            self._error_left = _ERROR_CONTEXT_MESSAGES
+
+    def stamp(self, msg: Message) -> Message:
+        msg.prev_tool, msg.prev_path = self.tool, self.path
+        if self._error_left > 0:
+            msg.prev_error = self.error
+            self._error_left -= 1
+        else:
+            self.error = None
+        return msg
 
 
 class SessionProvider(Protocol):
@@ -125,13 +199,25 @@ class ClaudeCodeProvider:
 
     def extract_messages(self, path: Path) -> list[Message]:
         messages = []
+        ctx = _ToolContext()
         for entry in _parse_jsonl(path):
             role = entry.get("message", {}).get("role", entry.get("type", ""))
             if role not in ("assistant", "user"):
                 continue
             text = _extract_text_claude(entry)
             if text:
-                messages.append(Message(role=role, text=text))
+                messages.append(ctx.stamp(Message(role=role, text=text)))
+            # Observe this entry's tool blocks AFTER stamping: ``prev_*`` means
+            # what came before the message, not what it did itself.
+            content = entry.get("message", {}).get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "tool_use":
+                        ctx.call(block.get("name"), block.get("input"))
+                    elif block.get("type") == "tool_result":
+                        ctx.result(block.get("is_error"), block.get("content"))
         return messages
 
 
@@ -407,6 +493,7 @@ class OmpProvider:
 
     def extract_messages(self, path: Path) -> list[Message]:
         messages = []
+        ctx = _ToolContext()
         for entry in _parse_jsonl(path):
             if entry.get("type") != "message":
                 continue
@@ -414,23 +501,33 @@ class OmpProvider:
             if not isinstance(msg, dict):
                 continue
             role = msg.get("role", "")
+            content = msg.get("content")
+            if role == "toolResult":
+                ctx.result(msg.get("isError"), content)
+                continue
             if role not in ("assistant", "user"):
                 continue
-            content = msg.get("content")
+            calls = []
             if isinstance(content, str):
                 text = content
             elif isinstance(content, list):
-                # Only "text" parts — "thinking" and "toolCall" parts are noise.
-                parts = [
-                    p["text"] for p in content
-                    if isinstance(p, dict) and p.get("type") == "text"
-                    and isinstance(p.get("text"), str)
-                ]
+                # Only "text" parts are transcript; "thinking" is noise and
+                # "toolCall" parts feed the tool context for LATER messages.
+                parts = []
+                for p in content:
+                    if not isinstance(p, dict):
+                        continue
+                    if p.get("type") == "text" and isinstance(p.get("text"), str):
+                        parts.append(p["text"])
+                    elif p.get("type") == "toolCall":
+                        calls.append(p)
                 text = "\n".join(parts)
             else:
                 continue
             if text:
-                messages.append(Message(role=role, text=text))
+                messages.append(ctx.stamp(Message(role=role, text=text)))
+            for p in calls:
+                ctx.call(p.get("name"), p.get("arguments"))
         return messages
 
 
@@ -683,6 +780,14 @@ _CLASSIFY_PROMPT_HEAD = (
     "convention=rule to always follow, learning=discovered fact, "
     "observation=durable infrastructure fact, "
     "context=ephemeral/short-lived fact kept only short-term.\n\n"
+    "A message may carry a context line naming the tool the assistant had "
+    "just called and any tool error just before it. When a KEEP is a user "
+    "correction of that tool call, or a fix for that error, add one field "
+    '"trigger" so the memory surfaces next time the same thing happens: '
+    '"calling:<tool name>" for a correction after a tool call, '
+    '"editing:<file path>" for a correction after an edit or write, '
+    '"error:<short distinctive substring of the error>" for a fix after an '
+    "error. Omit the field otherwise.\n\n"
     "Examples:\n"
     "(assistant) Cloning the repo now and reading the layout for you.\n"
     '-> {{"n": 1, "verdict": "SKIP"}}\n'
@@ -693,7 +798,11 @@ _CLASSIFY_PROMPT_HEAD = (
     'ingress 30s timeout; raised to 120s"}}\n'
     "(assistant) We will use merge commits, not squash, for this repo.\n"
     '-> {{"n": 4, "verdict": "KEEP", "type": "decision", "summary": "Repo uses '
-    'merge commits, not squash"}}\n\n'
+    'merge commits, not squash"}}\n'
+    "(user) No, never force-push to main; open a PR instead.\n"
+    "  context: last tool call git_push on main\n"
+    '-> {{"n": 5, "verdict": "KEEP", "type": "convention", "summary": "Never '
+    'force-push to main; open a PR", "trigger": "calling:git_push"}}\n\n'
     "Messages:\n{messages}\n\nAnswer:"
 )
 
@@ -725,6 +834,19 @@ def _parse_classify_reply(response: str, batch_len: int) -> dict[int, dict]:
     return verdicts
 
 
+def _context_line(c: dict) -> str:
+    """Render a candidate's preceding tool call and error for the classifier."""
+    parts = []
+    if c.get("prev_tool"):
+        call = f"last tool call {c['prev_tool']}"
+        if c.get("prev_path"):
+            call += f" on {c['prev_path']}"
+        parts.append(call)
+    if c.get("prev_error"):
+        parts.append(f'last tool error "{c["prev_error"]}"')
+    return "; ".join(parts)
+
+
 def _classify_batch(
     batch: list[dict], llm_url: str, llm_model: str
 ) -> dict[int, dict]:
@@ -736,7 +858,11 @@ def _classify_batch(
     numbered = []
     for i, c in enumerate(batch):
         role = c.get("role", "assistant")
-        numbered.append(f"[{i + 1}] ({role}) {c['text'][:800]}")
+        line = f"[{i + 1}] ({role}) {c['text'][:800]}"
+        ctx = _context_line(c)
+        if ctx:
+            line += "\n  context: " + ctx
+        numbered.append(line)
     prompt = _CLASSIFY_PROMPT_HEAD.format(
         n=len(batch), messages="\n---\n".join(numbered),
     )
@@ -820,6 +946,9 @@ def _llm_classify(
                 else c["prefilter_type"] or "observation"
             )
             c["summary"] = summary
+            trigger = item.get("trigger")
+            if isinstance(trigger, str) and trigger.strip():
+                c["trigger"] = trigger.strip()
             results.append(c)
 
         # A batch the model only partly answered is a silent capture loss: the
@@ -833,6 +962,43 @@ def _llm_classify(
             )
 
     return results
+
+
+# Cap on a when-error: value. Error lines run long; the match is a substring,
+# so the head of the line is what matters.
+_MAX_ERROR_TRIGGER = 40
+_GLOB_CHARS = frozenset("*?[")
+
+
+def _trigger_tag(raw) -> str | None:
+    """Turn a classifier-emitted ``<event>:<value>`` into a ``when-*`` tag.
+
+    Normalises what the model is likely to get slightly wrong: tool names and
+    error text are lowercased (matching is case-insensitive anyway, so the tag
+    reads consistently), error text is capped, and a literal file path becomes
+    a glob over its directory so the memory fires for sibling files too.
+    Anything that still fails :func:`triggers.parse_trigger` is dropped with
+    one log line; the memory itself is unaffected.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    from .triggers import parse_trigger
+
+    event, _, value = raw.strip().partition(":")
+    event, value = event.strip().lower(), value.strip()
+    if event == "calling":
+        value = value.lower()
+    elif event == "error":
+        value = value.lower()[:_MAX_ERROR_TRIGGER]
+    elif event == "editing" and value and not (_GLOB_CHARS & set(value)):
+        head, sep, leaf = value.rpartition("/")
+        if sep and "." in leaf:
+            value = head + "/*"
+    tag = f"when-{event}:{value}"
+    if parse_trigger(tag) is None:
+        log.info("harvest: dropping malformed trigger %r", raw)
+        return None
+    return tag
 
 
 # ---------------------------------------------------------------------------
@@ -886,6 +1052,9 @@ def _harvest_messages(
             "role": msg.role,
             "prefilter_type": prefilter_type,
             "provider": provider,
+            "prev_tool": msg.prev_tool,
+            "prev_path": msg.prev_path,
+            "prev_error": msg.prev_error,
         })
 
     # Tier 2: LLM classification
@@ -912,6 +1081,11 @@ def _harvest_messages(
             continue
 
         tags = _extract_tags(item["text"])
+        # A model-emitted trigger becomes a when-* tag so the memory surfaces
+        # the next time the same tool call or error happens (issue #135).
+        trigger = _trigger_tag(item.get("trigger"))
+        if trigger:
+            tags.append(trigger)
         # Harvest-created rows only: agent-written memories keep their
         # caller-chosen TTL. Auto-captured context goes stale in a week;
         # auto-captured observations get 30 days to be synthesized into a
@@ -919,6 +1093,8 @@ def _harvest_messages(
         ttl = {"context": 168.0, "observation": 720.0}.get(etype)
         record = {"content": summary, "entity_type": etype, "tags": tags,
                   "ttl_hours": ttl, "provider": provider}
+        if trigger:
+            record["trigger"] = trigger
         if redacted:
             record["redacted"] = redacted
 
