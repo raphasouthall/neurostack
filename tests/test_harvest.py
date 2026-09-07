@@ -20,6 +20,7 @@ from neurostack.harvest import (
     _parse_jsonl,
     _prefilter_classify,
     _save_harvest_state,
+    _trigger_tag,
     get_provider_names,
     harvest_transcript,
 )
@@ -1042,3 +1043,242 @@ class TestHarvestTranscript:
                                    source_agent="claude-code", use_llm=False)
         assert "note" not in retry
         assert len(retry["saved"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Harvest-emitted trigger tags (issue #135)
+# ---------------------------------------------------------------------------
+
+def _claude_entry(role, content):
+    return json.dumps({"type": role, "message": {"role": role, "content": content}})
+
+
+def _omp_entry(role, content):
+    return json.dumps({"type": "message", "message": {"role": role, "content": content}})
+
+
+_CORRECTION = ("No, do not use vault_write_file to change an existing note; use "
+               "vault_update_memory so the history is kept.")
+_BASTION_FIX = ("Bastion is down, so I am switching to the ssh proxy chain through "
+                "the laptop, which does not depend on the bastion host.")
+_VESSEL_CORRECTION = ("No, vessel types belong in the shared types package; do not "
+                      "add them to the service module.")
+_HASHLINE_EDIT = "[strake/src/svc/vessel.ts#A1B2]\nPUT 3.=3:\n+x"
+
+
+def _keep(summary, trigger=None, etype="convention"):
+    item = {"n": 1, "verdict": "KEEP", "type": etype, "summary": summary}
+    if trigger is not None:
+        item["trigger"] = trigger
+    return json.dumps([item])
+
+
+class TestTriggerTag:
+    """Model-emitted ``<event>:<value>`` becomes a ``when-<event>:`` tag, or nothing."""
+
+    def test_calling_lowercased(self):
+        assert _trigger_tag("calling:Vault_Write_File") == "when-calling:vault_write_file"
+
+    def test_error_lowercased_and_capped_at_40(self):
+        raw = "error:" + "Bastion-Unavailable (503) " + "x" * 60
+        tag = _trigger_tag(raw)
+        assert tag == "when-error:" + ("bastion-unavailable (503) " + "x" * 60)[:40]
+
+    def test_editing_path_becomes_directory_glob(self):
+        assert _trigger_tag("editing:strake/src/svc/vessel.ts") == "when-editing:strake/src/svc/*"
+
+    def test_editing_glob_kept(self):
+        assert _trigger_tag("editing:src/**/*.tf") == "when-editing:src/**/*.tf"
+
+    def test_malformed_dropped(self, caplog):
+        with caplog.at_level(logging.INFO, logger="neurostack"):
+            assert _trigger_tag("writing:x") is None
+            assert _trigger_tag("calling:") is None
+            assert _trigger_tag("") is None
+            assert _trigger_tag(None) is None
+        # One line per malformed string; empty and None return silently.
+        assert sum("trigger" in r.getMessage() for r in caplog.records) == 2
+
+
+class TestProviderToolContext:
+    """Providers stamp each message with the tool call and error that preceded it."""
+
+    def test_claude_tool_use_and_error(self, tmp_path):
+        f = tmp_path / "s.jsonl"
+        f.write_text("\n".join([
+            _claude_entry("assistant", [
+                {"type": "text", "text": "Saving the note now."},
+                {"type": "tool_use", "name": "mcp__neurostack__vault_write_file",
+                 "input": {"path": "notes/x.md", "content": "body"}},
+            ]),
+            _claude_entry("user", [
+                {"type": "tool_result", "is_error": True,
+                 "content": "Bastion-Unavailable (503): host not reachable\nmore"},
+            ]),
+            _claude_entry("user", _CORRECTION),
+        ]) + "\n")
+        msgs = ClaudeCodeProvider().extract_messages(f)
+        first = msgs[0]
+        assert (first.prev_tool, first.prev_path, first.prev_error) == (None, None, None)
+        last = msgs[-1]
+        assert last.text == _CORRECTION
+        assert last.prev_tool == "vault_write_file"
+        assert last.prev_path == "notes/x.md"
+        assert last.prev_error == "Bastion-Unavailable (503): host not reachable"
+
+    def test_omp_toolcall_hashline_path_and_xd_device(self, tmp_path):
+        f = tmp_path / "s.jsonl"
+        f.write_text("\n".join([
+            _omp_entry("assistant", [
+                {"type": "text", "text": "Editing the service module."},
+                {"type": "toolCall", "name": "edit",
+                 "arguments": json.dumps({"input": _HASHLINE_EDIT})},
+            ]),
+            _omp_entry("toolResult", [{"type": "text", "text": "ok"}]),
+            _omp_entry("user", [{"type": "text", "text": _VESSEL_CORRECTION}]),
+            _omp_entry("assistant", [
+                {"type": "toolCall", "name": "write",
+                 "arguments": {"path": "xd://mcp__neurostack_vault_write_file", "content": "{}"}},
+            ]),
+            _omp_entry("toolResult", [{"type": "text", "text": "saved"}]),
+            _omp_entry("user", [{"type": "text", "text": _CORRECTION}]),
+        ]) + "\n")
+        msgs = OmpProvider().extract_messages(f)
+        vessel = msgs[1]
+        assert vessel.text == _VESSEL_CORRECTION
+        assert (vessel.prev_tool, vessel.prev_path) == ("edit", "strake/src/svc/vessel.ts")
+        assert vessel.prev_error is None
+        assert (msgs[2].prev_tool, msgs[2].prev_path) == (
+            "neurostack_vault_write_file", "xd://mcp__neurostack_vault_write_file")
+
+    def test_error_context_expires_after_three_messages(self, tmp_path):
+        f = tmp_path / "s.jsonl"
+        lines = [
+            _claude_entry("assistant", [{"type": "tool_use", "name": "Bash", "input": {}}]),
+            _claude_entry("user", [{"type": "tool_result", "is_error": True, "content": "boom"}]),
+        ]
+        lines += [_claude_entry("assistant", f"assistant reply number {i}") for i in range(4)]
+        f.write_text("\n".join(lines) + "\n")
+        msgs = ClaudeCodeProvider().extract_messages(f)
+        # The tool_result echo ("boom", role user) precedes the error it carries,
+        # so the window covers the next three assistant replies only.
+        assert [m.prev_error for m in msgs] == [None, "boom", "boom", "boom", None]
+
+
+class TestHarvestTriggers:
+    """Acceptance for issue #135: harvest saves memories already carrying a trigger."""
+
+    @staticmethod
+    def _llm(monkeypatch, content):
+        import httpx
+
+        sent = {}
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"choices": [{"message": {"content": content}}]}
+
+        def post(*a, **k):
+            sent["prompt"] = k["json"]["messages"][0]["content"]
+            return _Resp()
+
+        monkeypatch.setattr(httpx, "post", post)
+        monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
+        return sent
+
+    @staticmethod
+    def _tags(conn):
+        return [json.loads(r[0]) for r in conn.execute("SELECT tags FROM memories")]
+
+    def test_correction_after_tool_call(self, in_memory_db, tmp_path, monkeypatch):
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        sent = self._llm(monkeypatch, _keep(
+            "Use vault_update_memory, not vault_write_file, to change an existing note",
+            trigger="calling:vault_write_file"))
+        transcript = "\n".join([
+            _claude_entry("assistant", [
+                {"type": "text", "text": "Saving the note now."},
+                {"type": "tool_use", "name": "mcp__neurostack__vault_write_file",
+                 "input": {"path": "notes/x.md", "content": "body"}},
+            ]),
+            _claude_entry("user", [{"type": "tool_result", "is_error": None, "content": "ok"}]),
+            _claude_entry("user", _CORRECTION),
+        ])
+        report = harvest_transcript(transcript, session_id="s1", source_agent="claude-code")
+        assert [r["status"] for r in report["saved"]] == ["saved"]
+        assert report["saved"][0]["trigger"] == "when-calling:vault_write_file"
+        assert "when-calling:vault_write_file" in self._tags(in_memory_db)[0]
+        # The classifier saw what the assistant had just done.
+        assert "vault_write_file" in sent["prompt"] and "notes/x.md" in sent["prompt"]
+
+    def test_error_then_fix(self, in_memory_db, tmp_path, monkeypatch):
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        sent = self._llm(monkeypatch, _keep(
+            "When bastion returns 503, fall back to the ssh proxy chain",
+            trigger="error:Bastion-Unavailable", etype="bug"))
+        transcript = "\n".join([
+            _claude_entry("assistant", [{"type": "tool_use", "name": "Bash",
+                                         "input": {"command": "az network bastion ssh"}}]),
+            _claude_entry("user", [{"type": "tool_result", "is_error": True,
+                                    "content": "Bastion-Unavailable (503): host not reachable"}]),
+            _claude_entry("assistant", _BASTION_FIX),
+        ])
+        report = harvest_transcript(transcript, session_id="s2", source_agent="claude-code")
+        assert report["saved"][0]["trigger"] == "when-error:bastion-unavailable"
+        assert "when-error:bastion-unavailable" in self._tags(in_memory_db)[0]
+        assert "Bastion-Unavailable (503)" in sent["prompt"]
+
+    def test_correction_after_edit(self, in_memory_db, tmp_path, monkeypatch):
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        self._llm(monkeypatch, _keep(
+            "Vessel types live in the shared types package, not the service module",
+            trigger="editing:strake/src/svc/vessel.ts"))
+        transcript = "\n".join([
+            _omp_entry("assistant", [
+                {"type": "toolCall", "name": "edit",
+                 "arguments": json.dumps({"input": _HASHLINE_EDIT})},
+            ]),
+            _omp_entry("toolResult", [{"type": "text", "text": "ok"}]),
+            _omp_entry("user", [{"type": "text", "text": _VESSEL_CORRECTION}]),
+        ])
+        report = harvest_transcript(transcript, session_id="s3", source_agent="omp")
+        assert report["saved"][0]["trigger"] == "when-editing:strake/src/svc/*"
+        assert "when-editing:strake/src/svc/*" in self._tags(in_memory_db)[0]
+
+    def test_malformed_trigger_saves_without_tag(self, in_memory_db, tmp_path, monkeypatch, caplog):
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        self._llm(monkeypatch, _keep("Use vault_update_memory for existing notes",
+                                     trigger="writing:x"))
+        with caplog.at_level(logging.INFO, logger="neurostack"):
+            report = harvest_transcript(_claude_entry("user", _CORRECTION),
+                                        session_id="s4", source_agent="claude-code")
+        assert [r["status"] for r in report["saved"]] == ["saved"]
+        assert "trigger" not in report["saved"][0]
+        assert not [t for t in self._tags(in_memory_db)[0] if t.startswith("when-")]
+        assert sum("trigger" in r.getMessage() for r in caplog.records) == 1
+
+    def test_reply_without_trigger_unchanged(self, in_memory_db, tmp_path, monkeypatch):
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        self._llm(monkeypatch, _keep("Use vault_update_memory for existing notes"))
+        report = harvest_transcript(_claude_entry("user", _CORRECTION),
+                                    session_id="s5", source_agent="claude-code")
+        assert [r["status"] for r in report["saved"]] == ["saved"]
+        assert "trigger" not in report["saved"][0]
+        assert report["saved"][0]["tags"] == _extract_tags(_CORRECTION)
+
+    def test_regex_fallback_emits_none(self, in_memory_db, tmp_path, monkeypatch):
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        transcript = "\n".join([
+            _claude_entry("assistant", [{"type": "tool_use", "name": "Bash", "input": {}}]),
+            _claude_entry("user", [{"type": "tool_result", "is_error": True,
+                                    "content": "Bastion-Unavailable (503)"}]),
+            _claude_entry("assistant", _BUG_INSIGHT),
+        ])
+        report = harvest_transcript(transcript, session_id="s6", source_agent="claude-code",
+                                    use_llm=False)
+        assert [r["status"] for r in report["saved"]] == ["saved"]
+        assert "trigger" not in report["saved"][0]
+        assert not [t for t in self._tags(in_memory_db)[0] if t.startswith("when-")]
