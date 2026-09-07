@@ -9,7 +9,9 @@ its session files and extract text from its transcript format.
 Two-tier classification:
   1. Broad regex pre-filter selects candidate messages
   2. Local LLM classifies and summarizes candidates
-Falls back to regex-only if LLM is unavailable.
+Falls back to regex-only if LLM is unavailable. With an LLM, a user
+correction after a tool call or a fix after a tool error may be saved with a
+``when-*`` trigger tag (issue #135) so it surfaces when the same thing recurs.
 """
 
 from __future__ import annotations
