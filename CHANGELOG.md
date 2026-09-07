@@ -4,6 +4,10 @@
 
 ### Added
 
+- **#135 — harvest emits trigger tags.** Providers stamp each transcript message with the tool call, path and failed result that preceded it; the classifier sees that context and may return a `trigger` field, which harvest normalises and saves as a `when-*` tag. A malformed value is dropped with one log line and the memory still saves. Regex fallback emits none.
+
+- **#131 — trigger tags.** A memory tagged `when-editing:<glob>`, `when-calling:<tool>` or `when-error:<substring>` surfaces at the moment it applies. New `triggers.py` and MCP `vault_triggers(event, value)`; no schema change, per-session fire-once lives in the client hook.
+
 - **#92 — promotion queue.** `neurostack promote` + MCP `vault_promotion_queue`: a deterministic worklist of memories whose knowledge should move into vault notes, in four buckets — `debt` (tagged `promotion-debt`), `drift` (unresolved memory-drift rows), `dead_handoffs` (stale context memories that read as handoffs; `open-thread` tag exempts), `uncovered` (durable memories whose nearest note chunk is below a similarity floor). Pure local compute, no LLM, no writes. `vault_session_end` now returns a soft `promotion_debt_warning` when a session wrote durable memories but no note changed while it ran.
 
 - **#90 — archive-on-forget.** Every memory delete path (`vault_forget`/`memories forget`, merge source, TTL expiry, prune) now moves the row to a `memories_archive` table instead of destroying it. Archived rows are outside search/FTS/drift by construction but stay greppable and restorable. New CLI: `neurostack memories archived [-w] [--limit N]` and `neurostack memories restore ID` (restored rows re-embed via `backfill memories`). `memories stats` gains `archived`; MCP `vault_forget` result carries `archived: true`.
