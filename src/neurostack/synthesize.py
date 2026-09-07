@@ -13,7 +13,7 @@ collectively contain. This module is the rework pass:
    pairwise cosine >= ``threshold``. A cluster needs the anchor plus at least
    ``min_siblings`` related observations. Candidates without an embedding are
    reported, never silently dropped (#29 backfill heals them).
-3. One LLM synthesis per cluster (same ``llm_url`` path as consolidation) — a
+3. One LLM synthesis per cluster (same ``index_llm_url`` path as consolidation) — a
    single consolidated ``learning`` memory that preserves every concrete fact.
 4. Save the learning through ``save_memory``, then tag each original with
    ``superseded_by:<new_memory_id>``. Originals are tagged, NEVER deleted or
@@ -170,8 +170,8 @@ def cluster_observations(
 
 def _synthesize(
     members: list[dict],
-    llm_url: str,
-    llm_model: str,
+    index_llm_url: str,
+    index_llm_model: str,
     api_key: str = "",
 ) -> str:
     """One LLM synthesis for a cluster. Raises on failure — caller skips cluster."""
@@ -188,10 +188,10 @@ def _synthesize(
     prompt = _SYNTH_PROMPT.format(n=len(members), observations="\n\n".join(blocks))
 
     resp = httpx.post(
-        f"{llm_url}/v1/chat/completions",
+        f"{index_llm_url}/v1/chat/completions",
         headers=_auth_headers(api_key),
         json={
-            "model": llm_model,
+            "model": index_llm_model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
             "temperature": 0.2,
@@ -258,8 +258,8 @@ def synthesize_observations(
     threshold: float = SIBLING_THRESHOLD,
     max_cluster: int = MAX_CLUSTER,
     workspace: str | None = None,
-    llm_url: str | None = None,
-    llm_model: str | None = None,
+    index_llm_url: str | None = None,
+    index_llm_model: str | None = None,
     embed_url: str | None = None,
 ) -> dict:
     """Run one synthesis pass. Returns a report dict.
@@ -272,8 +272,8 @@ def synthesize_observations(
     from .config import get_config
 
     cfg = get_config()
-    llm_url = llm_url or cfg.llm_url
-    llm_model = llm_model or cfg.llm_model
+    index_llm_url = index_llm_url or cfg.index_llm_url
+    index_llm_model = index_llm_model or cfg.index_llm_model
 
     clusters, no_embedding = cluster_observations(
         conn, min_age_days=min_age_days, min_siblings=min_siblings,
@@ -314,7 +314,7 @@ def synthesize_observations(
         plan = _plan(cluster)
         members = cluster["members"]
         try:
-            learning = _synthesize(members, llm_url, llm_model, cfg.llm_api_key)
+            learning = _synthesize(members, index_llm_url, index_llm_model, cfg.index_llm_api_key)
         except Exception as exc:
             plan["error"] = f"synthesis failed: {exc}"
             report["skipped"].append(plan)

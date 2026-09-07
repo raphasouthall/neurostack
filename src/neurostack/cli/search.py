@@ -157,16 +157,11 @@ def _autolabel_queries(args, db_path, ev):
 
     conn = get_db(db_path)
     print(f"  Auto-labelling from {db_path} "
-          f"(mode={args.autolabel_mode}, n={args.autolabel_n}, seed={args.autolabel_seed}) ...")
-    queries = autolabel.generate_labels(
+          f"(n={args.autolabel_n}, seed={args.autolabel_seed}) ...")
+    queries = autolabel.heuristic_labels(
         conn,
-        mode=args.autolabel_mode,
         n=args.autolabel_n,
         seed=args.autolabel_seed,
-        k_per_note=args.autolabel_k,
-        cache_path=args.autolabel_cache,
-        llm_url=args.llm_url,
-        llm_model=args.llm_model,
     )
     if not queries:
         print("  No labels generated — vault has no notes with summaries or titles.")
@@ -296,22 +291,14 @@ def _run_tune(args, queries, db_path, cache):
 
 
 def cmd_ask(args):
-    from ..ask import ask_vault
-    result = ask_vault(
-        question=args.question,
-        top_k=args.top_k,
-        embed_url=args.embed_url,
-        llm_url=args.summarize_url,
-        workspace=_get_workspace(args),
-    )
-    if args.json:
-        print(json.dumps(result, indent=2))
-        return
-    print(f"\n{result['answer']}\n")
-    if result['sources']:
-        print("Sources:")
-        for s in result['sources']:
-            print(f"  - {s['title']} ({s['path']})")
+    """Retired in #142. NeuroStack returns evidence; the caller does the reasoning.
+
+    Kept as an explicit signpost so an old script or muscle-memory invocation gets
+    the replacement command instead of argparse's "invalid choice".
+    """
+    print("  `neurostack ask` was removed, use `neurostack search` "
+          "and reason over the results yourself.")
+    raise SystemExit(2)
 
 
 def cmd_summary(args):

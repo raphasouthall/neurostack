@@ -522,7 +522,7 @@ class TestLlmClassify:
                 return {"choices": [{"message": {"content": content}}]}
 
         monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
-        cfg = SimpleNamespace(llm_api_key=None)
+        cfg = SimpleNamespace(index_llm_api_key=None)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
 
@@ -576,7 +576,7 @@ class TestLlmClassify:
             return _Resp()
 
         monkeypatch.setattr(httpx, "post", _post)
-        cfg = SimpleNamespace(llm_api_key=None)
+        cfg = SimpleNamespace(index_llm_api_key=None)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
         return sent
@@ -692,7 +692,7 @@ class TestLlmClassify:
             raise httpx.ConnectError("down")
 
         monkeypatch.setattr(httpx, "post", _boom)
-        cfg = SimpleNamespace(llm_api_key=None)
+        cfg = SimpleNamespace(index_llm_api_key=None)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
         candidates = [
@@ -760,8 +760,8 @@ class TestHarvestTtl:
         monkeypatch.setattr("neurostack.schema.get_db",
                             lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
-                              llm_url="http://llm.test", llm_model="m",
-                              llm_api_key=None, writeback_enabled=False)
+                              index_llm_url="http://llm.test", index_llm_model="m",
+                              index_llm_api_key=None, writeback_enabled=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr(embedder_mod, "get_embedding",
                             lambda *a, **k: np.ones(768, dtype=np.float32))
@@ -901,8 +901,8 @@ class TestHarvestTranscript:
                             lambda: tmp_path / "state.json")
         monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
-                              llm_url="http://llm.test", llm_model="m",
-                              llm_api_key=None, writeback_enabled=False)
+                              index_llm_url="http://llm.test", index_llm_model="m",
+                              index_llm_api_key=None, writeback_enabled=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
         def embed(content, *a, **k):

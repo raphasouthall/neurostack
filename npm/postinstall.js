@@ -263,8 +263,8 @@ async function main() {
 # Run 'neurostack init' to set your vault path and preferences.
 
 embed_url = "http://localhost:11434"
-llm_url = "http://localhost:11434"
-llm_model = "phi3.5"
+index_llm_url = "http://localhost:11434"
+index_llm_model = "phi3.5"
 `);
     info(`Config: ${configFile}`);
   } else {

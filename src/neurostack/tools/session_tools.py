@@ -62,32 +62,28 @@ def vault_session_start(
 @registry.tool(tags=["session"], annotations=_WRITE_IDEMPOTENT)
 def vault_session_end(
     session_id: int,
-    summarize: bool = True,
+    summary: str | None = None,
     auto_harvest: bool = True,
 ) -> dict:
-    """End a memory session and optionally generate a summary.
+    """End a memory session, storing the summary you write for it.
 
-    Call at the end of a work session. If summarize=True, uses
-    the LLM to produce a 2-3 sentence summary of all memories
-    recorded during the session. If auto_harvest=True, extracts
-    insights from the most recent session transcript and saves
-    them as memories.
+    Call at the end of a work session. NeuroStack does not write the summary:
+    pass your own 2-3 sentence account of the session in ``summary``, or omit it
+    to close the session with no summary. If auto_harvest=True, extracts
+    insights from the most recent session transcript and saves them as memories.
 
     Args:
         session_id: The session ID returned by vault_session_start
-        summarize: Generate LLM summary of session (default True)
+        summary: Caller-written session summary; omit for none
         auto_harvest: Run harvest on the latest session (default True)
     """
-    from ..memories import end_session, summarize_session
+    from ..memories import end_session
     from ..schema import DB_PATH, get_db
 
     _cache_clear()
     log.debug("LLM tool cache cleared on session end")
 
     conn = get_db(DB_PATH)
-    summary = None
-    if summarize:
-        summary = summarize_session(conn, session_id)
     result = end_session(conn, session_id, summary=summary)
 
     if auto_harvest:

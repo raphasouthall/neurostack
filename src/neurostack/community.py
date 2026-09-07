@@ -32,10 +32,10 @@ log = logging.getLogger("neurostack")
 from .config import _auth_headers, get_config
 
 _cfg = get_config()
-SUMMARIZE_URL = _cfg.llm_url
+SUMMARIZE_URL = _cfg.index_llm_url
 EMBED_URL = _cfg.embed_url
-SUMMARIZE_MODEL = _cfg.llm_model
-_LLM_HEADERS = _auth_headers(_cfg.llm_api_key)
+SUMMARIZE_MODEL = _cfg.index_llm_model
+_LLM_HEADERS = _auth_headers(_cfg.index_llm_api_key)
 
 def community_build_status(conn=None) -> dict:
     """Report how fresh the community partition is (issue #65).

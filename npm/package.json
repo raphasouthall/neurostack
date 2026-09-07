@@ -1,7 +1,7 @@
 {
   "name": "neurostack",
   "version": "0.19.0",
-  "description": "Local RAG layer and optimizer for your Markdown knowledge base. CLI + MCP server: grounded answers for any AI client, stale-note detection, session harvesting.",
+  "description": "Local retrieval layer and optimizer for your Markdown knowledge base. CLI + MCP server: ranked evidence for any AI client, stale-note detection, session harvesting.",
   "bin": {
     "neurostack": "bin/neurostack.js",
     "ns": "bin/neurostack.js"
