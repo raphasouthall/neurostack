@@ -285,11 +285,48 @@ def _remove_user_timer(unit):
     )
 
 
+def _install_harness_adapter(args, harness):
+    """Generate the adapter that wires a harness to `neurostack hook`."""
+    from ..adapters import install_adapter
+
+    status, path = install_adapter(harness)
+    if args.json:
+        print(json.dumps({"installed": status == "installed", "harness": harness,
+                          "status": status, "path": str(path)}))
+        return
+    if status == "installed":
+        restart = "omp" if harness == "omp" else "Claude Code"
+        print(f"  \033[32m\u2713\033[0m Installed the {harness} adapter")
+        print(f"    Adapter: {path}")
+        print(f"    Restart {restart} to load it")
+    elif status == "not-detected":
+        print(f"  {harness} not detected — skipped")
+    else:
+        print("  \033[31m\u2717\033[0m neurostack binary not found on PATH"
+              " or in ~/.local/bin — adapter not installed")
+
+
+def _remove_harness_adapter(args, harness):
+    from ..adapters import remove_adapter
+
+    removed = remove_adapter(harness)
+    if args.json:
+        print(json.dumps({"removed": removed, "harness": harness}))
+    elif removed:
+        print(f"  \033[32m\u2713\033[0m Removed the {harness} adapter")
+    else:
+        print(f"  No {harness} adapter found")
+
+
 def cmd_hooks(args):
     """Manage neurostack automation hooks."""
     subcmd = getattr(args, "hooks_command", None)
+    harness = getattr(args, "harness", None)
 
     if subcmd == "install":
+        if harness:
+            _install_harness_adapter(args, harness)
+            return
         hook_type = args.type or "harvest-timer"
 
         if hook_type == "harvest-timer":
@@ -308,29 +345,13 @@ def cmd_hooks(args):
                 print(f"  \033[32m✓\033[0m Installed {hook_type}")
                 print(f"    Timer: {timer_path}")
                 print("    Check: systemctl --user status neurostack-decay.timer")
-        elif hook_type == "claude-hook":
-            from ..setup import _claude_settings_path, install_claude_session_hook
-
-            result = install_claude_session_hook()
-            if args.json:
-                print(json.dumps({"installed": result == "installed", "type": hook_type,
-                                  "result": result}))
-            elif result == "installed":
-                print(f"  \033[32m✓\033[0m Installed {hook_type}")
-                print(f"    Hook: SessionEnd in {_claude_settings_path()}")
-            elif result == "already":
-                print("  Claude Code SessionEnd hook already installed")
-            elif result == "not-detected":
-                print("  Claude Code not detected (~/.claude missing) — skipped")
-            else:
-                print("  \033[31m✗\033[0m neurostack binary not found on PATH"
-                      " or in ~/.local/bin — hook not installed")
         else:
             print(f"  Unknown hook type: {hook_type}")
 
     elif subcmd == "status":
         import subprocess
 
+        from ..adapters import claude_adapter_installed, omp_extension_path
         from ..setup import claude_session_hook_installed
 
         result = subprocess.run(
@@ -344,36 +365,33 @@ def cmd_hooks(args):
         )
         decay_active = decay.stdout.strip() == "active"
         claude_hook = claude_session_hook_installed()
+        claude_adapter = claude_adapter_installed()
+        omp_adapter = omp_extension_path().exists()
         if args.json:
             print(json.dumps({
                 "harvest_timer": "active" if active else "inactive",
                 "decay_timer": "active" if decay_active else "inactive",
                 "claude_session_hook": "installed" if claude_hook else "absent",
+                "claude_adapter": "installed" if claude_adapter else "absent",
+                "omp_adapter": "installed" if omp_adapter else "absent",
             }))
         else:
-            status = "\033[32mactive\033[0m" if active else "\033[31minactive\033[0m"
-            d_status = "\033[32mactive\033[0m" if decay_active else "\033[31minactive\033[0m"
-            c_status = ("\033[32minstalled\033[0m" if claude_hook
-                        else "\033[31mabsent\033[0m")
-            print(f"  harvest-timer: {status}")
-            print(f"  decay-timer: {d_status}")
-            print(f"  claude-session-hook: {c_status}")
+            def _mark(flag, yes="installed", no="absent"):
+                return f"\033[32m{yes}\033[0m" if flag else f"\033[31m{no}\033[0m"
+
+            print(f"  harvest-timer: {_mark(active, 'active', 'inactive')}")
+            print(f"  decay-timer: {_mark(decay_active, 'active', 'inactive')}")
+            print(f"  claude-session-hook: {_mark(claude_hook)}")
+            print(f"  claude-adapter: {_mark(claude_adapter)}")
+            print(f"  omp-adapter: {_mark(omp_adapter)}")
 
     elif subcmd == "remove":
+        if harness:
+            _remove_harness_adapter(args, harness)
+            return
         hook_type = getattr(args, "type", None) or "harvest-timer"
         if hook_type == "decay-timer":
             _remove_user_timer("neurostack-decay")
-        elif hook_type == "claude-hook":
-            from ..setup import remove_claude_session_hook
-
-            removed = remove_claude_session_hook()
-            if args.json:
-                print(json.dumps({"removed": removed, "type": hook_type}))
-            elif removed:
-                print(f"  \033[32m✓\033[0m Removed {hook_type}")
-            else:
-                print("  No Claude Code SessionEnd hook found")
-            return
         else:
             _remove_user_timer("neurostack-harvest")
         if args.json:
@@ -383,4 +401,5 @@ def cmd_hooks(args):
 
     else:
         print("Usage: neurostack hooks {install,status,remove}")
+        print("       neurostack hooks --harness {claude,omp}")
         print("       neurostack hooks --help")

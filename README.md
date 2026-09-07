@@ -396,6 +396,10 @@ neurostack harvest --sessions 5          # extract session insights
 neurostack sessions search "query"       # search transcripts
 neurostack hooks install                 # hourly harvest timer
 
+# Harness hooks (session brief, auto-RAG, trigger memories, transcript harvest)
+neurostack hooks install --harness claude   # or: omp
+neurostack hooks status
+
 # Client setup
 neurostack setup-client cursor           # or: windsurf, gemini, vscode, claude-code
 neurostack setup-client --list
