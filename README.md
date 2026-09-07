@@ -18,7 +18,7 @@ NeuroStack does two jobs. **RAG**: it indexes your existing Markdown notes (Obsi
 npm install -g neurostack && neurostack init
 ```
 
-Works with Claude, Cursor, Windsurf, Gemini CLI, VS Code, and Codex — anything that supports MCP.
+Works with Claude, Cursor, Windsurf, Gemini CLI, VS Code, Codex and any other client that supports MCP.
 
 ---
 
@@ -28,21 +28,21 @@ By default, NeuroStack is a read-only indexing layer:
 
 - Indexing, search, summaries, and graph analysis **never modify your Markdown files**
 - All index data lives in NeuroStack's own separate database
-- To remove it completely: `neurostack uninstall` — your notes are untouched
+- To remove it completely, run `neurostack uninstall`. Your notes stay untouched.
 - Nothing ever leaves your machine, unless you configure a third-party LLM provider for summaries and embeddings
 
-If your vault is a git repo, four **opt-in MCP write tools** let an AI client author and edit notes for you: `vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`. Every write commits and pushes to your git remote with a descriptive message — so every change is visible in `git log`, revertable with `git revert`, and serialised under a per-vault lock. Writes hard-reject invalid frontmatter, paths outside the vault, and hidden directories (`.git`, `.obsidian`, …). Because the tools are exposed to any client talking to `neurostack serve`, gate them at the transport (auth, tunnel, LAN only) if you put the MCP endpoint on the public internet.
+If your vault is a git repo, four **opt-in MCP write tools** let an AI client author and edit notes for you: `vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`. Every write commits and pushes to your git remote with a descriptive message, so every change is visible in `git log`, revertable with `git revert`, and serialised under a per-vault lock. Writes hard-reject invalid frontmatter, paths outside the vault, and hidden directories (`.git`, `.obsidian`, …). Because the tools are exposed to any client talking to `neurostack serve`, gate them at the transport (auth, tunnel, LAN only) if you put the MCP endpoint on the public internet.
 
 ---
 
 ## Who this is for
 
-You do not need to be a developer. If you take notes in Markdown — or can export your notes as Markdown from Obsidian, Notion, Bear, or Roam — NeuroStack works for you.
+You do not need to be a developer. If you take notes in Markdown, or can export your notes as Markdown from Obsidian, Notion, Bear, or Roam, NeuroStack works for you.
 
 | If you are... | NeuroStack helps you... |
 |--------------|------------------------|
 | **A researcher** | Ask your AI "what do my notes say about X?" across hundreds of papers. Get warned when a note references a retracted finding or superseded paper before your AI cites it confidently. |
-| **A fiction writer** | Your AI knows your world-building bible, character histories, and chapter decisions. "We agreed in session 4 that Elena's backstory changes in act 2" — it remembers that. |
+| **A fiction writer** | Your AI knows your world-building bible, character histories, and chapter decisions. It remembers that you agreed in session 4 that Elena's backstory changes in act 2. |
 | **A student** | Ask your AI to explain connections across all your course notes. When a syllabus topic changes, stale revision notes are flagged automatically. |
 | **A professional** | Your AI remembers client context, project decisions, and meeting notes session-to-session. No more re-pasting the same background every time. |
 | **A developer or DevOps engineer** | Notes that reference deprecated APIs or reversed architecture decisions get flagged before your AI cites them as current. |
@@ -53,13 +53,13 @@ You do not need to be a developer. If you take notes in Markdown — or can expo
 
 You will need [Node.js](https://nodejs.org) installed (most computers already have it). The npm package handles the Python setup for you.
 
-**Step 1 — Install**
+**Step 1. Install**
 
 ```
 npm install -g neurostack
 ```
 
-**Step 2 — Set up** (takes about two minutes)
+**Step 2. Set up** (takes about two minutes)
 
 ```
 neurostack init
@@ -67,7 +67,7 @@ neurostack init
 
 The setup wizard asks which vault folder to index, which mode to run (Lite or Full), and which profession pack to apply. It does everything else automatically.
 
-**Step 3 — Connect to your AI**
+**Step 3. Connect to your AI**
 
 For Claude Desktop:
 ```
@@ -91,8 +91,8 @@ Done. Open a new conversation and ask your AI about something from your notes.
 
 Everything runs on your machine. Choose a tier during `neurostack init`:
 
-- **Lite** (~130 MB) — keyword search, link-based connections between notes, stale detection, MCP server. No GPU or Ollama required.
-- **Full** (~560 MB) — adds semantic search (finds notes by meaning, not just keywords), AI-generated summaries, connections between notes, and topic clustering via local [Ollama](https://ollama.ai). GPU or 6+ core CPU recommended.
+- **Lite** (~130 MB) gives you keyword search, link-based connections between notes, stale detection and the MCP server. No GPU or Ollama required.
+- **Full** (~560 MB) adds semantic search by meaning, AI-generated summaries, connections between notes, and topic clustering via local [Ollama](https://ollama.ai). GPU or 6+ core CPU recommended.
 
 Non-interactive setup:
 
@@ -129,15 +129,15 @@ To uninstall: `neurostack uninstall`
 
 ## What it actually feels like
 
-**The researcher.** You ask Claude to help write the methodology section. Instead of starting from scratch, it already knows you've read 50 papers on complementary learning systems, that you settled on a particular framing in January, and that the meta-analysis you were relying on has been flagged as stale — it keeps appearing in searches where it no longer fits. You check it, update the note, and the AI's next answer reflects where your thinking actually is.
+**The researcher.** You ask Claude to help write the methodology section. It already knows you have read 50 papers on complementary learning systems, that you settled on a particular framing in January, and that the meta-analysis you were relying on has been flagged as stale because it keeps appearing in searches where it no longer fits. You check it, update the note, and the AI's next answer reflects where your thinking is now.
 
 **The writer.** You ask Cursor to help with chapter eleven. It knows Elena's backstory from chapter two, the decision you made in your world-building notes to keep magic systems implicit, and that you changed her last name in a revision three weeks ago. No contradictions.
 
-**The DevOps engineer.** You ask about the deployment runbook for the auth service. NeuroStack surfaces it — but also flags it as stale. You check it. The endpoint was renamed six weeks ago. You fix the note. The next time anyone asks, they get the right answer.
+**The DevOps engineer.** You ask about the deployment runbook for the auth service. NeuroStack surfaces it and flags it as stale. You check it. The endpoint was renamed six weeks ago. You fix the note, and the next person who asks gets the right answer.
 
-**The student.** You're revising three weeks before exams. You ask your AI what's on the syllabus for Module 4. It searches your notes — and stale detection tells you two of the topics were in last year's module structure, which you replaced when the course was restructured. You know what to revise. You don't waste time on dropped content.
+**The student.** You are revising three weeks before exams. You ask your AI what is on the syllabus for Module 4. It searches your notes, and stale detection tells you two of the topics belonged to last year's module structure, which you replaced when the course was restructured. You know what to revise and skip the dropped content.
 
-**The data scientist.** You ask about the hyperparameters from your best experiment. NeuroStack returns the results from the rerun, not the original — because you updated that note, and the update is reflected in the index.
+**The data scientist.** You ask about the hyperparameters from your best experiment. NeuroStack returns the results from the rerun, because you updated that note and the index picked up the change.
 
 ---
 
@@ -156,7 +156,7 @@ NeuroStack is not a replacement for Obsidian, Notion, or any note-taking app. It
 | Profession-specific workflows | No | No | Yes |
 | Open source, self-hostable | Varies | Varies | Yes (Apache 2.0) |
 
-Stale detection is the feature no other tool offers. When a note keeps appearing in contexts where it no longer fits — a deprecated API, a reversed decision, a superseded paper — NeuroStack flags it and demotes it in future results. Without this, your AI confidently cites information that is no longer true.
+Stale detection is the feature no other tool offers. When a note keeps appearing in contexts where it no longer fits, such as a deprecated API, a reversed decision or a superseded paper, NeuroStack flags it and demotes it in future results. Without this, your AI cites information that is no longer true.
 
 ---
 
@@ -221,7 +221,7 @@ neurostack memories search "thesis direction"
 
 ## Learns from your AI sessions
 
-NeuroStack can scan your past AI conversations, extract the key decisions, observations, and learnings, and save them as memories — automatically. No manual work.
+NeuroStack scans your past AI conversations, extracts the decisions, observations and learnings, and saves them as memories on a timer, with no manual work.
 
 ```bash
 neurostack harvest --sessions 5          # extract insights from last 5 sessions
@@ -240,7 +240,7 @@ Your vault changes. NeuroStack watches it.
 neurostack watch     # auto-index on vault changes
 ```
 
-The index updates as you write. Stale detection runs continuously. You don't maintain it — it maintains itself.
+The index updates as you write and stale detection runs continuously, so you do not maintain it by hand.
 
 ---
 
@@ -266,7 +266,7 @@ The index updates as you write. Stale detection runs continuously. You don't mai
     sessions.db                         # session transcript index
 ```
 
-NeuroStack reads your vault. By default, it writes nothing back — all index data lives in its own SQLite databases. The opt-in MCP write tools (`vault_write_file` / `vault_delete_file`) are the one exception: they create or edit `.md` files in the vault and commit + push the change to your git remote on the spot.
+NeuroStack reads your vault. By default it writes nothing back, and all index data lives in its own SQLite databases. The opt-in MCP write tools (`vault_write_file` / `vault_delete_file`) are the one exception: they create or edit `.md` files in the vault and commit + push the change to your git remote on the spot.
 
 ### Memory write-back (opt-in)
 
@@ -279,7 +279,7 @@ path = ".neurostack"           # quarantine dir, relative to vault_root
 include_observations = false   # also write the noisier observation/context types
 ```
 
-- Files land under `{vault_root}/.neurostack/memories/<type>/<YYYY-MM>/<uuid>.md`. NeuroStack only ever writes inside that one directory — your notes are never touched.
+- Files land under `{vault_root}/.neurostack/memories/<type>/<YYYY-MM>/<uuid>.md`. NeuroStack only ever writes inside that one directory, so your own notes stay untouched.
 - Only persistent (no-TTL) `decision` / `convention` / `learning` / `bug` memories are written; ephemeral (TTL) memories never are.
 - The database stays the source of truth; files are readable exports. `vault_remember` / `vault_update_memory` / `vault_forget` / `vault_merge` keep the files in step automatically.
 - The directory self-ignores via its own `.gitignore` so memories stay out of git until you opt in (delete that file to version them). NeuroStack never commits on your behalf.
@@ -427,7 +427,7 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 ## FAQ
 
-**Does it modify my vault files?** Not by default. Indexing, search, summaries, and every read tool leave your files untouched — all index data lives in NeuroStack's own SQLite databases. Four opt-in MCP write tools (`vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`) let an AI client author and edit notes; every write commits and pushes to your git remote, so changes are tracked and revertable. If your vault is not a git repo, the file is still written to disk but the commit step is skipped. Separately, opt-in [memory write-back](#memory-write-back-opt-in) persists memories as markdown, but only ever inside the quarantined `.neurostack/` directory — never alongside your own notes.
+**Does it modify my vault files?** Not by default. Indexing, search, summaries, and every read tool leave your files untouched, and all index data lives in NeuroStack's own SQLite databases. Four opt-in MCP write tools (`vault_write_file`, `vault_delete_file`, plus `vault_read_file` / `vault_list_files`) let an AI client author and edit notes; every write commits and pushes to your git remote, so changes are tracked and revertable. If your vault is not a git repo, the file is still written to disk but the commit step is skipped. Separately, opt-in [memory write-back](#memory-write-back-opt-in) persists memories as markdown, but only inside the quarantined `.neurostack/` directory, away from your own notes.
 
 **Do I need a GPU?** No. Lite mode has zero ML dependencies. Full mode runs on CPU but summarization is slow without a GPU.
 
@@ -439,7 +439,7 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 **Is my vault private?** Yes. Nothing leaves your machine, unless you point Full mode at a third-party LLM provider instead of local Ollama. In that case the text you index goes to that provider under its own policy.
 
-**What AI clients does it work with?** Claude Code, Claude Desktop, Cursor, Windsurf, Gemini CLI, VS Code, and Codex — anything that supports MCP.
+**What AI clients does it work with?** Claude Code, Claude Desktop, Cursor, Windsurf, Gemini CLI, VS Code, Codex and any other client that supports MCP.
 
 ---
 
@@ -466,4 +466,4 @@ Two minutes. One wizard. Your AI stops forgetting.
 
 ---
 
-Apache-2.0 — see [LICENSE](LICENSE). No GPL dependencies.
+Apache-2.0, see [LICENSE](LICENSE). No GPL dependencies.
