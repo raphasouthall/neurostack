@@ -1,6 +1,6 @@
 # NeuroStack - Claude Code Guide
 
-NeuroStack is a local RAG layer and optimizer for a Markdown knowledge base. CLI + MCP server + OpenAI-compatible API. It indexes the vault into SQLite + FTS5 with embeddings and a link graph, serves grounded answers to any AI client, and keeps the base sharp: stale-note detection, session harvesting into memories, synthesis, and promotion of proven memories into notes. Ranking heuristics borrow from memory neuroscience (docs/neuroscience-appendix.md); that is implementation detail, not the pitch.
+NeuroStack is a local RAG layer and optimizer for a Markdown knowledge base, shipped as a CLI, an MCP server and an OpenAI-compatible API. It indexes the vault into SQLite + FTS5 with embeddings and a link graph, then serves grounded answers to any AI client. It also keeps the base sharp over time by flagging stale notes, harvesting AI sessions into memories, synthesising recurring memories into learnings, and promoting proven memories into notes. The ranking heuristics borrow from memory neuroscience, which docs/neuroscience-appendix.md documents as implementation detail.
 
 ## Quick Reference
 
