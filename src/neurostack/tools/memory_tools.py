@@ -301,3 +301,32 @@ def vault_promotion_queue(
         uncovered_sim_floor=uncovered_sim_floor,
         uncovered_limit=uncovered_limit,
     )
+
+
+@registry.tool(tags=["memory", "read"], annotations=_READ_ONLY)
+def vault_triggers(
+    event: str,
+    value: str,
+    workspace: str = None,
+    limit: int = 10,
+) -> dict:
+    """Memories whose trigger tag matches the current moment (issue #131).
+
+    A trigger is a tag with one of three prefixes: 'when-editing:<glob>'
+    (file path of an Edit/Write), 'when-calling:<tool>' (tool name),
+    'when-error:<substring>' (tool error text). Harness hooks call this on
+    tool events and inject the hits; the caller owns once-per-session
+    suppression. Pure read; untagged memories are never returned.
+
+    Args:
+        event: One of "editing", "calling", "error"
+        value: The path, tool name, or error text to match against
+        workspace: Optional vault subdirectory scope
+        limit: Max hits, newest first (default 10)
+    """
+    from ..schema import DB_PATH, get_db
+    from ..triggers import match_triggers
+
+    conn = get_db(DB_PATH)
+    hits = match_triggers(conn, event, value, workspace=workspace, limit=limit)
+    return {"event": event, "value": value, "hits": hits, "count": len(hits)}
