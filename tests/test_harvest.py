@@ -606,6 +606,58 @@ class TestLlmClassify:
         assert out == []
         assert "dropped unclassified" not in caplog.text
 
+    def test_invalid_type_without_keyword_hint_becomes_observation(self, monkeypatch):
+        # Issue #125: candidates without a keyword hit carry prefilter_type None.
+        self._stub_llm(monkeypatch, "[1] KEEP type=wat summary=Something worth keeping")
+        candidates = [{"text": "x" * 50, "role": "assistant", "prefilter_type": None}]
+        out = _llm_classify(candidates, "http://llm.test", "model")
+        assert out[0]["entity_type"] == "observation"
+
+    def test_llm_failure_keeps_only_keyword_hits(self, monkeypatch):
+        # One LLM outage must not save every widened candidate as a memory.
+        import httpx
+
+        def _boom(*a, **k):
+            raise httpx.ConnectError("down")
+
+        monkeypatch.setattr(httpx, "post", _boom)
+        cfg = SimpleNamespace(llm_api_key=None)
+        monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+        monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
+        candidates = [
+            {"text": "The root cause was a stale cache entry in the loader.",
+             "role": "assistant", "prefilter_type": "bug"},
+            {"text": "Cloning the repository now and reading the layout.",
+             "role": "assistant", "prefilter_type": None},
+        ]
+        out = _llm_classify(candidates, "http://llm.test", "model")
+        assert [c["entity_type"] for c in out] == ["bug"]
+
+
+class TestPrefilterRecall:
+    """Issue #125: with an LLM the keyword gate is a hint, not a filter."""
+
+    _PLAIN = "Cloning the website repo now and reading the Svelte layout for you."
+
+    def test_llm_sees_messages_without_keywords(self, in_memory_db, tmp_path, monkeypatch):
+        import neurostack.harvest as harvest_mod
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        seen = []
+        real = harvest_mod._llm_classify
+        harvest_mod._llm_classify = lambda cands, *a, **k: seen.extend(cands) or []
+        try:
+            harvest_transcript(_claude_line("assistant", self._PLAIN) + "\n",
+                               session_id="s", source_agent="claude-code", use_llm=True)
+        finally:
+            harvest_mod._llm_classify = real
+        assert [c["prefilter_type"] for c in seen] == [None]
+
+    def test_regex_path_still_gated_by_keywords(self, in_memory_db, tmp_path, monkeypatch):
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        report = harvest_transcript(_claude_line("assistant", self._PLAIN) + "\n",
+                                    session_id="s", source_agent="claude-code", use_llm=False)
+        assert report["saved"] == [] and report["counts"] == {}
+
 
 # ---------------------------------------------------------------------------
 # harvest_sessions — per-type TTL on harvest-created memories (issue #36)
