@@ -398,6 +398,10 @@ neurostack hooks install                 # hourly harvest timer
 neurostack hooks install --harness claude   # or: omp
 neurostack hooks status
 
+# Trigger memories: did the warnings change anything?
+neurostack triggers stats                # fired, followed, ignored per memory (30d)
+neurostack triggers stats --days 7
+
 # Checkpoint: a background model writes the memories, mid-session
 neurostack hook checkpoint --run --session <id>  # summarise and save, silently
 neurostack hook checkpoint --save               # a model's JSON reply on stdin
