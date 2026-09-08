@@ -10,7 +10,9 @@ reporting live here instead of once per harness.
 The `checkpoint` event (issue #143) is the one that hands work back: it prints
 a prompt for the harness's own model and no LLM is called from here. The model
 replies with JSON, and `checkpoint --save` reads that on stdin and writes the
-memories.
+memories. `checkpoint --run` does both in one go by piping the prompt through
+`checkpoint_command` from client.toml (for example `claude -p --model sonnet`),
+which is what a timer or herdr calls when no harness model is at hand.
 
 Fail open, always: an unreachable server, a malformed payload, or an
 unexpected exception prints one line to stderr and exits 0.
@@ -828,6 +830,47 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
     return Verdict(f"neurostack: saved {saved} of {len(items)} checkpoint memories")
 
 
+def run_checkpoint(payload: dict, harness: str = "cli",
+                   cfg: ClientConfig | None = None) -> Verdict:
+    """`--run`: prompt, pipe it through `checkpoint_command`, save the reply.
+
+    The command is a shell line so a model flag or wrapper script fits.
+    Anything but a clean exit puts the window back on offer, same as a
+    failed save.
+    """
+    import subprocess
+
+    cfg = cfg or load_client_config()
+    if not cfg.checkpoint_command:
+        return Verdict("neurostack hook checkpoint: no checkpoint_command in client.toml")
+    prompt = run_event("checkpoint", payload, cfg)
+    if not prompt.text:
+        return Verdict()
+    session = _session_id(payload)
+    try:
+        # Run from $HOME: inside a project the command would inherit that
+        # project's agent instructions and answer like an agent, not a parser.
+        proc = subprocess.run(
+            cfg.checkpoint_command, shell=True, input=prompt.text,
+            capture_output=True, text=True, timeout=cfg.checkpoint_timeout_s,
+            cwd=Path.home(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _reoffer(session)
+        return Verdict(f"neurostack hook checkpoint: {type(exc).__name__}: {exc}")
+    if proc.returncode != 0:
+        _reoffer(session)
+        tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+        return Verdict(f"neurostack hook checkpoint: command exited {proc.returncode}: {tail[0]}")
+    return run_checkpoint_save(proc.stdout, session, harness, cfg)
+
+
+def _reoffer(session: str) -> None:
+    state = load_state(session)
+    state.offered_index = state.since_index
+    state.save()
+
+
 def _latest_session() -> str | None:
     """The session whose state was written last, or None.
 
@@ -911,7 +954,10 @@ def cmd_hook(args) -> None:
         payload["session"] = args.session
 
     try:
-        verdict = run_event(event, payload)
+        if event == "checkpoint" and getattr(args, "run", False):
+            verdict = run_checkpoint(payload, getattr(args, "harness", None) or "cli")
+        else:
+            verdict = run_event(event, payload)
     except Exception as exc:  # a hook never takes the agent down with it
         print(f"neurostack hook {event}: {type(exc).__name__}: {exc}", file=sys.stderr)
         return
