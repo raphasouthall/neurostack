@@ -32,6 +32,7 @@ from pathlib import Path
 from ..client import ClientConfig, McpClient, load_client_config
 from ..redact import redact_secrets
 from ..triggers import parse_trigger
+from .learn_status import cache_dir, learn_line, record_error, record_ok
 
 EVENTS = ("session-start", "prompt", "tool-call", "tool-result", "checkpoint",
           "session-end")
@@ -51,6 +52,9 @@ MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024
 CHECKPOINT_MIN_MESSAGES = 5
 CHECKPOINT_MIN_USER_CHARS = 200
 CHECKPOINT_CLIP_CHARS = 500
+# `neurostack status` only counts a session as behind while it could still be
+# checkpointed; an older state file belongs to a session that is over.
+BEHIND_WINDOW_S = 7 * 86400
 _HASHLINE_HEADER = re.compile(r"^\[([^\]#]+)#[0-9A-Fa-f]{4}\]", re.MULTILINE)
 _XD_PREFIX = "xd://"
 
@@ -104,8 +108,7 @@ class SessionState:
 
 def sessions_dir() -> Path:
     """Per-session state directory (`~/.cache/neurostack/sessions`)."""
-    cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(cache) / "neurostack" / "sessions"
+    return cache_dir() / "sessions"
 
 
 def _state_path(session: str) -> Path:
@@ -355,13 +358,16 @@ def _workspace(cfg: ClientConfig, payload: dict) -> str | None:
 
 def _event_session_start(client: McpClient, payload: dict, state: SessionState,
                          cfg: ClientConfig) -> Verdict:
+    # The LEARN line comes first so it survives a brief that gets cut short,
+    # and it is the whole verdict when the server never answers (issue #151).
+    line = learn_line()
     args: dict = {}
     workspace = _workspace(cfg, payload)
     if workspace:
         args["workspace"] = workspace
     text = client.call("session_brief", args)
     if not text:
-        return Verdict()
+        return Verdict(line)
     # The tool answers {"brief": "<markdown>"}; unwrap it, and take a plain
     # text reply as the brief itself.
     try:
@@ -371,10 +377,10 @@ def _event_session_start(client: McpClient, payload: dict, state: SessionState,
     if isinstance(parsed, dict):
         brief = parsed.get("brief")
         if not isinstance(brief, str) or not brief.strip():
-            return Verdict()
+            return Verdict(line)
         text = brief
     return Verdict(
-        "NeuroStack session brief (auto-injected at session start; recent vault "
+        line + "\n\nNeuroStack session brief (auto-injected at session start; recent vault "
         "changes, commits, memories):\n\n" + text.strip()
     )
 
@@ -826,6 +832,13 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
         client.close()
     if client.errors:
         print(f"neurostack hook checkpoint: {client.errors[0]}", file=sys.stderr)
+    # Every attempt ends in the health file, so a login that expired weeks ago
+    # shows up in the next session brief instead of a journal (issue #151).
+    if saved == len(items):
+        record_ok(session, harness, saved)
+    else:
+        record_error(session, harness, client.errors[0] if client.errors
+                     else f"saved {saved} of {len(items)} memories")
     return Verdict(f"neurostack: saved {saved} of {len(items)} checkpoint memories")
 
 
@@ -841,7 +854,9 @@ def run_checkpoint(payload: dict, harness: str = "cli",
 
     cfg = cfg or load_client_config()
     if not cfg.checkpoint_command:
-        return Verdict("neurostack hook checkpoint: no checkpoint_command in client.toml")
+        message = "no checkpoint_command in client.toml"
+        record_error(_session_id(payload), harness, message)
+        return Verdict(f"neurostack hook checkpoint: {message}")
     prompt = run_event("checkpoint", payload, cfg)
     if not prompt.text:
         return Verdict()
@@ -856,11 +871,15 @@ def run_checkpoint(payload: dict, harness: str = "cli",
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         _reoffer(session)
-        return Verdict(f"neurostack hook checkpoint: {type(exc).__name__}: {exc}")
+        message = f"{type(exc).__name__}: {exc}"
+        record_error(session, harness, message)
+        return Verdict(f"neurostack hook checkpoint: {message}")
     if proc.returncode != 0:
         _reoffer(session)
         tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
-        return Verdict(f"neurostack hook checkpoint: command exited {proc.returncode}: {tail[0]}")
+        message = f"command exited {proc.returncode}: {tail[0]}"
+        record_error(session, harness, message)
+        return Verdict(f"neurostack hook checkpoint: {message}")
     return run_checkpoint_save(proc.stdout, session, harness, cfg)
 
 
@@ -883,6 +902,30 @@ def _latest_session() -> str | None:
     if not files:
         return None
     return max(files, key=lambda p: p.stat().st_mtime).stem
+
+
+def sessions_behind() -> int:
+    """Live sessions whose transcript has grown past the last offered window.
+
+    A backlog means checkpoints are being skipped or refused, which the LEARN
+    line alone cannot show (issue #151). Only the last week of state files
+    count: an older session is finished, not behind. The message count comes
+    from the same normaliser the checkpoint window uses, because
+    `offered_index` indexes into that list and not into raw JSONL lines.
+    """
+    cutoff = time.time() - BEHIND_WINDOW_S
+    try:
+        files = [p for p in sessions_dir().glob("*.json")
+                 if p.is_file() and p.stat().st_mtime >= cutoff]
+    except OSError:
+        return 0
+    behind = 0
+    for path in files:
+        state = load_state(path.stem)
+        messages = _transcript_messages({}, state.session, "")
+        if messages and state.offered_index < len(messages):
+            behind += 1
+    return behind
 
 
 _HANDLERS = {
