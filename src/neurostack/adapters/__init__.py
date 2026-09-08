@@ -24,14 +24,15 @@ _OMP_TEMPLATE = Path(__file__).parent / "omp_neurostack.ts"
 _BIN_PLACEHOLDER = "__NEUROSTACK_BIN__"
 
 # Claude Code hook event -> the `neurostack hook` event it maps to, plus the
-# seconds Claude waits for it. SessionEnd is backgrounded: harvesting a whole
-# transcript takes minutes and must not hold up the exit.
+# seconds Claude waits for it. SessionEnd and Stop are backgrounded and get no
+# timeout: harvesting a transcript takes minutes, a checkpoint runs a model,
+# and neither may hold up the turn.
 _CLAUDE_EVENTS = (
     ("SessionStart", "session-start", 15),
     ("UserPromptSubmit", "prompt", 15),
     ("PreToolUse", "tool-call", 10),
     ("PostToolUse", "tool-result", 10),
-    ("Stop", "checkpoint", 20),
+    ("Stop", "checkpoint", None),
     ("SessionEnd", "session-end", None),
 )
 
@@ -49,13 +50,14 @@ def _hook_log() -> Path:
 def claude_hook_command(binary: str, event: str) -> str:
     """The shell command Claude Code runs for one hook event."""
     command = f"{binary} hook {event} --harness claude"
-    if event == "session-end":
-        return f"nohup {command} >>{_hook_log()} 2>&1 &"
     if event == "checkpoint":
-        # A Stop hook that exits 0 shows its stdout to the user; only the
-        # exit-2 block reason reaches the model, which is who has to answer.
-        return (f'out=$({command}); '
-                '[ -z "$out" ] || { printf \'%s\\n\' "$out" >&2; exit 2; }')
+        # The Stop hook used to block with exit 2 so the prompt reached the
+        # model, which put a prompt and a JSON reply in the transcript. `--run`
+        # summarizes through `checkpoint_command` instead, so there is nobody
+        # to talk to and nothing to wait for (issue #155).
+        command = f"{binary} hook checkpoint --run --harness claude"
+    if event in ("checkpoint", "session-end"):
+        return f"nohup {command} >>{_hook_log()} 2>&1 &"
     return command
 
 
@@ -130,18 +132,33 @@ def claude_save_command_path() -> Path:
     return Path.home() / ".claude" / "commands" / "save.md"
 
 
+def claude_save_command(binary: str) -> str:
+    """The `/save` shell line: the Stop hook's command with stdin closed.
+
+    A slash command has no hook payload to pipe in, and `--run` reading a
+    terminal would sit there waiting for one. With stdin at /dev/null the CLI
+    takes the session from the newest state file the Stop hook wrote.
+    """
+    return (f"nohup {binary} hook checkpoint --run --harness claude "
+            f"</dev/null >>{_hook_log()} 2>&1 &")
+
+
 _CLAUDE_SAVE_COMMAND = """\
 ---
 description: Checkpoint this session into NeuroStack memory
 ---
 
-Run `{binary} hook checkpoint --harness claude </dev/null`.
+Run this:
 
-It prints nothing when there is nothing new to save — say so and stop.
+```sh
+{command}
+```
 
-Otherwise it prints a prompt. Answer it: decide what a future session would
-need from this one, then pipe your JSON array on stdin to
-`{binary} hook checkpoint --save --harness claude`. Report the count it prints.
+It returns at once and the checkpoint finishes in the background: NeuroStack
+reads this session's transcript, summarizes it through `checkpoint_command`
+from `client.toml`, and writes the memories itself. Nothing comes back into
+this conversation, so there is nothing here to answer. Say that the checkpoint
+started and stop; `neurostack status` reports what it saved.
 """
 
 
@@ -149,7 +166,8 @@ def write_claude_save_command(binary: str) -> Path:
     """Write the `/save` command file. Overwrites, so re-installing is safe."""
     path = claude_save_command_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_CLAUDE_SAVE_COMMAND.format(binary=binary), encoding="utf-8")
+    body = _CLAUDE_SAVE_COMMAND.format(command=claude_save_command(binary))
+    path.write_text(body, encoding="utf-8")
     return path
 
 

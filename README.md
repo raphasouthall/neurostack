@@ -398,9 +398,9 @@ neurostack hooks install                 # hourly harvest timer
 neurostack hooks install --harness claude   # or: omp
 neurostack hooks status
 
-# Checkpoint: the harness's own model writes the memories, mid-session
-neurostack hook checkpoint --session <id>   # prints a prompt for the model
-neurostack hook checkpoint --save          # model's JSON reply on stdin
+# Checkpoint: a background model writes the memories, mid-session
+neurostack hook checkpoint --run --session <id>  # summarise and save, silently
+neurostack hook checkpoint --save               # a model's JSON reply on stdin
 
 # Client setup
 neurostack setup-client cursor           # or: windsurf, gemini, vscode, claude-code

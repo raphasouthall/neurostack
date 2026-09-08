@@ -7,12 +7,13 @@ exit 2 (block, stdout is the reason). Every harness adapter is a thin mapping
 onto these events, so retrieval, once-per-session suppression, and outcome
 reporting live here instead of once per harness.
 
-The `checkpoint` event (issue #143) is the one that hands work back: it prints
-a prompt for the harness's own model and no LLM is called from here. The model
-replies with JSON, and `checkpoint --save` reads that on stdin and writes the
-memories. `checkpoint --run` does both in one go by piping the prompt through
-`checkpoint_command` from client.toml (for example `claude -p --model sonnet`),
-which is what a timer or herdr calls when no harness model is at hand.
+The `checkpoint` event (issue #143) is the one that hands work back. `--run`
+is how it runs now (#147, #155): it builds the prompt, pipes it through
+`checkpoint_command` from client.toml (for example `claude -p --model sonnet`)
+and saves the reply, so a harness can spawn it detached and put nothing in the
+session. The window comes from the payload, from the `<session>.window.json`
+an adapter left behind, or from the transcript. `checkpoint --save` still
+reads a model's JSON reply on stdin, for herdr and for hand use.
 
 Fail open, always: an unreachable server, a malformed payload, or an
 unexpected exception prints one line to stderr and exits 0.
@@ -55,6 +56,8 @@ CHECKPOINT_CLIP_CHARS = 500
 # `neurostack status` only counts a session as behind while it could still be
 # checkpointed; an older state file belongs to a session that is over.
 BEHIND_WINDOW_S = 7 * 86400
+# An adapter hands the window over on disk, beside the session state.
+_WINDOW_SUFFIX = ".window.json"
 _HASHLINE_HEADER = re.compile(r"^\[([^\]#]+)#[0-9A-Fa-f]{4}\]", re.MULTILINE)
 _XD_PREFIX = "xd://"
 
@@ -111,10 +114,51 @@ def sessions_dir() -> Path:
     return cache_dir() / "sessions"
 
 
+def _slug(session: str) -> str:
+    """A session id as one safe filename."""
+    return re.sub(r"[^A-Za-z0-9_-]", "_", session)[:120] or "default"
+
+
 def _state_path(session: str) -> Path:
-    """State file for a session id, sanitized into a single safe filename."""
-    slug = re.sub(r"[^A-Za-z0-9_-]", "_", session)[:120] or "default"
-    return sessions_dir() / f"{slug}.json"
+    """State file for a session id."""
+    return sessions_dir() / f"{_slug(session)}.json"
+
+
+def _window_path(session: str) -> Path:
+    """Where an adapter leaves the window for a detached `--run` (issue #155)."""
+    return sessions_dir() / f"{_slug(session)}{_WINDOW_SUFFIX}"
+
+
+def _state_files() -> list[Path]:
+    """Every session state file. Window files live here too and are not state."""
+    try:
+        return [p for p in sessions_dir().glob("*.json")
+                if p.is_file() and not p.name.endswith(_WINDOW_SUFFIX)]
+    except OSError:
+        return []
+
+
+def _read_window(session: str) -> dict | None:
+    """The window an adapter wrote for this session, or None.
+
+    A background `--run` is spawned with no stdin: the harness that holds the
+    conversation writes `{since_index, messages}` here first (issue #155).
+    """
+    try:
+        raw = json.loads(_window_path(session).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(raw, dict) and isinstance(raw.get("messages"), list):
+        return raw
+    return None
+
+
+def _clear_window(session: str) -> None:
+    """Drop the window file once its messages are saved."""
+    try:
+        _window_path(session).unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"neurostack hook checkpoint: window not cleared: {exc}", file=sys.stderr)
 
 
 def load_state(session: str, fresh: bool = False) -> SessionState:
@@ -646,16 +690,21 @@ def _transcript_messages(payload: dict, session: str, source: str) -> list[dict]
 def _checkpoint_window(payload: dict, state: SessionState) -> tuple[int, list[dict]]:
     """`(start index, messages to summarize)`.
 
-    An adapter that already tracks the conversation sends the window and the
-    index it starts at. Claude Code's Stop hook sends neither, so the window
+    Three sources, in order. A harness that pipes the event in sends the
+    window and the index it starts at. A harness that spawns `--run` detached
+    sends nothing on stdin and leaves the same two fields in the window file
+    instead (issue #155). Claude Code's Stop hook sends neither, so the window
     is cut out of the transcript at the last saved index.
     """
-    given = payload.get("messages")
-    if isinstance(given, list):
-        start = payload.get("since_index")
+    given = (payload if isinstance(payload.get("messages"), list)
+             else _read_window(state.session))
+    if given is not None:
+        start = given.get("since_index")
         if not (isinstance(start, int) and start >= 0):
             start = state.since_index
-        return start, [m for m in (_norm_message(r) for r in given) if m is not None]
+        messages = [m for m in (_norm_message(r) for r in given["messages"])
+                    if m is not None]
+        return start, messages
     source = _first_str(payload, "format", "source_agent") or "claude-code"
     messages = _transcript_messages(payload, state.session, source)
     start = min(state.since_index, len(messages))
@@ -880,6 +929,9 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
             # about this window, and asking twice is what the dedup prevents.
             state.since_index = max(state.since_index, state.offered_index)
             state.last_checkpoint_at = time.time()
+            # These messages are in the vault now, so the file an adapter left
+            # for this save has nothing left to offer (issue #155).
+            _clear_window(session)
         else:
             # An unreachable server, a dropped reply, or a harness that never
             # got the answer must cost a repeat prompt, not the memories: put
@@ -908,20 +960,21 @@ def run_checkpoint(payload: dict, harness: str = "cli",
     """`--run`: prompt, pipe it through `checkpoint_command`, save the reply.
 
     The command is a shell line so a model flag or wrapper script fits.
-    Anything but a clean exit puts the window back on offer, same as a
-    failed save.
+    Anything but a clean exit puts the window back on offer, same as a failed
+    save. Nobody is watching a `--run`: an adapter spawns it detached and a
+    timer runs it from cron, so every failure goes to stderr and to the LEARN
+    status, never to stdout where a harness would inject it (issue #155).
     """
     import subprocess
 
     cfg = cfg or load_client_config()
+    payload = _with_session(payload)
+    session = _session_id(payload)
     if not cfg.checkpoint_command:
-        message = "no checkpoint_command in client.toml"
-        record_error(_session_id(payload), harness, message)
-        return Verdict(f"neurostack hook checkpoint: {message}")
+        return _run_failed(session, harness, "no checkpoint_command in client.toml")
     prompt = run_event("checkpoint", payload, cfg)
     if not prompt.text:
         return Verdict()
-    session = _session_id(payload)
     try:
         # Run from $HOME: inside a project the command would inherit that
         # project's agent instructions and answer like an agent, not a parser.
@@ -932,16 +985,33 @@ def run_checkpoint(payload: dict, harness: str = "cli",
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         _reoffer(session)
-        message = f"{type(exc).__name__}: {exc}"
-        record_error(session, harness, message)
-        return Verdict(f"neurostack hook checkpoint: {message}")
+        return _run_failed(session, harness, f"{type(exc).__name__}: {exc}")
     if proc.returncode != 0:
         _reoffer(session)
         tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
-        message = f"command exited {proc.returncode}: {tail[0]}"
-        record_error(session, harness, message)
-        return Verdict(f"neurostack hook checkpoint: {message}")
+        return _run_failed(session, harness,
+                           f"command exited {proc.returncode}: {tail[0]}")
     return run_checkpoint_save(proc.stdout, session, harness, cfg)
+
+
+def _run_failed(session: str, harness: str, message: str) -> Verdict:
+    """One stderr line and one LEARN error, and no verdict text."""
+    record_error(session, harness, message)
+    print(f"neurostack hook checkpoint: {message}", file=sys.stderr)
+    return Verdict()
+
+
+def _with_session(payload: dict) -> dict:
+    """The payload with a session id, taken from the newest state file if need be.
+
+    A `/save` slash command cannot pass its own id, and a `--run` spawned with
+    no stdin carries no payload at all. The state file the last checkpoint of
+    this session wrote does know it.
+    """
+    if _first_str(payload, "session", "session_id"):
+        return payload
+    latest = _latest_session()
+    return {**payload, "session": latest} if latest else payload
 
 
 def _reoffer(session: str) -> None:
@@ -956,10 +1026,7 @@ def _latest_session() -> str | None:
     A `--save` needs the session id, and a slash command does not know its
     own. The state file the checkpoint wrote seconds ago does.
     """
-    try:
-        files = [p for p in sessions_dir().glob("*.json") if p.is_file()]
-    except OSError:
-        return None
+    files = _state_files()
     if not files:
         return None
     return max(files, key=lambda p: p.stat().st_mtime).stem
@@ -976,8 +1043,7 @@ def sessions_behind() -> int:
     """
     cutoff = time.time() - BEHIND_WINDOW_S
     try:
-        files = [p for p in sessions_dir().glob("*.json")
-                 if p.is_file() and p.stat().st_mtime >= cutoff]
+        files = [p for p in _state_files() if p.stat().st_mtime >= cutoff]
     except OSError:
         return 0
     behind = 0
