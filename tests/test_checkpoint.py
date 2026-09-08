@@ -10,7 +10,6 @@ does with the JSON that comes back. Both run against the fake MCP endpoint in
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -27,10 +26,13 @@ from neurostack.adapters import (
 )
 from neurostack.cli.hook import (
     _state_path,
+    _window_path,
     last_capture_path,
+    load_state,
     run_checkpoint,
     run_checkpoint_save,
     run_event,
+    sessions_dir,
 )
 from neurostack.cli.learn_status import load_learn_status, record_ok
 from neurostack.client import ClientConfig
@@ -77,6 +79,18 @@ def _payload(messages, session="ck", **extra):
 
 def _state(session):
     return json.loads(_state_path(session).read_text())
+
+
+def _write_window(session, messages, since_index=0):
+    """The window file an adapter leaves behind before spawning `--run`."""
+    path = _window_path(session)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"since_index": since_index, "messages": messages}))
+    return path
+
+
+def _windows():
+    return sorted(sessions_dir().glob("*.window.json"))
 
 
 def _run_cli(args, stdin, server_url, home):
@@ -339,9 +353,17 @@ def test_the_omp_adapter_carries_the_cadence_and_a_save_command(isolated_home):
     assert "QUIET_MS = 30 * 60_000" in source
     assert "MIN_MESSAGES = 5" in source
     assert 'registerCommand("save"' in source
-    assert 'hook("checkpoint"' in source
-    assert '"--save"' in source
+    assert '"--run"' in source
+    assert ".window.json" in source
     assert " any" not in source and ": any" not in source
+
+
+def test_the_omp_adapter_says_nothing_to_the_session_model(isolated_home):
+    """Acceptance 6: no prompt goes in and no reply is watched for."""
+    source = _install_omp(isolated_home).read_text()
+    for gone in ("sendUserMessage", "message_end", "awaiting",
+                 "MAX_REPLY_TRIES", "JSON_SHAPE"):
+        assert gone not in source
 
 
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
@@ -358,15 +380,15 @@ def test_the_omp_adapter_transpiles_under_bun(isolated_home, tmp_path):
 _DRIVER = """\
 import extension from "{adapter}";
 
-const log: string[] = [];
 const injected: string[] = [];
+const shown: string[] = [];
 const handlers: Record<string, (e: unknown, c: unknown) => unknown> = {{}};
 const commands: Record<string, {{ handler: () => unknown }}> = {{}};
 let intervalMs = 0;
 
 extension({{
   on: (e, h) => {{ handlers[e] = h; }},
-  sendMessage: () => {{}},
+  sendMessage: (m: {{ content?: string }}) => {{ shown.push(m.content ?? ""); }},
   sendUserMessage: (t: string) => {{ injected.push(t); }},
   registerCommand: (n: string, c: {{ handler: () => unknown }}) => {{ commands[n] = c; }},
 }} as never);
@@ -381,81 +403,100 @@ const messages = Array.from({{ length: {count} }}, (_v, i) => ({{
 }}));
 await handlers.context?.({{ messages }}, ctx);
 await settle();
-log.push(`injected=${{injected.length}}`);
-log.push(`tagged=${{injected[0]?.includes("neurostack-checkpoint") ?? false}}`);
-log.push(`timer=${{intervalMs}}`);
-log.push(`command=${{typeof commands.save?.handler}}`);
-
-const reply = {{ role: "assistant", content: '[{{"content": "x"}}]' }};
-handlers.message_end?.({{ message: reply }}, ctx);
+{save}
 await settle();
-console.log(log.join("\\n"));
+console.log(JSON.stringify({{
+  injected: injected.length, shown, timer: intervalMs,
+  command: typeof commands.save?.handler,
+}}));
 """
 
 _FAKE_BIN = """\
 #!/bin/sh
 printf '%s\\n' "$*" >>"$NEUROSTACK_TEST_LOG"
-if [ -n "$NEUROSTACK_TEST_SAVES" ] && [ "$3" = "--save" ]; then
-  { printf '<<<'; cat; printf '>>>\\n'; } >>"$NEUROSTACK_TEST_SAVES"
-else
-  cat >/dev/null
-fi
-case "$2 $3" in
-  "checkpoint --save") ;;
-  checkpoint*) echo "a checkpoint prompt" ;;
-esac
+cat >/dev/null
 """
+
+
+def _drive(isolated_home, tmp_path, count, save=False):
+    """Drive the generated extension under Bun with a stub `pi` and CLI."""
+    calls = tmp_path / "calls.txt"
+    calls.write_text("")
+    fake_bin = tmp_path / "neurostack"
+    fake_bin.write_text(_FAKE_BIN)
+    fake_bin.chmod(0o755)
+    adapter = _install_omp(isolated_home, binary=str(fake_bin))
+    driver = tmp_path / "driver.ts"
+    driver.write_text(_DRIVER.format(
+        adapter=adapter, count=count,
+        save="await commands.save?.handler();" if save else "",
+    ))
+    result = subprocess.run(
+        [BUN, "run", str(driver)], capture_output=True, text=True, timeout=120,
+        env={**os.environ, "NEUROSTACK_TEST_LOG": str(calls)},
+    )
+    assert result.returncode == 0, result.stderr
+    reported = json.loads(result.stdout.strip().splitlines()[-1])
+    spawned = [line for line in calls.read_text().splitlines()
+               if line.startswith("hook checkpoint")]
+    return reported, spawned
 
 
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
 def test_the_omp_adapter_checkpoints_at_forty_messages(isolated_home, tmp_path):
-    """Drive the generated extension under Bun with a stub `pi` and CLI."""
-    calls = tmp_path / "calls.txt"
-    fake_bin = tmp_path / "neurostack"
-    fake_bin.write_text(_FAKE_BIN)
-    fake_bin.chmod(0o755)
-    adapter = _install_omp(isolated_home, binary=str(fake_bin))
-    driver = tmp_path / "driver.ts"
-    driver.write_text(_DRIVER.format(adapter=adapter, count=40))
-
-    result = subprocess.run(
-        [BUN, "run", str(driver)], capture_output=True, text=True, timeout=120,
-        env={**os.environ, "NEUROSTACK_TEST_LOG": str(calls)},
-    )
-    assert result.returncode == 0, result.stderr
-    reported = dict(line.split("=", 1) for line in result.stdout.strip().splitlines())
-    assert reported == {"injected": "1", "tagged": "true",
-                        "timer": "60000", "command": "function"}
-    argv = calls.read_text().splitlines()
-    assert "hook checkpoint" in argv
-    assert "hook checkpoint --save --harness omp --session" in " ".join(argv)
+    """Acceptance 1: the window goes to disk and `--run` is spawned, silently."""
+    reported, spawned = _drive(isolated_home, tmp_path, 40)
+    assert reported["injected"] == 0
+    assert reported["shown"] == []
+    assert reported["timer"] == 60000
+    assert reported["command"] == "function"
+    assert len(spawned) == 1
+    assert spawned[0].startswith("hook checkpoint --run --harness omp --session omp-")
+    windows = _windows()
+    assert len(windows) == 1
+    # The file is named for the session the CLI was told to check point.
+    assert windows[0].name == f"{spawned[0].split()[-1]}.window.json"
+    window = json.loads(windows[0].read_text())
+    assert window["since_index"] == 0
+    assert len(window["messages"]) == 40
 
 
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
 def test_the_omp_adapter_leaves_a_short_window_alone(isolated_home, tmp_path):
-    calls = tmp_path / "calls.txt"
-    fake_bin = tmp_path / "neurostack"
-    fake_bin.write_text(_FAKE_BIN)
-    fake_bin.chmod(0o755)
-    adapter = _install_omp(isolated_home, binary=str(fake_bin))
-    driver = tmp_path / "driver.ts"
-    driver.write_text(_DRIVER.format(adapter=adapter, count=12))
-
-    result = subprocess.run(
-        [BUN, "run", str(driver)], capture_output=True, text=True, timeout=120,
-        env={**os.environ, "NEUROSTACK_TEST_LOG": str(calls)},
-    )
-    assert result.returncode == 0, result.stderr
-    assert "injected=0" in result.stdout
+    reported, spawned = _drive(isolated_home, tmp_path, 12)
     # 12 messages is under the 40-message rule, so the CLI is never asked.
-    assert "hook checkpoint" not in calls.read_text().splitlines()
+    assert spawned == []
+    assert _windows() == []
+    assert reported["shown"] == []
 
 
-def test_the_claude_stop_entry_hands_the_prompt_to_the_model():
-    command = claude_hook_entries("/opt/bin/neurostack")["Stop"][0]["hooks"][0]["command"]
-    assert "hook checkpoint --harness claude" in command
-    # Only exit 2 reaches the model; exit 0 would show the prompt to the user.
-    assert "exit 2" in command
+@pytest.mark.skipif(BUN is None, reason="bun not installed")
+def test_save_on_three_messages_spawns_nothing_and_says_so(isolated_home, tmp_path):
+    """Acceptance 2: `/save` answers the user even when it saves nothing."""
+    reported, spawned = _drive(isolated_home, tmp_path, 3, save=True)
+    assert reported["shown"] == ["NeuroStack: nothing to save yet (3 messages)"]
+    assert spawned == []
+    assert _windows() == []
+    assert reported["injected"] == 0
+
+
+@pytest.mark.skipif(BUN is None, reason="bun not installed")
+def test_save_on_a_worthwhile_window_starts_the_checkpoint(isolated_home, tmp_path):
+    reported, spawned = _drive(isolated_home, tmp_path, 12, save=True)
+    assert reported["shown"] == ["NeuroStack: checkpoint started in the background"]
+    assert len(spawned) == 1
+    assert len(json.loads(_windows()[0].read_text())["messages"]) == 12
+
+
+def test_the_claude_stop_entry_checkpoints_in_the_background():
+    """Acceptance 5: no exit-2 wrapper, and `--run` does the summarising."""
+    stop = claude_hook_entries("/opt/bin/neurostack")["Stop"][0]["hooks"][0]
+    assert "hook checkpoint --run --harness claude" in stop["command"]
+    assert stop["command"].startswith("nohup ")
+    assert stop["command"].endswith("&")
+    assert "exit 2" not in stop["command"]
+    # Nothing to wait for, so Claude Code is given no timeout to wait out.
+    assert "timeout" not in stop
 
 
 def test_claude_install_writes_the_save_command(isolated_home):
@@ -465,8 +506,10 @@ def test_claude_install_writes_the_save_command(isolated_home):
         install_claude_adapter()
         install_claude_adapter()
     body = claude_save_command_path().read_text()
-    assert "/opt/bin/neurostack hook checkpoint --harness claude" in body
-    assert "hook checkpoint --save --harness claude" in body
+    assert "/opt/bin/neurostack hook checkpoint --run --harness claude" in body
+    # A slash command has no payload to pipe in and must not wait for one.
+    assert "</dev/null" in body
+    assert "--save" not in body
 
 
 # --- checkpoint --run: pipe the prompt through checkpoint_command ------------
@@ -487,19 +530,78 @@ def test_run_pipes_the_prompt_through_the_command_and_saves(server, tmp_path):
     assert _state("ck")["since_index"] == 40
 
 
-def test_run_with_a_failing_command_puts_the_window_back_on_offer(server):
+def test_run_with_a_failing_command_puts_the_window_back_on_offer(server, capsys):
     verdict = run_checkpoint(_payload(_messages(20)), "omp",
                              cfg=_cfg(server, checkpoint_command="exit 3"))
-    assert "command exited 3" in verdict.text
+    # Nothing a `--run` says may reach stdout: a harness injects that.
+    assert verdict.text == ""
+    assert "command exited 3" in capsys.readouterr().err
     assert _tool_calls(server, "vault_remember") == []
     state = _state("ck")
     assert state["offered_index"] == state["since_index"] == 0
 
 
-def test_run_without_a_command_says_so(server):
+def test_run_without_a_command_says_so(server, capsys):
+    """Acceptance 4: one stderr line, and the LEARN line shows the reason."""
     verdict = run_checkpoint(_payload(_messages(20)), "omp", cfg=_cfg(server))
-    assert "no checkpoint_command" in verdict.text
+    assert verdict.text == ""
+    assert "no checkpoint_command" in capsys.readouterr().err
+    assert "no checkpoint_command" in load_learn_status()["last_error"]
     assert _tool_calls(server, "vault_remember") == []
+
+
+def test_run_reads_the_window_file_and_removes_it(server, tmp_path):
+    """Acceptance 3: the adapter leaves the window on disk; `--run` consumes it."""
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 4}
+    window = _write_window("s1", _messages(20))
+    reply = tmp_path / "reply.json"
+    reply.write_text(json.dumps([{"content": "one fact"}, {"content": "another"}]))
+    verdict = run_checkpoint({"session": "s1"}, "omp",
+                             cfg=_cfg(server, checkpoint_command=f"cat {reply}"))
+    assert "saved 2 of 2" in verdict.text
+    assert len(_tool_calls(server, "vault_remember")) == 2
+    assert not window.exists()
+    assert _state("s1")["since_index"] == 40
+
+
+def test_a_window_that_saved_nothing_stays_on_disk(server, tmp_path):
+    """A dropped reply must leave the window where the next `--run` finds it."""
+    window = _write_window("s2", _messages(20))
+    reply = tmp_path / "reply.txt"
+    reply.write_text("Nothing worth keeping.")
+    run_checkpoint({"session": "s2"}, "omp",
+                   cfg=_cfg(server, checkpoint_command=f"cat {reply}"))
+    assert window.exists()
+    assert _state("s2")["offered_index"] == 0
+
+
+def test_run_without_a_session_takes_the_newest_state_file(server, tmp_path):
+    """`/save` cannot pass its own id; the state the Stop hook wrote can."""
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 6}
+    load_state("s3").save()
+    _write_window("s3", _messages(20))
+    reply = tmp_path / "reply.json"
+    reply.write_text(json.dumps([{"content": "a fact worth keeping"}]))
+    verdict = run_checkpoint({}, "claude", cfg=_cfg(server, checkpoint_command=f"cat {reply}"))
+    assert "saved 1 of 1" in verdict.text
+    assert load_learn_status()["session"] == "s3"
+
+
+def test_the_cli_checkpoints_a_window_with_nothing_on_stdin(server, isolated_home, tmp_path):
+    """The whole omp path: a window file, no stdin at all, memories saved."""
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 7}
+    reply = tmp_path / "reply.json"
+    reply.write_text(json.dumps([{"content": "a fact worth keeping"}]))
+    config = isolated_home / ".config" / "neurostack" / "client.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(f'checkpoint_command = "cat {reply}"\n')
+    window = _write_window("omp-cli", _messages(20))
+    result = _run_cli(["checkpoint", "--run", "--harness", "omp", "--session", "omp-cli"],
+                      "", server.url, isolated_home)
+    assert result.returncode == 0
+    assert "saved 1 of 1" in result.stdout
+    assert len(_tool_calls(server, "vault_remember")) == 1
+    assert not window.exists()
 
 
 def test_run_executes_the_command_from_home_not_the_project(server):
@@ -599,82 +701,3 @@ def test_the_capture_file_holds_the_bytes_the_cli_read(server, isolated_home):
     saved = _run_cli(["checkpoint", "--save"], REPLY, server.url, isolated_home)
     assert saved.returncode == 0
     assert last_capture_path().read_bytes() == REPLY.encode()
-
-
-_REPLY_DRIVER = """\
-import extension from "{adapter}";
-
-const injected: string[] = [];
-const handlers: Record<string, (e: unknown, c: unknown) => unknown> = {{}};
-
-extension({{
-  on: (e, h) => {{ handlers[e] = h; }},
-  sendMessage: () => {{}},
-  sendUserMessage: (_t: string, o?: object) => {{ injected.push(JSON.stringify(o ?? null)); }},
-  registerCommand: () => {{}},
-}} as never);
-
-const ctx = {{ setInterval: () => {{}} }};
-await handlers.session_start?.({{}}, ctx);
-const settle = () => new Promise((r) => setTimeout(r, 400));
-const messages = Array.from({{ length: 40 }}, (_v, i) => ({{
-  role: i % 2 === 0 ? "user" : "assistant",
-  content: `message ${{i}}`,
-}}));
-await handlers.context?.({{ messages }}, ctx);
-await settle();
-
-for (const content of {replies} as string[]) {{
-  handlers.message_end?.({{ message: {{ role: "assistant", content }} }}, ctx);
-  await settle();
-}}
-console.log(`options=${{injected[0]}}`);
-"""
-
-
-def _drive_replies(isolated_home, tmp_path, replies):
-    """Drive the generated extension through a run of assistant replies."""
-    calls = tmp_path / "calls.txt"
-    saves = tmp_path / "saves.txt"
-    saves.write_text("")
-    fake_bin = tmp_path / "neurostack"
-    fake_bin.write_text(_FAKE_BIN)
-    fake_bin.chmod(0o755)
-    adapter = _install_omp(isolated_home, binary=str(fake_bin))
-    driver = tmp_path / "driver.ts"
-    driver.write_text(_REPLY_DRIVER.format(adapter=adapter, replies=json.dumps(replies)))
-    result = subprocess.run(
-        [BUN, "run", str(driver)], capture_output=True, text=True, timeout=120,
-        env={**os.environ, "NEUROSTACK_TEST_LOG": str(calls),
-             "NEUROSTACK_TEST_SAVES": str(saves)},
-    )
-    assert result.returncode == 0, result.stderr
-    return result.stdout, re.findall(r"<<<(.*?)>>>", saves.read_text(), re.DOTALL)
-
-
-@pytest.mark.skipif(BUN is None, reason="bun not installed")
-def test_the_adapter_waits_past_prose_for_the_json_reply(isolated_home, tmp_path):
-    stdout, bodies = _drive_replies(
-        isolated_home, tmp_path,
-        ["I read the window. One thought before the list.", '[{"content": "x"}]'],
-    )
-    assert bodies == ['[{"content": "x"}]']
-    # The prompt goes in through the prompt flow, which takes no display flag.
-    assert '"deliverAs":"followUp"' in stdout
-
-
-@pytest.mark.skipif(BUN is None, reason="bun not installed")
-def test_three_prose_replies_give_up_with_an_empty_save(isolated_home, tmp_path):
-    _stdout, bodies = _drive_replies(
-        isolated_home, tmp_path,
-        ["first thought", "second thought", "third thought"],
-    )
-    assert bodies == [""]
-
-
-def test_the_adapter_documents_why_the_prompt_stays_visible(isolated_home):
-    """Acceptance 6: `display: false` is unavailable, so the reason is in view."""
-    source = _install_omp(isolated_home).read_text()
-    assert "MAX_REPLY_TRIES = 3" in source
-    assert "display: false" in source
-    assert "sendUserMessage(content" in source

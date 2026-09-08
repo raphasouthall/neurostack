@@ -308,9 +308,9 @@ def test_omp_adapter_is_generated_without_an_address(isolated_home, tmp_path):
     assert "__NEUROSTACK_BIN__" not in source
     assert not any(part.replace(".", "").isdigit() and part.count(".") == 3
                    for part in source.split())
-    # The adapter maps events and captures the reply; every retrieval rule
-    # stays in the CLI. The ceiling rose once for the reply filter and the
-    # note on what omp's message API cannot hide (issue #153).
+    # The adapter maps events and nothing more; every retrieval rule and the
+    # whole checkpoint stay in the CLI. The ceiling rose once for the note on
+    # what omp's message API cannot hide (issue #153).
     assert len(source.splitlines()) < 150
 
 
@@ -338,7 +338,7 @@ def test_claude_adapter_writes_entries_that_invoke_the_hook(isolated_home):
     commands = {
         event: hooks[event][0]["hooks"][0]["command"]
         for event in ("SessionStart", "UserPromptSubmit", "PreToolUse",
-                      "PostToolUse", "SessionEnd")
+                      "PostToolUse", "Stop", "SessionEnd")
     }
     assert commands["SessionStart"] == "/opt/bin/neurostack hook session-start --harness claude"
     assert commands["UserPromptSubmit"].endswith("hook prompt --harness claude")
@@ -346,6 +346,9 @@ def test_claude_adapter_writes_entries_that_invoke_the_hook(isolated_home):
     assert commands["PostToolUse"].endswith("hook tool-result --harness claude")
     assert "hook session-end --harness claude" in commands["SessionEnd"]
     assert commands["SessionEnd"].startswith("nohup ")
+    # The checkpoint summarises itself in the background now (issue #155).
+    assert "hook checkpoint --run --harness claude" in commands["Stop"]
+    assert commands["Stop"].startswith("nohup ")
 
 
 # ---------------------------------------------------------------------------
