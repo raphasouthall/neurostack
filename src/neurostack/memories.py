@@ -997,6 +997,22 @@ def get_memory_stats(conn: sqlite3.Connection) -> dict:
     }
 
 
+def get_memory_source_counts(conn: sqlite3.Connection, days: int = 7) -> dict:
+    """Memories written per `source_agent` over the last `days` days.
+
+    Grouped in SQL because the caller wants a table, not rows: `vault_memories`
+    takes no date filter, so a client counting these itself would have to ship
+    every memory of the week over MCP (issue #151).
+    """
+    rows = conn.execute(
+        "SELECT COALESCE(source_agent, 'unknown') AS source, COUNT(*) AS c"
+        " FROM memories WHERE created_at >= datetime('now', ?)"
+        " GROUP BY source ORDER BY c DESC, source",
+        (f"-{int(days)} days",),
+    ).fetchall()
+    return {r["source"]: r["c"] for r in rows}
+
+
 def start_session(
     conn: sqlite3.Connection,
     source_agent: str | None = None,

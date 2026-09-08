@@ -493,7 +493,7 @@ def vault_stats() -> dict:
     """Get index health: note count, embedding coverage, graph stats, triple stats."""
     from ..community import community_build_status as _community_build_status
     from ..cooccurrence import get_cooccurrence_stats
-    from ..memories import get_memory_stats
+    from ..memories import get_memory_source_counts, get_memory_stats
     from ..schema import DB_PATH, get_db
     from ..search import get_dormancy_report
 
@@ -558,7 +558,8 @@ def vault_stats() -> dict:
         "cooccurrence_total_weight": cooc_stats["total_weight"],
         "cooccurrence_reinforced_pairs": cooc_stats["reinforced_pairs"],
         "cooccurrence_total_reinforcement": cooc_stats["total_reinforcement"],
-        "memories": mem_stats,
+        # `neurostack status` reads by_source_7d for its LEARN table (#151).
+        "memories": {**mem_stats, "by_source_7d": get_memory_source_counts(conn)},
     }
     return result
 
