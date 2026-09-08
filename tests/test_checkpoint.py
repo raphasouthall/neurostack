@@ -24,7 +24,7 @@ from neurostack.adapters import (
     install_claude_adapter,
     install_omp_adapter,
 )
-from neurostack.cli.hook import _state_path, run_checkpoint_save, run_event
+from neurostack.cli.hook import _state_path, run_checkpoint, run_checkpoint_save, run_event
 from neurostack.client import ClientConfig
 
 LONG_OUTPUT = "x" * 2000
@@ -455,3 +455,45 @@ def test_claude_install_writes_the_save_command(isolated_home):
     body = claude_save_command_path().read_text()
     assert "/opt/bin/neurostack hook checkpoint --harness claude" in body
     assert "hook checkpoint --save --harness claude" in body
+
+
+# --- checkpoint --run: pipe the prompt through checkpoint_command ------------
+
+
+def test_run_pipes_the_prompt_through_the_command_and_saves(server, tmp_path):
+    """`--run` = prompt, shell command on stdin, save whatever JSON comes back."""
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 3}
+    seen = tmp_path / "prompt.txt"
+    command = (f"{sys.executable} -c \"import sys,pathlib;"
+               f"p=sys.stdin.read();pathlib.Path({str(seen)!r}).write_text(p);"
+               "print('[{\\\"content\\\":\\\"fact\\\",\\\"tags\\\":[\\\"t\\\"]}]')\"")
+    verdict = run_checkpoint(_payload(_messages(20)), "omp",
+                             cfg=_cfg(server, checkpoint_command=command))
+    assert "saved 1 of 1" in verdict.text
+    assert "question 3 about the checkpoint window" in seen.read_text()
+    assert _tool_calls(server, "vault_remember")[0]["source_agent"] == "checkpoint/omp"
+    assert _state("ck")["since_index"] == 40
+
+
+def test_run_with_a_failing_command_puts_the_window_back_on_offer(server):
+    verdict = run_checkpoint(_payload(_messages(20)), "omp",
+                             cfg=_cfg(server, checkpoint_command="exit 3"))
+    assert "command exited 3" in verdict.text
+    assert _tool_calls(server, "vault_remember") == []
+    state = _state("ck")
+    assert state["offered_index"] == state["since_index"] == 0
+
+
+def test_run_without_a_command_says_so(server):
+    verdict = run_checkpoint(_payload(_messages(20)), "omp", cfg=_cfg(server))
+    assert "no checkpoint_command" in verdict.text
+    assert _tool_calls(server, "vault_remember") == []
+
+
+def test_run_executes_the_command_from_home_not_the_project(server):
+    """A project's own agent instructions must not shape the extraction."""
+    seen = Path.home() / "cwd.txt"
+    command = f"pwd > {seen}; echo '[]'"
+    run_checkpoint(_payload(_messages(20)), "cli",
+                   cfg=_cfg(server, checkpoint_command=command))
+    assert seen.read_text().strip() == str(Path.home())

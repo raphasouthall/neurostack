@@ -39,6 +39,10 @@ class ClientConfig:
     # that is minutes of work, so it gets its own budget instead of the
     # interactive one (which exists to keep tool calls responsive).
     harvest_timeout_s: float = 600.0
+    # `checkpoint --run` pipes the prompt through this shell command and saves
+    # what comes back. Empty means the harness model answers the prompt itself.
+    checkpoint_command: str | None = None
+    checkpoint_timeout_s: float = 300.0
     workspace_map: dict[str, str] = field(default_factory=dict)
 
     def urls(self) -> list[str]:
@@ -99,7 +103,9 @@ def load_client_config(path: Path | None = None) -> ClientConfig:
         cfg.fallback_url = raw["fallback_url"]
     if isinstance(raw.get("token"), str):
         cfg.token = raw["token"]
-    for key in ("timeout_s", "harvest_timeout_s"):
+    if isinstance(raw.get("checkpoint_command"), str) and raw["checkpoint_command"].strip():
+        cfg.checkpoint_command = raw["checkpoint_command"].strip()
+    for key in ("timeout_s", "harvest_timeout_s", "checkpoint_timeout_s"):
         value = raw.get(key)
         if isinstance(value, (int, float)) and value > 0:
             setattr(cfg, key, float(value))
