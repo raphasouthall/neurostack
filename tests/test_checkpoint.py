@@ -354,7 +354,7 @@ def test_the_omp_adapter_carries_the_cadence_and_a_save_command(isolated_home):
     assert "MIN_MESSAGES = 5" in source
     assert 'registerCommand("save"' in source
     assert '"--run"' in source
-    assert ".window.json" in source
+    assert 'messages: seen.slice(submittedStart, submittedEnd)' in source
     assert " any" not in source and ": any" not in source
 
 
@@ -393,7 +393,10 @@ extension({{
   registerCommand: (n: string, c: {{ handler: () => unknown }}) => {{ commands[n] = c; }},
 }} as never);
 
-const ctx = {{ setInterval: (_f: () => void, ms: number) => {{ intervalMs = ms; }} }};
+const ctx = {{
+  sessionManager: {{ getSessionId: () => "conversation-stable-42" }},
+  setInterval: (_f: () => void, ms: number) => {{ intervalMs = ms; }},
+}};
 await handlers.session_start?.({{}}, ctx);
 
 const settle = () => new Promise((r) => setTimeout(r, 400));
@@ -415,6 +418,10 @@ _FAKE_BIN = """\
 #!/bin/sh
 printf '%s\\n' "$*" >>"$NEUROSTACK_TEST_LOG"
 cat >/dev/null
+case "$*" in
+  *session-start*) ;;
+  *) printf 'neurostack: saved 1 of 1 checkpoint memories; settled through 40\\n' ;;
+esac
 """
 
 
@@ -437,35 +444,32 @@ def _drive(isolated_home, tmp_path, count, save=False):
     )
     assert result.returncode == 0, result.stderr
     reported = json.loads(result.stdout.strip().splitlines()[-1])
-    spawned = [line for line in calls.read_text().splitlines()
-               if line.startswith("hook checkpoint")]
-    return reported, spawned
+    lines = calls.read_text().splitlines()
+    spawned = [line for line in lines if line.startswith("hook checkpoint --run")]
+    cursors = [line for line in lines if line == "hook checkpoint-cursor"]
+    return reported, spawned, cursors
 
 
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
 def test_the_omp_adapter_checkpoints_at_forty_messages(isolated_home, tmp_path):
-    """Acceptance 1: the window goes to disk and `--run` is spawned, silently."""
-    reported, spawned = _drive(isolated_home, tmp_path, 40)
+    """Acceptance 1: the frozen window goes to the locked CLI over stdin."""
+    reported, spawned, cursors = _drive(isolated_home, tmp_path, 40)
     assert reported["injected"] == 0
     assert reported["shown"] == []
     assert reported["timer"] == 60000
+    assert spawned[0].endswith("--session conversation-stable-42")
     assert reported["command"] == "function"
     assert len(spawned) == 1
-    assert spawned[0].startswith("hook checkpoint --run --harness omp --session omp-")
-    windows = _windows()
-    assert len(windows) == 1
-    # The file is named for the session the CLI was told to check point.
-    assert windows[0].name == f"{spawned[0].split()[-1]}.window.json"
-    window = json.loads(windows[0].read_text())
-    assert window["since_index"] == 0
-    assert len(window["messages"]) == 40
+    assert cursors
+    assert _windows() == []
 
 
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
 def test_the_omp_adapter_leaves_a_short_window_alone(isolated_home, tmp_path):
-    reported, spawned = _drive(isolated_home, tmp_path, 12)
+    reported, spawned, cursors = _drive(isolated_home, tmp_path, 12)
     # 12 messages is under the 40-message rule, so the CLI is never asked.
     assert spawned == []
+    assert cursors == ["hook checkpoint-cursor"]
     assert _windows() == []
     assert reported["shown"] == []
 
@@ -473,19 +477,21 @@ def test_the_omp_adapter_leaves_a_short_window_alone(isolated_home, tmp_path):
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
 def test_save_on_three_messages_spawns_nothing_and_says_so(isolated_home, tmp_path):
     """Acceptance 2: `/save` answers the user even when it saves nothing."""
-    reported, spawned = _drive(isolated_home, tmp_path, 3, save=True)
+    reported, spawned, cursors = _drive(isolated_home, tmp_path, 3, save=True)
     assert reported["shown"] == ["NeuroStack: nothing to save yet (3 messages)"]
     assert spawned == []
+    assert cursors == ["hook checkpoint-cursor"]
     assert _windows() == []
     assert reported["injected"] == 0
 
 
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
 def test_save_on_a_worthwhile_window_starts_the_checkpoint(isolated_home, tmp_path):
-    reported, spawned = _drive(isolated_home, tmp_path, 12, save=True)
+    reported, spawned, cursors = _drive(isolated_home, tmp_path, 12, save=True)
     assert reported["shown"] == ["NeuroStack: checkpoint started in the background"]
     assert len(spawned) == 1
-    assert len(json.loads(_windows()[0].read_text())["messages"]) == 12
+    assert len(cursors) == 2
+    assert _windows() == []
 
 
 def test_the_claude_stop_entry_checkpoints_in_the_background():
@@ -550,8 +556,7 @@ def test_run_without_a_command_says_so(server, capsys):
     assert _tool_calls(server, "vault_remember") == []
 
 
-def test_run_reads_the_window_file_and_removes_it(server, tmp_path):
-    """Acceptance 3: the adapter leaves the window on disk; `--run` consumes it."""
+def test_run_reads_legacy_window_once_and_leaves_file(server, tmp_path):
     server.replies["vault_remember"] = {"saved": True, "memory_id": 4}
     window = _write_window("s1", _messages(20))
     reply = tmp_path / "reply.json"
@@ -559,9 +564,10 @@ def test_run_reads_the_window_file_and_removes_it(server, tmp_path):
     verdict = run_checkpoint({"session": "s1"}, "omp",
                              cfg=_cfg(server, checkpoint_command=f"cat {reply}"))
     assert "saved 2 of 2" in verdict.text
+    assert window.exists()
+    assert run_checkpoint({"session": "s1"}, "omp",
+                          cfg=_cfg(server, checkpoint_command=f"cat {reply}")).text == ""
     assert len(_tool_calls(server, "vault_remember")) == 2
-    assert not window.exists()
-    assert _state("s1")["since_index"] == 40
 
 
 def test_a_window_that_saved_nothing_stays_on_disk(server, tmp_path):
@@ -587,8 +593,7 @@ def test_run_without_a_session_takes_the_newest_state_file(server, tmp_path):
     assert load_learn_status()["session"] == "s3"
 
 
-def test_the_cli_checkpoints_a_window_with_nothing_on_stdin(server, isolated_home, tmp_path):
-    """The whole omp path: a window file, no stdin at all, memories saved."""
+def test_cli_checkpoints_legacy_window_once(server, isolated_home, tmp_path):
     server.replies["vault_remember"] = {"saved": True, "memory_id": 7}
     reply = tmp_path / "reply.json"
     reply.write_text(json.dumps([{"content": "a fact worth keeping"}]))
@@ -600,8 +605,11 @@ def test_the_cli_checkpoints_a_window_with_nothing_on_stdin(server, isolated_hom
                       "", server.url, isolated_home)
     assert result.returncode == 0
     assert "saved 1 of 1" in result.stdout
+    assert window.exists()
+    again = _run_cli(["checkpoint", "--run", "--harness", "omp", "--session", "omp-cli"],
+                     "", server.url, isolated_home)
+    assert again.stdout == ""
     assert len(_tool_calls(server, "vault_remember")) == 1
-    assert not window.exists()
 
 
 def test_run_executes_the_command_from_home_not_the_project(server):
@@ -701,3 +709,117 @@ def test_the_capture_file_holds_the_bytes_the_cli_read(server, isolated_home):
     saved = _run_cli(["checkpoint", "--save"], REPLY, server.url, isolated_home)
     assert saved.returncode == 0
     assert last_capture_path().read_bytes() == REPLY.encode()
+
+
+def test_partial_retry_skips_acknowledged_item(server):
+    run_event("checkpoint", _payload(_messages(20)), cfg=_cfg(server))
+    calls = 0
+    def reply(_args):
+        nonlocal calls
+        calls += 1
+        return {"memory_id": calls} if calls != 2 else None
+    server.replies["vault_remember"] = reply
+    run_checkpoint_save(REPLY, "ck", "omp", cfg=_cfg(server))
+    server.replies["vault_remember"] = {"memory_id": 3}
+    retried = run_checkpoint_save("[]", "ck", "omp", cfg=_cfg(server))
+    assert "skipped 1 acknowledged" in retried.text
+    assert len(_tool_calls(server, "vault_remember")) == 3
+    assert _state("ck")["since_index"] == 40
+
+
+def test_exact_receipts_keep_a_corrected_fact(server):
+    server.replies["vault_remember"] = {"memory_id": 1}
+    run_event("checkpoint", _payload(_messages(20), session="receipt"), cfg=_cfg(server))
+    run_checkpoint_save('[{"content":"service uses port 1433"}]', "receipt", cfg=_cfg(server))
+    run_event("checkpoint", _payload(_messages(25), session="receipt"), cfg=_cfg(server))
+    run_checkpoint_save('[{"content":"service uses port 1435"}]', "receipt", cfg=_cfg(server))
+    assert [call["content"] for call in _tool_calls(server, "vault_remember")] == [
+        "service uses port 1433", "service uses port 1435"]
+
+
+def test_newer_window_survives_old_completion(server):
+    server.replies["vault_remember"] = {"memory_id": 1}
+    old = _messages(20)
+    run_event("checkpoint", _payload(old, session="race"), cfg=_cfg(server))
+    _write_window("race", old + _messages(5))
+    run_checkpoint_save('[{"content":"old window fact"}]', "race", cfg=_cfg(server))
+    assert _window_path("race").exists()
+    assert _state("race")["since_index"] == 40
+
+
+def test_ordinary_hook_write_preserves_checkpoint_progress(server):
+    server.replies["vault_remember"] = {"memory_id": 1}
+    run_event("checkpoint", _payload(_messages(20), session="merge"), cfg=_cfg(server))
+    stale = load_state("merge")
+    run_checkpoint_save('[{"content":"saved fact"}]', "merge", cfg=_cfg(server))
+    stale.calls += 1
+    stale.save()
+    assert load_state("merge").since_index == 40
+
+
+def test_same_session_busy_while_other_session_runs(isolated_home):
+    import fcntl
+
+    from neurostack.cli.hook import _lock_path
+    lock = _lock_path("held")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    cfg = ClientConfig(url="http://127.0.0.1:1/mcp", checkpoint_command="exit 9")
+    with lock.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        busy = run_checkpoint({"session": "held"}, cfg=cfg)
+        other = run_checkpoint({"session": "other"}, cfg=cfg)
+    assert "already running" in busy.text
+    assert other.text == ""
+
+
+def test_stale_lock_filename_does_not_block_recovery(server):
+    from neurostack.cli.hook import _lock_path
+    lock = _lock_path("stale")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("dead process")
+    verdict = run_checkpoint(_payload(_messages(20), session="stale"), cfg=_cfg(
+        server, checkpoint_command=f"{sys.executable} -c \"print('[]')\""))
+    assert "skipped 0" in verdict.text
+
+
+def test_checkpoint_save_does_not_resurrect_settled_trigger(server):
+    state = load_state("trigger-race")
+    state.pending[7] = {"kind": "calling", "remaining": 1}
+    state.save()
+    checkpoint = load_state("trigger-race")
+    latest = load_state("trigger-race")
+    latest.pending.pop(7)
+    latest.save()
+    checkpoint.checkpoint_end = 4
+    checkpoint.save(checkpoint=True)
+    assert load_state("trigger-race").pending == {}
+
+
+def test_frozen_payload_survives_abandoned_runner(server):
+    state = load_state("frozen")
+    normalized = [m for m in (_messages(20))]
+    run_event("checkpoint", _payload(normalized, session="frozen"), cfg=_cfg(server))
+    state = load_state("frozen")
+    assert len(state.checkpoint_messages) == 40
+    state.offered_index = state.checkpoint_end
+    state.save(checkpoint=True)
+    server.replies["vault_remember"] = {"memory_id": 1}
+    command = f"{sys.executable} -c \"print('[]')\""
+    run_checkpoint({"session": "frozen"}, cfg=_cfg(server, checkpoint_command=command))
+    assert load_state("frozen").since_index == 40
+
+
+def test_checkpoint_state_with_transcript_is_owner_only(server):
+    run_event("checkpoint", _payload(_messages(20), session="private"), cfg=_cfg(server))
+    assert _state_path("private").stat().st_mode & 0o777 == 0o600
+
+
+def test_success_clears_reply_and_accepts_distinct_next_save(server):
+    server.replies["vault_remember"] = {"memory_id": 1}
+    run_event("checkpoint", _payload(_messages(20), session="next"), cfg=_cfg(server))
+    run_checkpoint_save('[{"content":"first fact"}]', "next", cfg=_cfg(server))
+    assert load_state("next").checkpoint_reply == ""
+    run_event("checkpoint", _payload(_messages(25), session="next"), cfg=_cfg(server))
+    run_checkpoint_save('[{"content":"second corrected fact"}]', "next", cfg=_cfg(server))
+    assert [call["content"] for call in _tool_calls(server, "vault_remember")] == [
+        "first fact", "second corrected fact"]

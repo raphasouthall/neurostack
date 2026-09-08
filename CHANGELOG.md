@@ -39,6 +39,10 @@
 
 ### Fixed
 
+- **#163 — checkpoint overlap and retry races.** A nonblocking OS lock now covers checkpoint state, model execution, and saves per conversation, while other conversations remain independent. omp uses its stable harness session ID across resumes. Checkpoint state merges with interactive hook state, settled cursors stay monotonic, and Python persists each frozen payload before model execution. The runner persists the extracted reply and exact acknowledged-item receipts, so partial retries skip confirmed saves without discarding corrected facts. LEARN count updates use a short file lock. A network failure after a remote commit but before its acknowledgement can still duplicate that item because `vault_remember` has no server idempotency key.
+
+  The generated omp adapter now sends each frozen message window to the locked CLI on stdin; Python persists that payload before invoking the model. Reinstall the adapter and restart omp after upgrading. Legacy `.window.json` handovers remain readable for migration, but NeuroStack leaves them in place because an old publisher cannot coordinate a safe pathname deletion.
+
 - **#153 — a checkpoint save no longer drops the reply the model wrote.** `neurostack hook checkpoint --save` now spends the `harvest_timeout_s` budget (600 s by default) on each `vault_remember` instead of the 5 s interactive `timeout_s`, because the server embeds every memory as it stores it. A non-empty reply that parses to zero items records `reply had no items: <first 120 chars>` in `learn-status.json` and puts the window back on offer, so prose can no longer pass for a clean checkpoint of nothing. A literal `[]` still counts as ok with 0 saved and settles the window, and an empty body keeps the window on offer without recording an error. Every `--save` writes its raw stdin to `~/.cache/neurostack/last-capture.txt`, so a capture bug is inspectable after the fact. The omp adapter waits for a JSON-shaped reply and skips up to 3 prose messages before it gives up with an empty save, which stops a model that thinks out loud first from losing its own summary.
 
 ### Schema

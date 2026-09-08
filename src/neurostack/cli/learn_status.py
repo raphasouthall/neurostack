@@ -18,9 +18,11 @@ at worst, never a checkpoint.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sys
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -42,6 +44,18 @@ def learn_status_path() -> Path:
     return cache_dir() / "learn-status.json"
 
 
+@contextmanager
+def _status_lock():
+    path = cache_dir() / "learn-status.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def load_learn_status() -> dict:
     """The health file, or an empty dict when it is absent or unreadable."""
     try:
@@ -58,33 +72,58 @@ def record_ok(session: str, harness: str, saved: int) -> dict:
     failed — that is what the `FAILING` state reads.
     """
     now = _now()
-    status = load_learn_status()
-    status.update({
-        "last_ok_at": _iso(now),
-        "last_error_at": None,
-        "last_error": None,
-        "saved_today": _saved_today(status, now) + max(saved, 0),
-        "session": session,
-        "harness": harness,
-    })
-    _write(status)
-    return status
+    with _status_lock():
+        status = load_learn_status()
+        status.update({
+            "last_ok_at": _iso(now),
+            "last_error_at": None,
+            "last_error": None,
+            "saved_today": _saved_today(status, now) + max(saved, 0),
+            "session": session,
+            "harness": harness,
+            "last_attempt_at": _iso(now),
+            "last_result": "saved",
+        })
+        _write(status)
+        return status
+
+
+def record_busy(session: str, harness: str) -> dict:
+    """Record overlap without turning a healthy checkpoint into a failure."""
+    now = _now()
+    with _status_lock():
+        status = load_learn_status()
+        status.update({
+            "last_attempt_at": _iso(now),
+            "last_result": "busy",
+            "saved_today": _saved_today(status, now),
+            "session": session,
+            "harness": harness,
+        })
+        status.setdefault("last_ok_at", None)
+        status.setdefault("last_error_at", None)
+        status.setdefault("last_error", None)
+        _write(status)
+        return status
 
 
 def record_error(session: str, harness: str, error: str) -> dict:
     """Record a checkpoint that failed. `last_ok_at` survives untouched."""
     now = _now()
-    status = load_learn_status()
-    status.update({
-        "last_error_at": _iso(now),
-        "last_error": _one_line(error),
-        "saved_today": _saved_today(status, now),
-        "session": session,
-        "harness": harness,
-    })
-    status.setdefault("last_ok_at", None)
-    _write(status)
-    return status
+    with _status_lock():
+        status = load_learn_status()
+        status.update({
+            "last_error_at": _iso(now),
+            "last_error": _one_line(error),
+            "saved_today": _saved_today(status, now),
+            "session": session,
+            "harness": harness,
+            "last_attempt_at": _iso(now),
+            "last_result": "failed",
+        })
+        status.setdefault("last_ok_at", None)
+        _write(status)
+        return status
 
 
 def learn_line(status: dict | None = None, now: datetime | None = None) -> str:
@@ -211,7 +250,7 @@ def _write(status: dict) -> None:
     path = learn_status_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
+        tmp = path.with_suffix(f".{os.getpid()}.json.tmp")
         tmp.write_text(json.dumps(status, indent=2), encoding="utf-8")
         tmp.replace(path)
     except OSError as exc:

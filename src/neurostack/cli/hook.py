@@ -21,22 +21,25 @@ unexpected exception prints one line to stderr and exits 0.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import re
 import sys
 import time
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..client import ClientConfig, McpClient, load_client_config
 from ..redact import redact_secrets
 from ..triggers import parse_trigger
-from .learn_status import cache_dir, learn_line, record_error, record_ok
+from .learn_status import cache_dir, learn_line, record_busy, record_error, record_ok
 
+_CURSOR_EVENT = "checkpoint-cursor"
 EVENTS = ("session-start", "prompt", "tool-call", "tool-result", "checkpoint",
-          "session-end")
+          _CURSOR_EVENT, "session-end")
 
 # After a calling/editing trigger fires, watch this many later tool calls: the
 # next call says nothing either way — re-issuing the blocked call unchanged is
@@ -61,6 +64,8 @@ BEHIND_WINDOW_S = 7 * 86400
 # An adapter hands the window over on disk, beside the session state.
 _WINDOW_SUFFIX = ".window.json"
 _HASHLINE_HEADER = re.compile(r"^\[([^\]#]+)#[0-9A-Fa-f]{4}\]", re.MULTILINE)
+_LOCK_SUFFIX = ".checkpoint.lock"
+_STATE_LOCK_SUFFIX = ".state.lock"
 _XD_PREFIX = "xd://"
 
 
@@ -90,23 +95,57 @@ class SessionState:
     since_index: int = 0
     offered_index: int = 0
     last_checkpoint_at: float = 0.0
+    checkpoint_start: int = 0
+    checkpoint_end: int = 0
+    checkpoint_window: str = ""
+    checkpoint_reply: str = ""
+    checkpoint_receipts: set[str] = field(default_factory=set)
+    content_receipts: list[str] = field(default_factory=list)
+    checkpoint_messages: list[dict] = field(default_factory=list)
 
-    def save(self) -> None:
-        data = {
-            "fired": sorted(self.fired),
-            "checked": sorted(self.checked),
-            "pending": {str(k): v for k, v in self.pending.items()},
-            "prompts": sorted(self.prompts),
-            "calls": self.calls,
-            "since_index": self.since_index,
-            "offered_index": self.offered_index,
-            "last_checkpoint_at": self.last_checkpoint_at,
-        }
+    def save(self, *, checkpoint: bool = False, locked: bool = False) -> None:
+        """Merge one state domain under a short lock before replacing the file."""
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(data), encoding="utf-8")
-            tmp.replace(self.path)
+            manager = nullcontext(True) if locked else _file_lock(
+                _lock_path(self.session, "state"))
+            with manager:
+                current = load_state(self.session)
+                if checkpoint:
+                    self.fired = current.fired
+                    self.checked = current.checked
+                    self.prompts = current.prompts
+                    self.pending = current.pending
+                    self.calls = current.calls
+                else:
+                    self.since_index = current.since_index
+                    self.offered_index = current.offered_index
+                    self.last_checkpoint_at = current.last_checkpoint_at
+                    self.checkpoint_start = current.checkpoint_start
+                    self.checkpoint_end = current.checkpoint_end
+                    self.checkpoint_window = current.checkpoint_window
+                    self.checkpoint_reply = current.checkpoint_reply
+                    self.checkpoint_receipts = current.checkpoint_receipts
+                    self.content_receipts = current.content_receipts
+                    self.checkpoint_messages = current.checkpoint_messages
+                data = {
+                    "fired": sorted(self.fired), "checked": sorted(self.checked),
+                    "pending": {str(k): v for k, v in self.pending.items()},
+                    "prompts": sorted(self.prompts), "calls": self.calls,
+                    "since_index": self.since_index, "offered_index": self.offered_index,
+                    "last_checkpoint_at": self.last_checkpoint_at,
+                    "checkpoint_start": self.checkpoint_start,
+                    "checkpoint_end": self.checkpoint_end,
+                    "checkpoint_window": self.checkpoint_window,
+                    "checkpoint_reply": self.checkpoint_reply,
+                    "checkpoint_receipts": sorted(self.checkpoint_receipts),
+                    "content_receipts": self.content_receipts[-256:],
+                    "checkpoint_messages": self.checkpoint_messages,
+                }
+                tmp = self.path.with_suffix(f".{os.getpid()}.json.tmp")
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(data))
+                tmp.replace(self.path)
         except OSError as exc:
             print(f"neurostack hook: state not saved: {exc}", file=sys.stderr)
 
@@ -129,6 +168,46 @@ def _state_path(session: str) -> Path:
 def _window_path(session: str) -> Path:
     """Where an adapter leaves the window for a detached `--run` (issue #155)."""
     return sessions_dir() / f"{_slug(session)}{_WINDOW_SUFFIX}"
+
+
+def _lock_path(session: str, kind: str = "checkpoint") -> Path:
+    suffix = _LOCK_SUFFIX if kind == "checkpoint" else _STATE_LOCK_SUFFIX
+    return sessions_dir() / f"{_slug(session)}{suffix}"
+
+
+@contextmanager
+def _file_lock(path: Path, *, blocking: bool = True):
+    """Hold an OS lock; stale lock filenames are harmless after process exit."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+")
+    try:
+        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
+        try:
+            fcntl.flock(handle.fileno(), flags)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def _window_id(start: int, messages: list) -> str:
+    normalized = []
+    for raw in messages:
+        normalized_keys = ("role", "text", "tools", "outputs")
+        if isinstance(raw, dict) and all(key in raw for key in normalized_keys):
+            normalized.append(raw)
+        else:
+            message = _norm_message(raw)
+            if message is not None:
+                normalized.append(message)
+    body = json.dumps({"since_index": start, "messages": normalized}, sort_keys=True,
+                      separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def _state_files() -> list[Path]:
@@ -155,12 +234,6 @@ def _read_window(session: str) -> dict | None:
     return None
 
 
-def _clear_window(session: str) -> None:
-    """Drop the window file once its messages are saved."""
-    try:
-        _window_path(session).unlink(missing_ok=True)
-    except OSError as exc:
-        print(f"neurostack hook checkpoint: window not cleared: {exc}", file=sys.stderr)
 
 
 def load_state(session: str, fresh: bool = False) -> SessionState:
@@ -185,10 +258,23 @@ def load_state(session: str, fresh: bool = False) -> SessionState:
                 state.pending[int(key)] = value
     if isinstance(raw.get("calls"), int):
         state.calls = raw["calls"]
-    for name in ("since_index", "offered_index"):
+    for name in ("since_index", "offered_index", "checkpoint_start", "checkpoint_end"):
         value = raw.get(name)
         if isinstance(value, int) and value >= 0:
             setattr(state, name, value)
+    for name in ("checkpoint_window", "checkpoint_reply"):
+        value = raw.get(name)
+        if isinstance(value, str):
+            setattr(state, name, value)
+    state.checkpoint_receipts = {
+        str(value) for value in raw.get("checkpoint_receipts", []) if isinstance(value, str)
+    }
+    state.content_receipts = [
+        str(value) for value in raw.get("content_receipts", []) if isinstance(value, str)
+    ][-256:]
+    messages = raw.get("checkpoint_messages")
+    if isinstance(messages, list):
+        state.checkpoint_messages = [value for value in messages if isinstance(value, dict)]
     if isinstance(raw.get("last_checkpoint_at"), (int, float)):
         state.last_checkpoint_at = float(raw["last_checkpoint_at"])
     return state
@@ -219,6 +305,7 @@ def _tool_input(payload: dict):
 
 def _xd_device(value: str) -> str | None:
     """Bare tool name behind an xd:// device path, or None.
+
 
     `xd://mcp__neurostack_vault_write_file` -> `vault_write_file`: omp turns an
     MCP tool call into a `write` to a device path, and the trigger tag records
@@ -695,9 +782,18 @@ def _checkpoint_window(payload: dict, state: SessionState) -> tuple[int, list[di
         start = given.get("since_index")
         if not (isinstance(start, int) and start >= 0):
             start = state.since_index
-        messages = [m for m in (_norm_message(r) for r in given["messages"])
-                    if m is not None]
-        return start, messages
+        normalized = []
+        for raw in given["messages"]:
+            if isinstance(raw, dict) and all(
+                    key in raw for key in ("role", "text", "tools", "outputs")):
+                normalized.append(raw)
+            else:
+                message = _norm_message(raw)
+                if message is not None:
+                    normalized.append(message)
+        skip = min(max(state.since_index - start, 0), len(normalized))
+        start += skip
+        return start, normalized[skip:]
     source = _first_str(payload, "format", "source_agent") or "claude-code"
     messages = _transcript_messages(payload, state.session, source)
     start = min(state.since_index, len(messages))
@@ -771,8 +867,6 @@ def _checkpoint_body(window: list[dict]) -> str:
 def _event_checkpoint(client: McpClient, payload: dict, state: SessionState,
                       cfg: ClientConfig) -> Verdict:
     """Print the prompt the harness model answers. Never calls an LLM."""
-    # Claude Code sets this once its Stop hook has already blocked; asking
-    # again would hold the session open in a loop.
     if payload.get("stop_hook_active") is True:
         return Verdict()
     start, window = _checkpoint_window(payload, state)
@@ -780,6 +874,14 @@ def _event_checkpoint(client: McpClient, payload: dict, state: SessionState,
     if end <= state.offered_index or _checkpoint_skip(window):
         return Verdict()
     state.offered_index = end
+    state.checkpoint_start = start
+    state.checkpoint_end = end
+    window_id = _window_id(start, window)
+    if state.checkpoint_window != window_id:
+        state.checkpoint_receipts.clear()
+    state.checkpoint_messages = window
+    state.checkpoint_window = window_id
+    state.checkpoint_reply = ""
     return Verdict(_CHECKPOINT_PROMPT.format(
         count=len(window), session=state.session, body=_checkpoint_body(window),
     ))
@@ -894,97 +996,146 @@ def _remember_args(item: dict, harness: str, workspace: str | None) -> dict:
 
 def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
                         cfg: ClientConfig | None = None,
-                        client: McpClient | None = None) -> Verdict:
-    """Save the model's checkpoint reply, then advance the saved index."""
+                        client: McpClient | None = None,
+                        _locked: bool = False) -> Verdict:
+    """Save one frozen reply, recording each acknowledged item before retry."""
+    if not _locked:
+        with _file_lock(_lock_path(session), blocking=False) as acquired:
+            if not acquired:
+                record_busy(session, harness)
+                return Verdict("neurostack: checkpoint already running")
+            return run_checkpoint_save(reply, session, harness, cfg, client, _locked=True)
     cfg = cfg or load_client_config()
     client = client or McpClient(cfg)
     state = load_state(session)
-    _write_last_capture(reply)
-    items = _parse_items(reply)
+    captured_reply = reply
+    supplied_items = _parse_items(reply)
+    supplied_lost = _lost_reply(reply, supplied_items)
+    if state.checkpoint_reply:
+        reply = state.checkpoint_reply
+        items = _parse_items(reply)
+    else:
+        items = supplied_items
+        if reply.strip() and supplied_lost is None:
+            state.checkpoint_reply = reply
+            state.save(checkpoint=True)
+    _write_last_capture(captured_reply)
     lost = _lost_reply(reply, items)
-    # An empty body is the harness giving up on capturing an answer, not the
-    # model declining: nothing failed, but the window has not been summarized.
     answered = bool(reply.strip())
     workspace = cfg.workspace_for(os.getcwd())
     saved = 0
+    duplicates = 0
     try:
-        for item in items:
-            # One write per memory against a server that embeds each one, so
-            # this gets the harvest budget: the interactive timeout exists to
-            # keep tool calls responsive, and spending it here loses the
-            # memories the model already wrote (issue #153).
-            if client.call_json("vault_remember",
-                                _remember_args(item, harness, workspace),
+        for index, item in enumerate(items):
+            args = _remember_args(item, harness, workspace)
+            content_receipt = hashlib.sha256(args["content"].encode("utf-8")).hexdigest()
+            item_receipt = f"{state.checkpoint_window}:{index}:{content_receipt}"
+            if item_receipt in state.checkpoint_receipts or \
+                    content_receipt in state.content_receipts:
+                duplicates += 1
+                continue
+            if client.call_json("vault_remember", args,
                                 timeout_s=cfg.harvest_timeout_s) is not None:
                 saved += 1
-        if answered and lost is None and saved == len(items):
-            # The index moves on whatever the model chose to keep: it was asked
-            # about this window, and asking twice is what the dedup prevents.
-            state.since_index = max(state.since_index, state.offered_index)
+                state.checkpoint_receipts.add(item_receipt)
+                state.content_receipts.append(content_receipt)
+                state.content_receipts = state.content_receipts[-256:]
+                state.save(checkpoint=True)
+        settled = answered and lost is None and saved + duplicates == len(items)
+        if settled:
+            state.since_index = max(state.since_index, state.checkpoint_end)
+            state.offered_index = max(state.offered_index, state.since_index)
             state.last_checkpoint_at = time.time()
-            # These messages are in the vault now, so the file an adapter left
-            # for this save has nothing left to offer (issue #155).
-            _clear_window(session)
-        else:
-            # An unreachable server, a dropped reply, or a harness that never
-            # got the answer must cost a repeat prompt, not the memories: put
-            # the window back on offer.
+            state.checkpoint_start = state.checkpoint_end = 0
+            state.checkpoint_window = ""
+            state.checkpoint_reply = ""
+            state.checkpoint_messages = []
+            state.checkpoint_receipts.clear()
+        elif state.offered_index == state.checkpoint_end:
             state.offered_index = state.since_index
-        state.save()
+        state.save(checkpoint=True)
     finally:
         client.close()
     if client.errors:
         print(f"neurostack hook checkpoint: {client.errors[0]}", file=sys.stderr)
-    # Every attempt ends in the health file, so a login that expired weeks ago
-    # shows up in the next session brief instead of a journal (issue #151).
     if lost is not None:
         record_error(session, harness, lost)
         return Verdict(f"neurostack: checkpoint {lost}")
-    if saved == len(items):
+    if saved:
         record_ok(session, harness, saved)
-    else:
+    if saved + duplicates != len(items):
         record_error(session, harness, client.errors[0] if client.errors
-                     else f"saved {saved} of {len(items)} memories")
-    return Verdict(f"neurostack: saved {saved} of {len(items)} checkpoint memories")
+                     else f"saved {saved} of {len(items) - duplicates} remaining memories")
+    elif not saved:
+        record_ok(session, harness, 0)
+    return Verdict(f"neurostack: saved {saved} of {len(items) - duplicates} checkpoint memories; "
+                   f"skipped {duplicates} acknowledged duplicates; "
+                   f"settled through {state.since_index}")
 
 
 def run_checkpoint(payload: dict, harness: str = "cli",
                    cfg: ClientConfig | None = None) -> Verdict:
-    """`--run`: prompt, pipe it through `checkpoint_command`, save the reply.
-
-    The command is a shell line so a model flag or wrapper script fits.
-    Anything but a clean exit puts the window back on offer, same as a failed
-    save. Nobody is watching a `--run`: an adapter spawns it detached and a
-    timer runs it from cron, so every failure goes to stderr and to the LEARN
-    status, never to stdout where a harness would inject it (issue #155).
-    """
+    """Run one checkpoint while holding its conversation's OS lock."""
     import subprocess
 
     cfg = cfg or load_client_config()
     payload = _with_session(payload)
     session = _session_id(payload)
-    if not cfg.checkpoint_command:
-        return _run_failed(session, harness, "no checkpoint_command in client.toml")
-    prompt = run_event("checkpoint", payload, cfg)
-    if not prompt.text:
-        return Verdict()
     try:
-        # Run from $HOME: inside a project the command would inherit that
-        # project's agent instructions and answer like an agent, not a parser.
-        proc = subprocess.run(
-            cfg.checkpoint_command, shell=True, input=prompt.text,
-            capture_output=True, text=True, timeout=cfg.checkpoint_timeout_s,
-            cwd=Path.home(),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        _reoffer(session)
-        return _run_failed(session, harness, f"{type(exc).__name__}: {exc}")
-    if proc.returncode != 0:
-        _reoffer(session)
-        tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
-        return _run_failed(session, harness,
-                           f"command exited {proc.returncode}: {tail[0]}")
-    return run_checkpoint_save(proc.stdout, session, harness, cfg)
+        lock = _file_lock(_lock_path(session), blocking=False)
+        with lock as acquired:
+            if not acquired:
+                record_busy(session, harness)
+                return Verdict("neurostack: checkpoint already running")
+            if not cfg.checkpoint_command:
+                return _run_failed(session, harness, "no checkpoint_command in client.toml")
+            state = load_state(session)
+            if state.checkpoint_end > state.since_index and not state.checkpoint_reply:
+                if state.checkpoint_messages:
+                    payload = {**payload, "since_index": state.checkpoint_start,
+                               "messages": state.checkpoint_messages}
+                state.offered_index = state.since_index
+                state.checkpoint_start = state.checkpoint_end = 0
+                state.checkpoint_window = ""
+                state.checkpoint_messages = []
+                state.checkpoint_receipts.clear()
+                state.save(checkpoint=True)
+            if state.checkpoint_reply:
+                return run_checkpoint_save(state.checkpoint_reply, session, harness, cfg,
+                                           _locked=True)
+            client = McpClient(cfg)
+            state = load_state(session)
+            try:
+                prompt = _event_checkpoint(client, payload, state, cfg)
+            finally:
+                state.save(checkpoint=True)
+                client.close()
+            if not prompt.text:
+                return Verdict()
+            try:
+                proc = subprocess.run(
+                    cfg.checkpoint_command, shell=True, input=prompt.text,
+                    capture_output=True, text=True, timeout=cfg.checkpoint_timeout_s,
+                    cwd=Path.home(),
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                _reoffer(session)
+                return _run_failed(session, harness, f"{type(exc).__name__}: {exc}")
+            if proc.returncode != 0:
+                _reoffer(session)
+                tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+                return _run_failed(session, harness,
+                                   f"command exited {proc.returncode}: {tail[0]}")
+            items = _parse_items(proc.stdout)
+            if _lost_reply(proc.stdout, items) is not None:
+                _reoffer(session)
+                return run_checkpoint_save(proc.stdout, session, harness, cfg, _locked=True)
+            state = load_state(session)
+            state.checkpoint_reply = proc.stdout
+            state.save(checkpoint=True)
+            return run_checkpoint_save(proc.stdout, session, harness, cfg, _locked=True)
+    except OSError as exc:
+        return _run_failed(session, harness, f"lock unavailable: {exc}")
 
 
 def _run_failed(session: str, harness: str, message: str) -> Verdict:
@@ -1009,8 +1160,9 @@ def _with_session(payload: dict) -> dict:
 
 def _reoffer(session: str) -> None:
     state = load_state(session)
-    state.offered_index = state.since_index
-    state.save()
+    if state.offered_index == state.checkpoint_end:
+        state.offered_index = state.since_index
+    state.save(checkpoint=True)
 
 
 def _latest_session() -> str | None:
@@ -1057,19 +1209,42 @@ _HANDLERS = {
     "session-end": _event_session_end,
 }
 
-
 def run_event(event: str, payload: dict, cfg: ClientConfig | None = None,
-              client: McpClient | None = None) -> Verdict:
+              client: McpClient | None = None, _checkpoint_locked: bool = False) -> Verdict:
     """Run one hook event. Used by the CLI and by the tests."""
+    session = _session_id(payload)
+    if event == _CURSOR_EVENT:
+        return Verdict(json.dumps({"since_index": load_state(session).since_index}))
+    if event == "checkpoint" and not _checkpoint_locked:
+        try:
+            with _file_lock(_lock_path(session), blocking=False) as acquired:
+                if not acquired:
+                    record_busy(session, "hook")
+                    return Verdict("neurostack: checkpoint already running")
+                return run_event(event, payload, cfg, client, _checkpoint_locked=True)
+        except OSError as exc:
+            print(f"neurostack hook checkpoint: lock unavailable: {exc}", file=sys.stderr)
+            return Verdict()
     cfg = cfg or load_client_config()
     client = client or McpClient(cfg)
-    session = _session_id(payload)
     state = load_state(session, fresh=(event == "session-start"))
+    if event == "session-start":
+        checkpoint = load_state(session)
+        state.since_index = checkpoint.since_index
+        state.offered_index = checkpoint.offered_index
+        state.last_checkpoint_at = checkpoint.last_checkpoint_at
+        state.checkpoint_start = checkpoint.checkpoint_start
+        state.checkpoint_end = checkpoint.checkpoint_end
+        state.checkpoint_window = checkpoint.checkpoint_window
+        state.checkpoint_reply = checkpoint.checkpoint_reply
+        state.checkpoint_receipts = checkpoint.checkpoint_receipts
+        state.content_receipts = checkpoint.content_receipts
+        state.checkpoint_messages = checkpoint.checkpoint_messages
     try:
         verdict = _HANDLERS[event](client, payload, state, cfg)
     finally:
         if event != "session-end":
-            state.save()
+            state.save(checkpoint=(event == "checkpoint"))
         client.close()
     if client.errors:
         print(f"neurostack hook {event}: {client.errors[0]}", file=sys.stderr)
