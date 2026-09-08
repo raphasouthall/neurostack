@@ -497,3 +497,14 @@ def test_run_executes_the_command_from_home_not_the_project(server):
     run_checkpoint(_payload(_messages(20)), "cli",
                    cfg=_cfg(server, checkpoint_command=command))
     assert seen.read_text().strip() == str(Path.home())
+
+
+def test_assistant_text_goes_in_whole(server):
+    """Decisions and corrections live in the assistant's prose too."""
+    long_answer = "decision " * 300  # 2700 chars, past the tool-output clip
+    messages = _messages(10) + [
+        {"role": "user", "content": "what did we decide about the schema?"},
+        {"role": "assistant", "content": long_answer},
+    ]
+    verdict = run_event("checkpoint", _payload(messages), cfg=_cfg(server))
+    assert long_answer.strip() in verdict.text
