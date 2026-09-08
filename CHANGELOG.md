@@ -30,6 +30,10 @@
 
 - **#90 — archive-on-forget.** Every memory delete path (`vault_forget`/`memories forget`, merge source, TTL expiry, prune) now moves the row to a `memories_archive` table instead of destroying it. Archived rows are outside search/FTS/drift by construction but stay greppable and restorable. New CLI: `neurostack memories archived [-w] [--limit N]` and `neurostack memories restore ID` (restored rows re-embed via `backfill memories`). `memories stats` gains `archived`; MCP `vault_forget` result carries `archived: true`.
 
+### Fixed
+
+- **#153 — a checkpoint save no longer drops the reply the model wrote.** `neurostack hook checkpoint --save` now spends the `harvest_timeout_s` budget (600 s by default) on each `vault_remember` instead of the 5 s interactive `timeout_s`, because the server embeds every memory as it stores it. A non-empty reply that parses to zero items records `reply had no items: <first 120 chars>` in `learn-status.json` and puts the window back on offer, so prose can no longer pass for a clean checkpoint of nothing. A literal `[]` still counts as ok with 0 saved and settles the window, and an empty body keeps the window on offer without recording an error. Every `--save` writes its raw stdin to `~/.cache/neurostack/last-capture.txt`, so a capture bug is inspectable after the fact. The omp adapter waits for a JSON-shaped reply and skips up to 3 prose messages before it gives up with an empty save, which stops a model that thinks out loud first from losing its own summary.
+
 ### Schema
 
 - v21 → v22: `memories_archive` table (#90).

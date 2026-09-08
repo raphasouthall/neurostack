@@ -10,6 +10,7 @@ does with the JSON that comes back. Both run against the fake MCP endpoint in
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,7 +25,14 @@ from neurostack.adapters import (
     install_claude_adapter,
     install_omp_adapter,
 )
-from neurostack.cli.hook import _state_path, run_checkpoint, run_checkpoint_save, run_event
+from neurostack.cli.hook import (
+    _state_path,
+    last_capture_path,
+    run_checkpoint,
+    run_checkpoint_save,
+    run_event,
+)
+from neurostack.cli.learn_status import load_learn_status, record_ok
 from neurostack.client import ClientConfig
 
 LONG_OUTPUT = "x" * 2000
@@ -387,7 +395,11 @@ console.log(log.join("\\n"));
 _FAKE_BIN = """\
 #!/bin/sh
 printf '%s\\n' "$*" >>"$NEUROSTACK_TEST_LOG"
-cat >/dev/null
+if [ -n "$NEUROSTACK_TEST_SAVES" ] && [ "$3" = "--save" ]; then
+  { printf '<<<'; cat; printf '>>>\\n'; } >>"$NEUROSTACK_TEST_SAVES"
+else
+  cat >/dev/null
+fi
 case "$2 $3" in
   "checkpoint --save") ;;
   checkpoint*) echo "a checkpoint prompt" ;;
@@ -508,3 +520,161 @@ def test_assistant_text_goes_in_whole(server):
     ]
     verdict = run_event("checkpoint", _payload(messages), cfg=_cfg(server))
     assert long_answer.strip() in verdict.text
+
+
+# ---------------------------------------------------------------------------
+# Issue #153 — a save never loses the reply the model already wrote
+# ---------------------------------------------------------------------------
+
+def test_a_slow_server_still_saves_on_the_harvest_budget(server):
+    """Every memory is embedded server-side, which outlasts the tool timeout."""
+    server.delay_s = 0.6
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 9}
+    cfg = ClientConfig(url=server.url, timeout_s=0.2, harvest_timeout_s=60.0)
+    verdict = run_checkpoint_save(REPLY, "ck", "omp", cfg=cfg)
+    assert "saved 2 of 2" in verdict.text
+    assert len(_tool_calls(server, "vault_remember")) == 2
+
+
+def test_the_interactive_budget_would_have_lost_the_same_save(server):
+    """What the harvest budget buys: the 5 s tool timeout drops both memories."""
+    server.delay_s = 0.6
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 9}
+    cfg = ClientConfig(url=server.url, timeout_s=0.2, harvest_timeout_s=0.2)
+    verdict = run_checkpoint_save(REPLY, "ck", "omp", cfg=cfg)
+    assert "saved 0 of 2" in verdict.text
+
+
+def test_prose_records_an_error_and_re_offers_the_window(server):
+    messages = _messages(20)
+    run_event("checkpoint", _payload(messages), cfg=_cfg(server))
+    verdict = run_checkpoint_save("Nothing new here.", "ck", "omp", cfg=_cfg(server))
+    assert server.calls == []
+    assert "no items" in verdict.text
+    state = _state("ck")
+    assert state["since_index"] == 0
+    assert state["offered_index"] == 0
+    assert "no items" in load_learn_status()["last_error"]
+    # The window comes back rather than dying with the dropped reply.
+    assert run_event("checkpoint", _payload(messages), cfg=_cfg(server)).text != ""
+
+
+def test_a_literal_empty_array_settles_the_window_as_ok(server):
+    """`[]` is the model saying nothing here is worth keeping."""
+    record_ok("ck", "omp", 3)
+    run_event("checkpoint", _payload(_messages(20)), cfg=_cfg(server))
+    verdict = run_checkpoint_save("[]", "ck", "omp", cfg=_cfg(server))
+    assert "saved 0 of 0" in verdict.text
+    assert _state("ck")["since_index"] == 40
+    status = load_learn_status()
+    assert status["last_error"] is None
+    assert status["saved_today"] == 3
+
+
+def test_an_empty_body_keeps_the_window_without_an_error(server):
+    """The adapter sends an empty body when the answer never came."""
+    messages = _messages(20)
+    run_event("checkpoint", _payload(messages), cfg=_cfg(server))
+    verdict = run_checkpoint_save("", "ck", "omp", cfg=_cfg(server))
+    assert "saved 0 of 0" in verdict.text
+    state = _state("ck")
+    assert state["since_index"] == 0
+    assert state["offered_index"] == 0
+    assert load_learn_status()["last_error"] is None
+    assert run_event("checkpoint", _payload(messages), cfg=_cfg(server)).text != ""
+
+
+def test_every_save_writes_the_reply_to_the_capture_file(server):
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 10}
+    for reply in (REPLY, "Nothing new here.", ""):
+        run_checkpoint_save(reply, "ck", "omp", cfg=_cfg(server))
+        assert last_capture_path().read_text(encoding="utf-8") == reply
+
+
+def test_the_capture_file_holds_the_bytes_the_cli_read(server, isolated_home):
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 11}
+    _run_cli(["checkpoint", "--session", "cap-1"],
+             json.dumps({"messages": _messages(20), "since_index": 0}),
+             server.url, isolated_home)
+    saved = _run_cli(["checkpoint", "--save"], REPLY, server.url, isolated_home)
+    assert saved.returncode == 0
+    assert last_capture_path().read_bytes() == REPLY.encode()
+
+
+_REPLY_DRIVER = """\
+import extension from "{adapter}";
+
+const injected: string[] = [];
+const handlers: Record<string, (e: unknown, c: unknown) => unknown> = {{}};
+
+extension({{
+  on: (e, h) => {{ handlers[e] = h; }},
+  sendMessage: () => {{}},
+  sendUserMessage: (_t: string, o?: object) => {{ injected.push(JSON.stringify(o ?? null)); }},
+  registerCommand: () => {{}},
+}} as never);
+
+const ctx = {{ setInterval: () => {{}} }};
+await handlers.session_start?.({{}}, ctx);
+const settle = () => new Promise((r) => setTimeout(r, 400));
+const messages = Array.from({{ length: 40 }}, (_v, i) => ({{
+  role: i % 2 === 0 ? "user" : "assistant",
+  content: `message ${{i}}`,
+}}));
+await handlers.context?.({{ messages }}, ctx);
+await settle();
+
+for (const content of {replies} as string[]) {{
+  handlers.message_end?.({{ message: {{ role: "assistant", content }} }}, ctx);
+  await settle();
+}}
+console.log(`options=${{injected[0]}}`);
+"""
+
+
+def _drive_replies(isolated_home, tmp_path, replies):
+    """Drive the generated extension through a run of assistant replies."""
+    calls = tmp_path / "calls.txt"
+    saves = tmp_path / "saves.txt"
+    saves.write_text("")
+    fake_bin = tmp_path / "neurostack"
+    fake_bin.write_text(_FAKE_BIN)
+    fake_bin.chmod(0o755)
+    adapter = _install_omp(isolated_home, binary=str(fake_bin))
+    driver = tmp_path / "driver.ts"
+    driver.write_text(_REPLY_DRIVER.format(adapter=adapter, replies=json.dumps(replies)))
+    result = subprocess.run(
+        [BUN, "run", str(driver)], capture_output=True, text=True, timeout=120,
+        env={**os.environ, "NEUROSTACK_TEST_LOG": str(calls),
+             "NEUROSTACK_TEST_SAVES": str(saves)},
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout, re.findall(r"<<<(.*?)>>>", saves.read_text(), re.DOTALL)
+
+
+@pytest.mark.skipif(BUN is None, reason="bun not installed")
+def test_the_adapter_waits_past_prose_for_the_json_reply(isolated_home, tmp_path):
+    stdout, bodies = _drive_replies(
+        isolated_home, tmp_path,
+        ["I read the window. One thought before the list.", '[{"content": "x"}]'],
+    )
+    assert bodies == ['[{"content": "x"}]']
+    # The prompt goes in through the prompt flow, which takes no display flag.
+    assert '"deliverAs":"followUp"' in stdout
+
+
+@pytest.mark.skipif(BUN is None, reason="bun not installed")
+def test_three_prose_replies_give_up_with_an_empty_save(isolated_home, tmp_path):
+    _stdout, bodies = _drive_replies(
+        isolated_home, tmp_path,
+        ["first thought", "second thought", "third thought"],
+    )
+    assert bodies == [""]
+
+
+def test_the_adapter_documents_why_the_prompt_stays_visible(isolated_home):
+    """Acceptance 6: `display: false` is unavailable, so the reason is in view."""
+    source = _install_omp(isolated_home).read_text()
+    assert "MAX_REPLY_TRIES = 3" in source
+    assert "display: false" in source
+    assert "sendUserMessage(content" in source
