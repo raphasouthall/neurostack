@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..config import _LEGACY_LLM_KEYS, CONFIG_PATH, get_config
+from .learn_status import learn_report
 from .utils import _get_vault_template_dir
 
 
@@ -1926,6 +1927,7 @@ def cmd_status(args):
             ).fetchone()["c"]
             conn.close()
             output["mode"] = "full" if output["embedded"] > 0 else "lite"
+        output["learn"] = learn_report()
         print(json.dumps(output, indent=2, default=str))
         return
 
@@ -1952,3 +1954,21 @@ def cmd_status(args):
         print(f"  Chunks:   {chunks} ({embedded} embedded)")
     else:
         print("  Status:   Not initialized. Run: neurostack init")
+
+    _print_learn(learn_report())
+
+
+def _print_learn(report: dict) -> None:
+    """The LEARN block: is the idle checkpoint alive, and is it keeping up?"""
+    print()
+    print(f"  {report['line']}")
+    if report["by_source"]:
+        print("  Memories (7d):")
+        for source, count in sorted(report["by_source"].items(),
+                                    key=lambda kv: (-kv[1], kv[0])):
+            print(f"    {source:<22}{count}")
+    elif report["error"]:
+        print(f"  Memories (7d):  unavailable — {report['error']}")
+    else:
+        print("  Memories (7d):  none")
+    print(f"  Sessions behind: {report['sessions_behind']}")
