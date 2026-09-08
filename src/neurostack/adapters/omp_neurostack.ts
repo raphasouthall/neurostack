@@ -3,15 +3,12 @@
 // blocks the call and stdout is the reason, stdout otherwise gets injected. Every
 // retrieval and suppression decision belongs to the CLI, never to this file.
 //
-// The checkpoint (#143) needs the session's own model. omp's extension API has no
-// completion call, so the prompt goes in as a user message and the first JSON-shaped
-// assistant message after it is piped to `checkpoint --save` (#153).
-//
-// Neither message can be hidden from the transcript: `pi.sendUserMessage(content,
-// { deliverAs })` takes no display flag (extensions.md, "Message delivery
-// semantics"), `display: false` belongs to `pi.sendMessage` custom payloads which
-// the model never reads, and the reply is the model's own entry either way. The
-// prompt is tagged so it reads as machinery, and it asks for JSON only.
+// The checkpoint (#155) says nothing to the session model. omp can hide neither a
+// user message nor the reply to it, so instead of asking, the adapter writes the
+// window to `<session>.window.json` and spawns `hook checkpoint --run` detached:
+// the CLI summarizes through `checkpoint_command` and saves, with nothing in the
+// transcript. `/save` is the same call plus one line, because a command the user
+// typed has to answer.
 type Block = { type?: string; text?: string };
 type Content = string | Block[] | undefined;
 type Msg = { role?: string; content?: Content };
@@ -19,11 +16,10 @@ type Ctx = {
   sessionManager?: { getSessionId?: () => string };
   setInterval?: (fn: () => void, ms: number) => unknown;
 };
-type Ev = Msg & { toolName?: string; input?: unknown; isError?: boolean; messages?: Msg[]; message?: Msg };
+type Ev = Msg & { toolName?: string; input?: unknown; isError?: boolean; messages?: Msg[] };
 type Pi = {
   on: (e: string, h: (ev: Ev, ctx: Ctx) => unknown) => void;
   sendMessage: (m: object) => void;
-  sendUserMessage: (text: string, o?: object) => void;
   registerCommand: (name: string, c: { description: string; handler: () => unknown }) => void;
 };
 
@@ -34,11 +30,10 @@ const EVERY_MESSAGES = 40;
 const QUIET_MS = 30 * 60_000;
 const MIN_MESSAGES = 5;
 const TICK_MS = 60_000;
-// Prose is the model answering the user, not the checkpoint, so it is skipped
-// instead of piped to `--save` as a reply that parses to nothing. Three of those
-// and the window goes back on offer (#153).
-const MAX_REPLY_TRIES = 3;
-const JSON_SHAPE = /^[[{]|```(?:json)?\s*[[{]|\[\s*\{/;
+// The session id is built above out of safe characters, so it is also the
+// filename the CLI derives from it.
+const CACHE = process.env.XDG_CACHE_HOME || `${process.env.HOME}/.cache`;
+const WINDOW = `${CACHE}/neurostack/sessions/${SESSION}.window.json`;
 
 function spawn(args: string[], stdin: string) {
   const proc = Bun.spawn([BIN, "hook", ...args], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
@@ -63,35 +58,38 @@ export default function neurostack(pi: Pi): void {
   let seen: Msg[] = [];
   let baseline = 0;
   let lastMessageAt = Date.now();
-  let awaiting = false;
-  let tries = 0;
 
-  function save(reply: string) {
-    // An empty body tells the CLI the answer never arrived, so it re-offers
-    // the window rather than counting it as summarized.
-    spawn(["checkpoint", "--save", "--harness", "omp", "--session", SESSION], reply).unref();
-  }
-
-  async function checkpoint() {
-    if (awaiting || seen.length <= baseline) return;
-    const { text } = await hook("checkpoint", { since_index: baseline, messages: seen.slice(baseline) });
-    if (!text) return;
+  // Returns how many messages were pending, so `/save` can say why it did
+  // nothing. The checkpoint itself outlives this call and this process.
+  async function checkpoint(): Promise<number> {
+    const pending = seen.length - baseline;
+    if (pending < MIN_MESSAGES) return pending;
+    await Bun.write(WINDOW, JSON.stringify({ since_index: baseline, messages: seen.slice(baseline) }));
     baseline = seen.length;
-    awaiting = true;
-    tries = 0;
-    pi.sendUserMessage(`<neurostack-checkpoint>\n${text}\n</neurostack-checkpoint>`, { deliverAs: "followUp" });
+    Bun.spawn([BIN, "hook", "checkpoint", "--run", "--harness", "omp", "--session", SESSION],
+      { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+    return pending;
   }
 
   pi.on("session_start", async (_e, ctx) => {
     const { text } = await hook("session-start", {});
     if (text) pi.sendMessage({ customType: "neurostack-brief", content: text, display: true });
     ctx?.setInterval?.(() => {
-      if (Date.now() - lastMessageAt >= QUIET_MS && seen.length - baseline >= MIN_MESSAGES) void checkpoint();
+      if (Date.now() - lastMessageAt >= QUIET_MS) void checkpoint();
     }, TICK_MS);
   });
   pi.registerCommand("save", {
     description: "Checkpoint this session into NeuroStack memory",
-    handler: () => checkpoint(),
+    handler: async () => {
+      const pending = await checkpoint();
+      pi.sendMessage({
+        customType: "neurostack-save",
+        content: pending < MIN_MESSAGES
+          ? `NeuroStack: nothing to save yet (${pending} messages)`
+          : "NeuroStack: checkpoint started in the background",
+        display: true,
+      });
+    },
   });
   pi.on("tool_call", async (e) => {
     const { text, code } = await hook("tool-call", { tool: e.toolName, input: e.input });
@@ -116,23 +114,6 @@ export default function neurostack(pi: Pi): void {
     const next = messages.slice();
     next[i] = { ...messages[i], content: append(messages[i].content, `\n\n${text}`) };
     return { messages: next };
-  });
-  // The model's answer to the checkpoint prompt arrives as an ordinary reply, and
-  // not always the first one: it may talk to the user before it answers.
-  pi.on("message_end", (e) => {
-    const message = e.message ?? e;
-    if (!awaiting || message.role !== "assistant") return;
-    const reply = textOf(message.content).trim();
-    if (JSON_SHAPE.test(reply)) {
-      awaiting = false;
-      tries = 0;
-      save(reply);
-      return;
-    }
-    if (++tries < MAX_REPLY_TRIES) return;
-    awaiting = false;
-    tries = 0;
-    save("");
   });
   // Harvest outlives the session: hand the transcript id over and detach.
   pi.on("session_shutdown", (_e, ctx) => {
