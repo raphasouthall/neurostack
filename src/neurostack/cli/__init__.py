@@ -51,6 +51,7 @@ from .setup import (
     cmd_uninstall,
     cmd_update,
 )
+from .triggers import cmd_triggers
 from .utils import _handle_error
 from .writeback import cmd_migrate, cmd_sync
 
@@ -785,6 +786,13 @@ def main():
     # stats
     p = sub.add_parser("stats", help="Show index stats")
     p.set_defaults(func=cmd_stats)
+
+    # triggers (issue #159)
+    p = sub.add_parser("triggers", help="Report how often trigger memories were followed")
+    trig_sub = p.add_subparsers(dest="triggers_command")
+    tp = trig_sub.add_parser("stats", help="Fired, followed, and ignored counts per memory")
+    tp.add_argument("--days", type=int, default=30, help="Window in days (default: 30)")
+    p.set_defaults(func=cmd_triggers)
 
     # record-usage
     p = sub.add_parser(

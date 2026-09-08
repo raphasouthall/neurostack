@@ -19,6 +19,11 @@ the client reports whether the agent followed the memory. An ignored trigger
 becomes a ``prediction_errors`` row of type ``trigger_ignored`` that the
 promotion queue's drift bucket surfaces; after ``RETIRE_AFTER_IGNORES`` the
 queue suggests retiring the trigger. Nothing is deleted or decayed here.
+
+Issue #159 makes the other outcome countable. The reported outcome lands on
+the firing itself (``trigger_log.followed``, ``outcome_at``), so
+``trigger_stats`` can say how often a trigger was obeyed and not only how
+often it was ignored.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ TRIGGER_EVENTS = ("editing", "calling", "error")
 _PREFIX = "when-"
 IGNORED_ERROR_TYPE = "trigger_ignored"
 RETIRE_AFTER_IGNORES = 3
+PREVIEW_CHARS = 120
 
 
 def parse_trigger(tag: str) -> tuple[str, str] | None:
@@ -149,18 +155,47 @@ def ignored_count(conn: sqlite3.Connection, memory_id: int) -> int:
     ).fetchone()[0]
 
 
+def _pending_firing(
+    conn: sqlite3.Connection,
+    memory_id: int,
+    session_hint: str | None,
+) -> sqlite3.Row | None:
+    """The firing an outcome report belongs to: the newest pending row.
+
+    Same session first, because a second harness session can fire the same
+    memory while the first has not reported yet. The fallback to the newest
+    pending row of any session keeps clients that send no hint working.
+    """
+    sql = (
+        "SELECT log_id, event, value FROM trigger_log"
+        " WHERE memory_id = ? AND followed IS NULL"
+    )
+    order = " ORDER BY fired_at DESC, log_id DESC LIMIT 1"
+    if session_hint:
+        row = conn.execute(
+            f"{sql} AND session_hint = ?{order}", (memory_id, session_hint)
+        ).fetchone()
+        if row is not None:
+            return row
+    return conn.execute(sql + order, (memory_id,)).fetchone()
+
+
 def record_outcome(
     conn: sqlite3.Connection,
     memory_id: int,
     followed: bool,
     note: str | None = None,
+    session_hint: str | None = None,
 ) -> dict:
     """Record whether the agent followed a fired trigger.
 
-    ``followed=True`` writes nothing. ``followed=False`` inserts one
-    ``prediction_errors`` row (``error_type='trigger_ignored'``, ``context`` =
-    the trigger tag that fired, ``query`` = the caller's note). The reply
-    carries the running ignore count and ``suggest: "retire"`` once it reaches
+    Either way the newest pending ``trigger_log`` row for this memory (and
+    session hint, when given) gets ``followed`` and ``outcome_at`` set, so the
+    obey count is as measurable as the ignore count (issue #159).
+    ``followed=False`` also inserts one ``prediction_errors`` row
+    (``error_type='trigger_ignored'``, ``context`` = the trigger tag that
+    fired, ``query`` = the caller's note). The reply carries the running
+    ignore count and ``suggest: "retire"`` once it reaches
     ``RETIRE_AFTER_IGNORES``; the memory row itself is never touched.
     """
     row = conn.execute(
@@ -168,12 +203,14 @@ def record_outcome(
     ).fetchone()
     if row is None:
         return {"error": f"Memory {memory_id} not found", "memory_id": memory_id}
+    fired = _pending_firing(conn, memory_id, session_hint)
+    if fired is not None:
+        conn.execute(
+            "UPDATE trigger_log SET followed = ?, outcome_at = datetime('now')"
+            " WHERE log_id = ?",
+            (1 if followed else 0, fired["log_id"]),
+        )
     if not followed:
-        fired = conn.execute(
-            "SELECT event, value FROM trigger_log WHERE memory_id = ?"
-            " ORDER BY fired_at DESC, log_id DESC LIMIT 1",
-            (memory_id,),
-        ).fetchone()
         tags = _trigger_tags(row["tags"])
         if fired is not None:
             # Prefer the tag that actually matched the logged firing.
@@ -190,9 +227,63 @@ def record_outcome(
             " VALUES ('', ?, ?, 0.0, ?, ?)",
             (memory_id, note or "", IGNORED_ERROR_TYPE, context),
         )
-        conn.commit()
+    conn.commit()
     count = ignored_count(conn, memory_id)
     out = {"memory_id": memory_id, "followed": followed, "ignored_count": count}
     if count >= RETIRE_AFTER_IGNORES:
         out["suggest"] = "retire"
     return out
+
+
+def _followed_rate(followed: int, ignored: int) -> float | None:
+    """Share of settled firings that were followed, None while none settled."""
+    settled = followed + ignored
+    return followed / settled if settled else None
+
+
+def trigger_stats(conn: sqlite3.Connection, days: int = 30) -> dict:
+    """Fired-versus-followed counts over the last ``days`` (issue #159).
+
+    Totals at the top level, one entry per memory that fired in the window
+    under ``memories``. Pending firings count as neither followed nor ignored,
+    so ``followed_rate`` is the share of the outcomes actually reported.
+    """
+    days = max(int(days), 1)
+    rows = conn.execute(
+        "SELECT l.memory_id AS memory_id, COUNT(*) AS fired,"
+        # `followed = 1` is NULL for a pending row, and SUM of only NULLs is
+        # NULL, so each branch has to fall through to a zero.
+        " SUM(CASE WHEN l.followed = 1 THEN 1 ELSE 0 END) AS followed,"
+        " SUM(CASE WHEN l.followed = 0 THEN 1 ELSE 0 END) AS ignored,"
+        " SUM(CASE WHEN l.followed IS NULL THEN 1 ELSE 0 END) AS pending,"
+        " m.content AS content, m.tags AS tags"
+        " FROM trigger_log l LEFT JOIN memories m ON m.memory_id = l.memory_id"
+        " WHERE l.fired_at >= datetime('now', ?)"
+        " GROUP BY l.memory_id"
+        " ORDER BY fired DESC, l.memory_id",
+        (f"-{days} days",),
+    ).fetchall()
+
+    totals = {"fired": 0, "followed": 0, "ignored": 0, "pending": 0}
+    memories = []
+    for row in rows:
+        tags = _trigger_tags(row["tags"])
+        entry = {
+            "memory_id": row["memory_id"],
+            "trigger": tags[0] if tags else None,
+            "content": (row["content"] or "")[:PREVIEW_CHARS],
+            "fired": row["fired"],
+            "followed": row["followed"],
+            "ignored": row["ignored"],
+            "pending": row["pending"],
+            "followed_rate": _followed_rate(row["followed"], row["ignored"]),
+        }
+        for key in totals:
+            totals[key] += entry[key]
+        memories.append(entry)
+    return {
+        "days": days,
+        **totals,
+        "followed_rate": _followed_rate(totals["followed"], totals["ignored"]),
+        "memories": memories,
+    }

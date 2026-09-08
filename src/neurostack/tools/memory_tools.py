@@ -342,11 +342,13 @@ def vault_trigger_outcome(
     memory_id: int,
     followed: bool,
     note: str = None,
+    session_hint: str = None,
 ) -> dict:
     """Report whether a fired trigger memory was followed (issue #136).
 
     Call once per fired memory, a few tool calls after vault_triggers returned
-    it. followed=true writes nothing. followed=false records a
+    it. Either outcome marks the logged firing (trigger_log.followed), so the
+    obey count is measurable too (issue #159). followed=false also records a
     'trigger_ignored' prediction error; the promotion queue's drift bucket
     lists the memory with its running ignore count and suggests retiring the
     trigger after three. Nothing is deleted automatically.
@@ -354,10 +356,14 @@ def vault_trigger_outcome(
     Args:
         memory_id: The memory vault_triggers returned
         followed: True if the agent changed course because of it
-        note: Optional short reason, e.g. "re-issued the same call unchanged"
+        note: Optional short reason, e.g. "the call came back changed"
+        session_hint: The same client session id passed to vault_triggers, so
+            the outcome lands on that session's firing
     """
     from ..schema import DB_PATH, get_db
     from ..triggers import record_outcome
 
     conn = get_db(DB_PATH)
-    return record_outcome(conn, memory_id, followed=followed, note=note)
+    return record_outcome(
+        conn, memory_id, followed=followed, note=note, session_hint=session_hint
+    )

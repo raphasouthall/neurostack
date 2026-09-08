@@ -496,6 +496,7 @@ def vault_stats() -> dict:
     from ..memories import get_memory_source_counts, get_memory_stats
     from ..schema import DB_PATH, get_db
     from ..search import get_dormancy_report
+    from ..triggers import trigger_stats
 
     conn = get_db(DB_PATH)
 
@@ -560,6 +561,15 @@ def vault_stats() -> dict:
         "cooccurrence_total_reinforcement": cooc_stats["total_reinforcement"],
         # `neurostack status` reads by_source_7d for its LEARN table (#151).
         "memories": {**mem_stats, "by_source_7d": get_memory_source_counts(conn)},
+        # And triggers.last_30d for its WARN line (#159). The per-memory
+        # breakdown stays behind `neurostack triggers stats` — this reply is
+        # read on every status check.
+        "triggers": {
+            "last_30d": {
+                k: v for k, v in trigger_stats(conn, days=30).items()
+                if k != "memories"
+            }
+        },
     }
     return result
 
