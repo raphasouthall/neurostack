@@ -283,6 +283,47 @@ def test_status_json_carries_the_learn_block(server, isolated_home):
     assert learn["by_source"] == {"checkpoint/cli": 3}
     assert learn["sessions_behind"] == 0
     assert learn["error"] is None
+    assert learn["warn"] is None
+
+
+# ---------------------------------------------------------------------------
+# The WARN line — did the trigger warnings change anything (issue #159)
+# ---------------------------------------------------------------------------
+
+def test_status_prints_the_warn_line_from_the_server(server, isolated_home):
+    server.replies["vault_stats"] = {
+        "memories": {"by_source_7d": {"checkpoint/omp": 2}},
+        "triggers": {"last_30d": {"days": 30, "fired": 7, "followed": 4,
+                                  "ignored": 2, "pending": 1,
+                                  "followed_rate": 4 / 6}},
+    }
+
+    proc = _run_status(isolated_home, server.url)
+
+    assert proc.returncode == 0
+    assert "WARN: 7 fired, 4 followed, 2 ignored (30d)" in proc.stdout
+
+
+def test_status_says_so_when_the_server_has_no_trigger_counts(server, isolated_home):
+    server.replies["vault_stats"] = {"memories": {"by_source_7d": {"checkpoint/omp": 2}}}
+
+    proc = _run_status(isolated_home, server.url)
+
+    assert "WARN: unavailable (the server predates issue #159)" in proc.stdout
+
+
+def test_status_json_carries_the_warn_counts(server, isolated_home):
+    server.replies["vault_stats"] = {
+        "memories": {"by_source_7d": {"checkpoint/cli": 3}},
+        "triggers": {"last_30d": {"days": 7, "fired": 3, "followed": 1,
+                                  "ignored": 1, "pending": 1}},
+    }
+
+    proc = _run_status(isolated_home, server.url, "--json")
+
+    assert json.loads(proc.stdout)["learn"]["warn"] == {
+        "days": 7, "fired": 3, "followed": 1, "ignored": 1, "pending": 1,
+    }
 
 
 def _run_status(home, url, *flags):

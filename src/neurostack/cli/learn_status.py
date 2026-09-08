@@ -105,13 +105,22 @@ def learn_line(status: dict | None = None, now: datetime | None = None) -> str:
             f"last {last_ok.strftime('%H:%M')}")
 
 
+def warn_line(warn: dict | None) -> str:
+    """Did the trigger warnings change anything? (issue #159)"""
+    if warn is None:
+        return "WARN: unavailable (the server predates issue #159)"
+    return (f"WARN: {warn['fired']} fired, {warn['followed']} followed, "
+            f"{warn['ignored']} ignored ({warn['days']}d)")
+
+
 def learn_report(client=None, cfg=None) -> dict:
     """The LEARN block for `neurostack status`.
 
     The 7-day counts come from the server's `vault_stats`, which groups them
     in SQL. `vault_memories` returns rows and takes no date filter, so
     counting client-side would mean shipping every memory of the week over
-    MCP — a server-side count is the cheap answer (issue #151).
+    MCP — a server-side count is the cheap answer (issue #151). The same reply
+    carries the 30-day trigger counts behind the WARN line (issue #159).
     """
     from ..client import McpClient, load_client_config
     from .hook import sessions_behind
@@ -120,6 +129,7 @@ def learn_report(client=None, cfg=None) -> dict:
         "line": learn_line(),
         "by_source": {},
         "sessions_behind": sessions_behind(),
+        "warn": None,
         "error": None,
     }
     client = client or McpClient(cfg or load_client_config())
@@ -130,6 +140,7 @@ def learn_report(client=None, cfg=None) -> dict:
     if stats is None:
         report["error"] = client.errors[0] if client.errors else "vault_stats did not answer"
         return report
+    report["warn"] = _warn_counts(stats.get("triggers"))
     memories = stats.get("memories")
     counts = memories.get("by_source_7d") if isinstance(memories, dict) else None
     if not isinstance(counts, dict):
@@ -138,6 +149,21 @@ def learn_report(client=None, cfg=None) -> dict:
     report["by_source"] = {str(k): int(v) for k, v in counts.items()
                            if isinstance(v, int) and not isinstance(v, bool)}
     return report
+
+
+def _warn_counts(triggers) -> dict | None:
+    """`triggers.last_30d` from vault_stats, or None when the server lacks it."""
+    window = triggers.get("last_30d") if isinstance(triggers, dict) else None
+    if not isinstance(window, dict):
+        return None
+    out = {key: _count(window.get(key))
+           for key in ("fired", "followed", "ignored", "pending")}
+    out["days"] = _count(window.get("days")) or 30
+    return out
+
+
+def _count(value) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def _now() -> datetime:

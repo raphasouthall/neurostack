@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..config import _LEGACY_LLM_KEYS, CONFIG_PATH, get_config
-from .learn_status import learn_report
+from .learn_status import learn_report, warn_line
 from .utils import _get_vault_template_dir
 
 
@@ -1972,3 +1972,4 @@ def _print_learn(report: dict) -> None:
     else:
         print("  Memories (7d):  none")
     print(f"  Sessions behind: {report['sessions_behind']}")
+    print(f"  {warn_line(report.get('warn'))}")

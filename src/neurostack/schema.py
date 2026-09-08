@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -263,15 +263,20 @@ CREATE INDEX IF NOT EXISTS idx_pred_errors_unresolved
 -- Trigger firings (issue #136): one row each time vault_triggers returned a
 -- memory. Together with prediction_errors rows of type 'trigger_ignored' this
 -- tells the promotion queue which triggers fire but get ignored.
+-- `followed` (issue #159) closes the other half: NULL is pending, 1 followed,
+-- 0 ignored, so a fired trigger has an obey count and not only an ignore count.
 CREATE TABLE IF NOT EXISTS trigger_log (
     log_id INTEGER PRIMARY KEY AUTOINCREMENT,
     memory_id INTEGER NOT NULL REFERENCES memories(memory_id) ON DELETE CASCADE,
     event TEXT NOT NULL,
     value TEXT NOT NULL,
     session_hint TEXT,
-    fired_at TEXT NOT NULL DEFAULT (datetime('now'))
+    fired_at TEXT NOT NULL DEFAULT (datetime('now')),
+    followed INTEGER,
+    outcome_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trigger_log_memory ON trigger_log(memory_id);
+CREATE INDEX IF NOT EXISTS idx_trigger_log_fired ON trigger_log(fired_at);
 
 -- Agent-written memories (write-back layer)
 CREATE TABLE IF NOT EXISTS memories (
@@ -1201,6 +1206,40 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (25)")
         conn.commit()
         log.info("Migration to v25 complete.")
+
+    if current < 26:
+        log.info(
+            "Migrating schema v25 -> v26: trigger_log.followed/outcome_at — "
+            "count the triggers the agent obeyed, not only the ignored ones "
+            "(issue #159)..."
+        )
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS trigger_log (
+                log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL
+                    REFERENCES memories(memory_id) ON DELETE CASCADE,
+                event TEXT NOT NULL,
+                value TEXT NOT NULL,
+                session_hint TEXT,
+                fired_at TEXT NOT NULL DEFAULT (datetime('now')),
+                followed INTEGER,
+                outcome_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_trigger_log_memory
+                ON trigger_log(memory_id);
+            CREATE INDEX IF NOT EXISTS idx_trigger_log_fired
+                ON trigger_log(fired_at);
+        """)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(trigger_log)")}
+        # Firings logged before this migration have no reported outcome, so
+        # they stay pending: NULL, never 0.
+        if "followed" not in cols:
+            conn.execute("ALTER TABLE trigger_log ADD COLUMN followed INTEGER")
+        if "outcome_at" not in cols:
+            conn.execute("ALTER TABLE trigger_log ADD COLUMN outcome_at TEXT")
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (26)")
+        conn.commit()
+        log.info("Migration to v26 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
