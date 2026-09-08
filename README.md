@@ -405,7 +405,10 @@ neurostack triggers stats --days 7
 # Checkpoint: a background model writes the memories, mid-session
 neurostack hook checkpoint --run --session <id>  # summarise and save, silently
 neurostack hook checkpoint --save               # a model's JSON reply on stdin
+```
 
+
+```
 # Client setup
 neurostack setup-client cursor           # or: windsurf, gemini, vscode, claude-code
 neurostack setup-client --list
@@ -416,6 +419,14 @@ neurostack stats                         # index health
 neurostack doctor                        # validate all subsystems
 neurostack demo                          # interactive demo with sample vault
 ```
+Checkpoint runners use a nonblocking OS lock per conversation. Overlapping saves for one
+conversation return `checkpoint already running`, while separate conversations can save at
+the same time. The runner keeps the extracted reply and a receipt for each acknowledged
+item, so a partial retry does not call the model again or repeat confirmed saves. Each
+conversation retains the 256 most recent SHA-256 receipts of exact redacted content. Changed
+facts produce different receipts. A connection can still fail after the server commits but
+before it acknowledges the write. Avoiding that remote duplicate requires server-side
+idempotency, which the current `vault_remember` contract does not provide.
 
 </details>
 

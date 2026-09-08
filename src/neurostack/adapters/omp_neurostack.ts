@@ -3,12 +3,10 @@
 // blocks the call and stdout is the reason, stdout otherwise gets injected. Every
 // retrieval and suppression decision belongs to the CLI, never to this file.
 //
-// The checkpoint (#155) says nothing to the session model. omp can hide neither a
-// user message nor the reply to it, so instead of asking, the adapter writes the
-// window to `<session>.window.json` and spawns `hook checkpoint --run` detached:
-// the CLI summarizes through `checkpoint_command` and saves, with nothing in the
-// transcript. `/save` is the same call plus one line, because a command the user
-// typed has to answer.
+// Checkpoints say nothing to the session model. The adapter sends one frozen
+// message window to `hook checkpoint --run`; Python persists it before running
+// `checkpoint_command`, then saves outside the chat. `/save` starts the same
+// path and displays one brief status line.
 type Block = { type?: string; text?: string };
 type Content = string | Block[] | undefined;
 type Msg = { role?: string; content?: Content };
@@ -24,16 +22,13 @@ type Pi = {
 };
 
 const BIN = "__NEUROSTACK_BIN__";
-const SESSION = `omp-${Date.now().toString(36)}-${process.pid}`;
+const FALLBACK_SESSION = `omp-${Date.now().toString(36)}-${process.pid}`;
+let session = FALLBACK_SESSION;
 // Checkpoint cadence: 40 new messages, or 30 quiet minutes with at least 5.
 const EVERY_MESSAGES = 40;
 const QUIET_MS = 30 * 60_000;
 const MIN_MESSAGES = 5;
 const TICK_MS = 60_000;
-// The session id is built above out of safe characters, so it is also the
-// filename the CLI derives from it.
-const CACHE = process.env.XDG_CACHE_HOME || `${process.env.HOME}/.cache`;
-const WINDOW = `${CACHE}/neurostack/sessions/${SESSION}.window.json`;
 
 function spawn(args: string[], stdin: string) {
   const proc = Bun.spawn([BIN, "hook", ...args], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
@@ -42,7 +37,7 @@ function spawn(args: string[], stdin: string) {
   return proc;
 }
 function event(name: string, payload: Record<string, unknown>, args: string[] = []) {
-  return spawn([name, ...args], JSON.stringify({ session: SESSION, workspace: process.cwd(), ...payload }));
+  return spawn([name, ...args], JSON.stringify({ session, workspace: process.cwd(), ...payload }));
 }
 async function hook(name: string, payload: Record<string, unknown>) {
   const proc = event(name, payload);
@@ -54,24 +49,45 @@ const textOf = (c: Content): string =>
 const append = (c: Content, note: string): Content =>
   typeof c === "string" ? c + note : [...(c ?? []), { type: "text", text: note }];
 
+async function cursor(): Promise<number> {
+  const { text } = await hook("checkpoint-cursor", {});
+  try {
+    const value = JSON.parse(text).since_index;
+    return typeof value === "number" && value >= 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export default function neurostack(pi: Pi): void {
   let seen: Msg[] = [];
-  let baseline = 0;
+  let settled = 0;
+  let offered = 0;
   let lastMessageAt = Date.now();
 
-  // Returns how many messages were pending, so `/save` can say why it did
-  // nothing. The checkpoint itself outlives this call and this process.
-  async function checkpoint(): Promise<number> {
-    const pending = seen.length - baseline;
-    if (pending < MIN_MESSAGES) return pending;
-    await Bun.write(WINDOW, JSON.stringify({ since_index: baseline, messages: seen.slice(baseline) }));
-    baseline = seen.length;
-    Bun.spawn([BIN, "hook", "checkpoint", "--run", "--harness", "omp", "--session", SESSION],
-      { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
-    return pending;
+  async function checkpoint(): Promise<{ pending: number; busy: boolean }> {
+    const pending = seen.length - settled;
+    if (pending < MIN_MESSAGES) return { pending, busy: false };
+    if (offered > settled) return { pending, busy: true };
+    offered = seen.length;
+    const submittedStart = settled;
+    const submittedEnd = offered;
+    const proc = event("checkpoint", { since_index: submittedStart,
+      messages: seen.slice(submittedStart, submittedEnd) },
+      ["--run", "--harness", "omp", "--session", session]);
+    void new Response(proc.stdout).text().then(async () => {
+      settled = Math.max(settled, await cursor());
+    }).finally(() => {
+      offered = settled;
+    });
+    proc.unref();
+    return { pending, busy: false };
   }
 
   pi.on("session_start", async (_e, ctx) => {
+    session = ctx?.sessionManager?.getSessionId?.() || FALLBACK_SESSION;
+    settled = await cursor();
+    offered = settled;
     const { text } = await hook("session-start", {});
     if (text) pi.sendMessage({ customType: "neurostack-brief", content: text, display: true });
     ctx?.setInterval?.(() => {
@@ -81,11 +97,12 @@ export default function neurostack(pi: Pi): void {
   pi.registerCommand("save", {
     description: "Checkpoint this session into NeuroStack memory",
     handler: async () => {
-      const pending = await checkpoint();
+      const result = await checkpoint();
       pi.sendMessage({
         customType: "neurostack-save",
-        content: pending < MIN_MESSAGES
-          ? `NeuroStack: nothing to save yet (${pending} messages)`
+        content: result.pending < MIN_MESSAGES
+          ? `NeuroStack: nothing to save yet (${result.pending} messages)`
+          : result.busy ? "NeuroStack: checkpoint already running"
           : "NeuroStack: checkpoint started in the background",
         display: true,
       });
@@ -104,9 +121,7 @@ export default function neurostack(pi: Pi): void {
     const messages = e.messages ?? [];
     seen = messages;
     lastMessageAt = Date.now();
-    // Compaction shortens the history; a baseline past its end would never fire.
-    if (baseline > messages.length) baseline = 0;
-    if (messages.length - baseline >= EVERY_MESSAGES) void checkpoint();
+    if (messages.length - settled >= EVERY_MESSAGES) void checkpoint();
     const i = messages.map((m) => m.role).lastIndexOf("user");
     if (i < 0) return;
     const { text } = await hook("prompt", { prompt: textOf(messages[i].content) });
@@ -117,6 +132,6 @@ export default function neurostack(pi: Pi): void {
   });
   // Harvest outlives the session: hand the transcript id over and detach.
   pi.on("session_shutdown", (_e, ctx) => {
-    event("session-end", { session: ctx?.sessionManager?.getSessionId?.() ?? SESSION, format: "omp" }).unref();
+    event("session-end", { session: ctx?.sessionManager?.getSessionId?.() ?? session, format: "omp" }).unref();
   });
 }
