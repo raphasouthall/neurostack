@@ -183,21 +183,55 @@ def test_error_trigger_then_followed_after_quiet_window(server):
         assert len(outcomes) == (1 if i == 4 else 0), f"after {i + 1} calls"
 
     assert outcomes == [{"memory_id": 1808, "followed": True,
-                         "note": "window elapsed without a repeat"}]
+                         "note": "window elapsed without a repeat",
+                         "session_hint": "s5"}]
     assert json.loads(_state_path("s5").read_text())["pending"] == {}
 
 
-def test_identical_reissue_reports_ignored(server):
+def test_five_quiet_calls_report_followed(server):
     server.replies["vault_triggers"] = _triggers(
         {("calling", "vault_write_file"): [TRIGGER_HIT]}
     )
     call = {"session": "s6", "tool": "vault_write_file", "input": {"path": "a.md"}}
     assert run_event("tool-call", call, cfg=_cfg(server)).block is True
+
+    for i in range(5):
+        run_event("tool-call", {"session": "s6", "tool": f"read-{i}"}, cfg=_cfg(server))
+        outcomes = _tool_calls(server, "vault_trigger_outcome")
+        assert len(outcomes) == (1 if i == 4 else 0), f"after {i + 1} calls"
+
+    assert outcomes == [{"memory_id": 2164, "followed": True,
+                         "note": "window elapsed without a repeat",
+                         "session_hint": "s6"}]
+
+
+def test_a_reissue_with_a_different_path_settles_nothing_yet(server):
+    server.replies["vault_triggers"] = _triggers(
+        {("calling", "vault_write_file"): [TRIGGER_HIT]}
+    )
+    session = {"session": "s6b", "tool": "vault_write_file"}
+    assert run_event(
+        "tool-call", {**session, "input": {"path": "a.md"}}, cfg=_cfg(server)
+    ).block is True
+
+    run_event("tool-call", {**session, "input": {"path": "b.md"}}, cfg=_cfg(server))
+
+    assert _tool_calls(server, "vault_trigger_outcome") == []
+    assert json.loads(_state_path("s6b").read_text())["pending"]["2164"]["remaining"] == 4
+
+
+def test_a_byte_identical_reissue_settles_nothing_yet(server):
+    """The old ignore rule is gone: only the window decides (issue #159)."""
+    server.replies["vault_triggers"] = _triggers(
+        {("calling", "vault_write_file"): [TRIGGER_HIT]}
+    )
+    call = {"session": "s6c", "tool": "vault_write_file", "input": {"path": "a.md"}}
+    assert run_event("tool-call", call, cfg=_cfg(server)).block is True
+
     run_event("tool-call", call, cfg=_cfg(server))
-    assert _tool_calls(server, "vault_trigger_outcome") == [
-        {"memory_id": 2164, "followed": False,
-         "note": "re-issued vault_write_file unchanged"},
-    ]
+
+    assert _tool_calls(server, "vault_trigger_outcome") == []
+    assert json.loads(_state_path("s6c").read_text())["pending"]["2164"]["remaining"] == 4
 
 
 def test_recurring_error_reports_ignored(server):
@@ -208,7 +242,8 @@ def test_recurring_error_reports_ignored(server):
     run_event("tool-result", {"session": "s7", "error": text}, cfg=_cfg(server))
     run_event("tool-result", {"session": "s7", "error": text}, cfg=_cfg(server))
     assert _tool_calls(server, "vault_trigger_outcome") == [
-        {"memory_id": 55, "followed": False, "note": "same error recurred"},
+        {"memory_id": 55, "followed": False, "note": "same error recurred",
+         "session_hint": "s7"},
     ]
 
 

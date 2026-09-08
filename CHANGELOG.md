@@ -8,6 +8,8 @@
 
 ### Changed
 
+- **#159 — a re-issued call is no longer counted as an ignore.** The client hook used to report `followed=false` the moment the blocked call came back byte-identical, which is what a model does when it has read the warning and judged that it does not apply, so ignores were over-counted. Nothing about the next call settles a `when-calling` or `when-editing` trigger now: 5 later tool calls with no outcome reported mark it followed, and a re-issue of the same tool spends one of those 5 whether the input changed or not. The `when-error` rule is untouched, so the same error text coming back still reports an ignore.
+
 - **#155 — the checkpoint runs in the background and puts nothing in the chat.** The omp adapter no longer injects a prompt with `pi.sendUserMessage` or watches for the model's reply: it writes the window to `~/.cache/neurostack/sessions/<session>.window.json` (`{since_index, messages}`) and spawns `neurostack hook checkpoint --run --harness omp --session <id>` detached, so the summarising happens through `checkpoint_command` with nothing in the transcript. `/save` does the same and prints one line — `NeuroStack: checkpoint started in the background`, or `NeuroStack: nothing to save yet (N messages)` under the 5-message floor, which used to be silence. Claude Code's `Stop` entry and `~/.claude/commands/save.md` run `checkpoint --run --harness claude` under `nohup` instead of blocking the turn with exit 2. `checkpoint --run` reads the window file when stdin is empty, deletes it once the memories are saved, and takes the session from the newest state file when no id is passed; every `--run` failure now goes to stderr and `learn-status.json` instead of stdout, where a harness would inject it. `checkpoint --save` is unchanged for herdr and hand use.
 
 - Checkpoint prompts now carry assistant text in full; only tool output is clipped at 500 chars (#149)
@@ -15,6 +17,8 @@
 - **#142 — config keys `llm_url` / `llm_model` / `llm_api_key` are now `index_llm_url` / `index_llm_model` / `index_llm_api_key`** (env `NEUROSTACK_INDEX_LLM_URL` / `_MODEL` / `_API_KEY`), naming what the endpoint is for now that nothing calls it on a query. The old TOML keys and `NEUROSTACK_LLM_*` env vars still load into the new fields and log one deprecation line per config load naming every old name seen; setting the new name wins when both appear. `neurostack init` / `install`'s `--llm-model` and `consolidate` / `synthesize`'s `--llm-model` are now `--index-llm-model`; `--summarize-url` keeps its name and feeds `index_llm_url`.
 
 ### Added
+
+- **#159 — the WARN obey count.** `trigger_log` gained `followed` and `outcome_at`, so `vault_trigger_outcome` marks the firing it belongs to instead of writing nothing when the agent obeyed — NULL is pending, 1 is followed, 0 is ignored. The tool takes a `session_hint` and puts the outcome on that session's newest pending firing, falling back to the newest pending firing of any session for a client that sends no hint. New `trigger_stats(conn, days=30)` returns fired, followed, ignored and pending counts plus the followed share of the settled firings, per memory and in total. `neurostack triggers stats [--days N]` prints it, `vault_stats` carries the totals under `triggers.last_30d`, and the `neurostack status` LEARN block gained one line: `WARN: N fired, M followed, K ignored (30d)`.
 - **#151 — LEARN visibility.** Every checkpoint attempt now writes `~/.cache/neurostack/learn-status.json` (`last_ok_at`, `last_error_at`, `last_error`, `saved_today`, `session`, `harness`), and `neurostack hook session-start` prints one line from it before the brief: `LEARN: ok, N memories today, last HH:MM`, `LEARN: FAILING since <when>: <error>`, `LEARN: stale, no checkpoint since <when>` past 48 hours, or `LEARN: never ran`. The line comes first so it survives a truncated brief, and it prints on its own when the server is unreachable. `neurostack status` shows the same line, a 7-day table of memories by `source_agent`, and how many live sessions have a transcript longer than the window the model was last offered. `vault_stats` gained `memories.by_source_7d` for that table — `vault_memories` takes no date filter, so the count is grouped in SQL on the server instead of shipping a week of memories to the client.
 
 - `neurostack hook checkpoint --run` pipes the checkpoint prompt through `checkpoint_command` from `client.toml` (for example `claude -p --model sonnet`) and saves the reply, for timers and herdr where no harness model is at hand. Runs from `$HOME` so a project's agent instructions cannot shape the extraction (#147)
@@ -41,6 +45,7 @@
 
 - v21 → v22: `memories_archive` table (#90).
 - v24 → v25: `trigger_log` table (#136).
+- v25 → v26: `trigger_log.followed`, `outcome_at` (#159).
 
 ## v0.16.0 — Retrieval & extraction fixes (2026-06-11)
 

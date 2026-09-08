@@ -38,8 +38,10 @@ from .learn_status import cache_dir, learn_line, record_error, record_ok
 EVENTS = ("session-start", "prompt", "tool-call", "tool-result", "checkpoint",
           "session-end")
 
-# After a trigger fires, watch this many later tool calls: a byte-identical
-# re-issue means the memory was ignored, silence means it was followed (#136).
+# After a calling/editing trigger fires, watch this many later tool calls: the
+# next call says nothing either way — re-issuing the blocked call unchanged is
+# what a model does when it decides the warning does not apply — so only the
+# window elapsing settles the outcome, as followed (#136, #159).
 OUTCOME_WINDOW = 5
 # 20 fired on "retry the mcp" and "do it", which carry no retrievable topic.
 MIN_PROMPT_LEN = 40
@@ -293,16 +295,8 @@ def _error_key(text: str) -> str:
     return text.strip()[:120].lower()
 
 
-def _call_key(tool: str, tool_input) -> str:
-    try:
-        body = json.dumps(tool_input, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        body = ""
-    return f"{tool}\x00{body}"
-
-
 # ---------------------------------------------------------------------------
-# Triggers and outcomes (issues #131 / #136)
+# Triggers and outcomes (issues #131 / #136 / #159)
 # ---------------------------------------------------------------------------
 
 def _valid_hit(hit) -> bool:
@@ -357,19 +351,20 @@ def _report_outcome(
     state.pending.pop(memory_id, None)
     client.call(
         "vault_trigger_outcome",
-        {"memory_id": memory_id, "followed": followed, "note": note},
+        {"memory_id": memory_id, "followed": followed, "note": note,
+         "session_hint": state.session},
     )
 
 
-def _observe_call(client: McpClient, state: SessionState, tool: str, tool_input) -> None:
-    """Settle pending outcomes and advance the window on every tool call."""
-    if not state.pending:
-        return
-    key = _call_key(tool, tool_input)
+def _observe_call(client: McpClient, state: SessionState) -> None:
+    """Advance the window on every tool call, and settle it when it runs out.
+
+    Nothing about the next call marks a calling/editing trigger as ignored: a
+    re-issue of the blocked call, byte-identical or not, is how a model acts on
+    a warning it has read and judged (#159). Only the error rule below can
+    report an ignore.
+    """
     for memory_id, pending in list(state.pending.items()):
-        if pending.get("kind") in ("calling", "editing") and pending.get("key") == key:
-            _report_outcome(client, state, memory_id, False, f"re-issued {tool} unchanged")
-            continue
         pending["remaining"] = int(pending.get("remaining", OUTCOME_WINDOW)) - 1
         if pending["remaining"] <= 0:
             _report_outcome(
@@ -473,7 +468,7 @@ def _event_tool_call(client: McpClient, payload: dict, state: SessionState,
     tool = _first_str(payload, "tool", "tool_name")
     tool_input = _tool_input(payload)
     state.calls += 1
-    _observe_call(client, state, tool, tool_input)
+    _observe_call(client, state)
     workspace = _workspace(cfg, payload)
     hits: list[dict] = []
     for name in _tool_names(tool, tool_input):
@@ -482,11 +477,9 @@ def _event_tool_call(client: McpClient, payload: dict, state: SessionState,
         hits += _fetch_triggers(client, state, "editing", path, workspace)
     if not hits:
         return Verdict()
-    key = _call_key(tool, tool_input)
     for hit in hits:
         state.pending[hit["memory_id"]] = {
             "kind": "editing" if hit["trigger"].startswith("when-editing:") else "calling",
-            "key": key,
             "remaining": OUTCOME_WINDOW,
         }
     return Verdict(
