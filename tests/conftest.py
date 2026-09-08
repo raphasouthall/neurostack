@@ -4,6 +4,7 @@ import json
 import sqlite3
 import textwrap
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -201,6 +202,10 @@ class FakeMcpHandler(BaseHTTPRequestHandler):
             name = params.get("name")
             args = params.get("arguments") or {}
             self.server.calls.append((name, args))
+            # A real server embeds every memory it stores, which outlasts the
+            # interactive timeout; `delay_s` makes that testable (issue #153).
+            if self.server.delay_s:
+                time.sleep(self.server.delay_s)
             reply = self.server.replies.get(name)
             payload = reply(args) if callable(reply) else ({} if reply is None else reply)
             self._send({"jsonrpc": "2.0", "id": body.get("id"),
@@ -229,6 +234,7 @@ def server():
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), FakeMcpHandler)
     httpd.calls = []
     httpd.replies = {}
+    httpd.delay_s = 0.0
     httpd.url = f"http://127.0.0.1:{httpd.server_address[1]}/mcp"
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

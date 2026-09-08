@@ -743,8 +743,8 @@ def _event_checkpoint(client: McpClient, payload: dict, state: SessionState,
     ))
 
 
-def _parse_items(reply: str) -> list[dict]:
-    """The model's reply as memory items.
+def _reply_json(reply: str):
+    """The JSON the model meant, dug out of a fence or a sentence, or None.
 
     Models fence their JSON, wrap it in a sentence, or send a single object
     instead of an array. All three are accepted: a checkpoint is too cheap to
@@ -762,6 +762,12 @@ def _parse_items(reply: str) -> list[dict]:
                 parsed = _loose_json(match.group(0))
                 if parsed is not None:
                     break
+    return parsed
+
+
+def _parse_items(reply: str) -> list[dict]:
+    """The model's reply as memory items."""
+    parsed = _reply_json(reply)
     if isinstance(parsed, dict):
         parsed = [parsed]
     if not isinstance(parsed, list):
@@ -775,6 +781,47 @@ def _loose_json(blob: str):
         return json.loads(blob)
     except ValueError:
         return None
+
+
+def _lost_reply(reply: str, items: list[dict]) -> str | None:
+    """Why a reply that saved nothing was a dropped reply, or None (issue #153).
+
+    Zero items is only the honest answer when the model said so: an empty
+    body, or an empty JSON container. Prose, a truncated array, or items
+    without content mean a window was summarized and then thrown away, which
+    has to cost a repeat prompt instead of passing for a clean checkpoint.
+    """
+    if items:
+        return None
+    blob = reply.strip()
+    if not blob:
+        return None
+    parsed = _reply_json(reply)
+    if isinstance(parsed, (list, dict)) and not parsed:
+        return None
+    return f"reply had no items: {blob[:120]}"
+
+
+def last_capture_path() -> Path:
+    """The raw reply of the most recent `--save` (issue #153).
+
+    A capture bug is invisible from the outside: `saved 0 of 0` reads the same
+    whether the model kept nothing or the harness handed over the wrong text.
+    One overwritten file settles which.
+    """
+    return cache_dir() / "last-capture.txt"
+
+
+def _write_last_capture(reply: str) -> None:
+    path = last_capture_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(reply, encoding="utf-8")
+        # This is the one copy of the reply that redaction never touched, so
+        # it stays readable by its owner alone.
+        path.chmod(0o600)
+    except OSError as exc:
+        print(f"neurostack hook checkpoint: capture not written: {exc}", file=sys.stderr)
 
 
 def _remember_args(item: dict, harness: str, workspace: str | None) -> dict:
@@ -810,22 +857,33 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
     cfg = cfg or load_client_config()
     client = client or McpClient(cfg)
     state = load_state(session)
+    _write_last_capture(reply)
     items = _parse_items(reply)
+    lost = _lost_reply(reply, items)
+    # An empty body is the harness giving up on capturing an answer, not the
+    # model declining: nothing failed, but the window has not been summarized.
+    answered = bool(reply.strip())
     workspace = cfg.workspace_for(os.getcwd())
     saved = 0
     try:
         for item in items:
+            # One write per memory against a server that embeds each one, so
+            # this gets the harvest budget: the interactive timeout exists to
+            # keep tool calls responsive, and spending it here loses the
+            # memories the model already wrote (issue #153).
             if client.call_json("vault_remember",
-                                _remember_args(item, harness, workspace)) is not None:
+                                _remember_args(item, harness, workspace),
+                                timeout_s=cfg.harvest_timeout_s) is not None:
                 saved += 1
-        if saved == len(items):
+        if answered and lost is None and saved == len(items):
             # The index moves on whatever the model chose to keep: it was asked
             # about this window, and asking twice is what the dedup prevents.
             state.since_index = max(state.since_index, state.offered_index)
             state.last_checkpoint_at = time.time()
         else:
-            # An unreachable server must cost a repeat prompt, not the
-            # memories: put the window back on offer.
+            # An unreachable server, a dropped reply, or a harness that never
+            # got the answer must cost a repeat prompt, not the memories: put
+            # the window back on offer.
             state.offered_index = state.since_index
         state.save()
     finally:
@@ -834,6 +892,9 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
         print(f"neurostack hook checkpoint: {client.errors[0]}", file=sys.stderr)
     # Every attempt ends in the health file, so a login that expired weeks ago
     # shows up in the next session brief instead of a journal (issue #151).
+    if lost is not None:
+        record_error(session, harness, lost)
+        return Verdict(f"neurostack: checkpoint {lost}")
     if saved == len(items):
         record_ok(session, harness, saved)
     else:

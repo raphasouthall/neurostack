@@ -4,8 +4,14 @@
 // retrieval and suppression decision belongs to the CLI, never to this file.
 //
 // The checkpoint (#143) needs the session's own model. omp's extension API has no
-// completion call, so the prompt goes in as a user message and the next assistant
-// message is piped to `checkpoint --save`.
+// completion call, so the prompt goes in as a user message and the first JSON-shaped
+// assistant message after it is piped to `checkpoint --save` (#153).
+//
+// Neither message can be hidden from the transcript: `pi.sendUserMessage(content,
+// { deliverAs })` takes no display flag (extensions.md, "Message delivery
+// semantics"), `display: false` belongs to `pi.sendMessage` custom payloads which
+// the model never reads, and the reply is the model's own entry either way. The
+// prompt is tagged so it reads as machinery, and it asks for JSON only.
 type Block = { type?: string; text?: string };
 type Content = string | Block[] | undefined;
 type Msg = { role?: string; content?: Content };
@@ -28,6 +34,11 @@ const EVERY_MESSAGES = 40;
 const QUIET_MS = 30 * 60_000;
 const MIN_MESSAGES = 5;
 const TICK_MS = 60_000;
+// Prose is the model answering the user, not the checkpoint, so it is skipped
+// instead of piped to `--save` as a reply that parses to nothing. Three of those
+// and the window goes back on offer (#153).
+const MAX_REPLY_TRIES = 3;
+const JSON_SHAPE = /^[[{]|```(?:json)?\s*[[{]|\[\s*\{/;
 
 function spawn(args: string[], stdin: string) {
   const proc = Bun.spawn([BIN, "hook", ...args], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
@@ -53,6 +64,13 @@ export default function neurostack(pi: Pi): void {
   let baseline = 0;
   let lastMessageAt = Date.now();
   let awaiting = false;
+  let tries = 0;
+
+  function save(reply: string) {
+    // An empty body tells the CLI the answer never arrived, so it re-offers
+    // the window rather than counting it as summarized.
+    spawn(["checkpoint", "--save", "--harness", "omp", "--session", SESSION], reply).unref();
+  }
 
   async function checkpoint() {
     if (awaiting || seen.length <= baseline) return;
@@ -60,6 +78,7 @@ export default function neurostack(pi: Pi): void {
     if (!text) return;
     baseline = seen.length;
     awaiting = true;
+    tries = 0;
     pi.sendUserMessage(`<neurostack-checkpoint>\n${text}\n</neurostack-checkpoint>`, { deliverAs: "followUp" });
   }
 
@@ -98,13 +117,22 @@ export default function neurostack(pi: Pi): void {
     next[i] = { ...messages[i], content: append(messages[i].content, `\n\n${text}`) };
     return { messages: next };
   });
-  // The model's answer to the checkpoint prompt arrives as an ordinary reply.
+  // The model's answer to the checkpoint prompt arrives as an ordinary reply, and
+  // not always the first one: it may talk to the user before it answers.
   pi.on("message_end", (e) => {
     const message = e.message ?? e;
     if (!awaiting || message.role !== "assistant") return;
-    awaiting = false;
     const reply = textOf(message.content).trim();
-    if (reply) spawn(["checkpoint", "--save", "--harness", "omp", "--session", SESSION], reply).unref();
+    if (JSON_SHAPE.test(reply)) {
+      awaiting = false;
+      tries = 0;
+      save(reply);
+      return;
+    }
+    if (++tries < MAX_REPLY_TRIES) return;
+    awaiting = false;
+    tries = 0;
+    save("");
   });
   // Harvest outlives the session: hand the transcript id over and detach.
   pi.on("session_shutdown", (_e, ctx) => {
