@@ -60,9 +60,11 @@ def _messages(turns: int) -> list[dict]:
     return out
 
 
-def _save_two(server, session="s-learn", harness="omp"):
+def _save_two(server, session="s-learn", harness="omp", suffix=""):
     server.replies["vault_remember"] = {"memory_id": 4242}
-    return run_checkpoint_save(TWO_ITEMS, session, harness, cfg=_cfg(server))
+    reply = TWO_ITEMS.replace("attempt", f"attempt{suffix}").replace(
+        "brief", f"brief{suffix}")
+    return run_checkpoint_save(reply, session, harness, cfg=_cfg(server))
 
 
 def _fail_run(server, session="s-learn", harness="omp"):
@@ -88,8 +90,8 @@ def test_save_records_two_memories_and_no_error(server):
 
 
 def test_saves_accumulate_within_the_day(server):
-    _save_two(server)
-    _save_two(server)
+    _save_two(server, suffix="-one")
+    _save_two(server, suffix="-two")
 
     assert load_learn_status()["saved_today"] == 4
 
@@ -101,7 +103,7 @@ def test_a_count_from_yesterday_is_not_reported_as_today(server):
     status["last_ok_at"] = yesterday.isoformat(timespec="seconds")
     learn_status_path().write_text(json.dumps(status))
 
-    _save_two(server)
+    _save_two(server, suffix="-today")
 
     assert load_learn_status()["saved_today"] == 2
 
@@ -264,6 +266,27 @@ def test_status_prints_the_line_and_a_row_per_source(server, isolated_home):
     assert "Sessions behind: 0" in proc.stdout
 
 
+def test_concurrent_successes_keep_the_daily_total():
+    from concurrent.futures import ThreadPoolExecutor
+
+    from neurostack.cli.learn_status import record_ok
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda i: record_ok(f"session-{i}", "omp", 1), range(40)))
+    assert load_learn_status()["saved_today"] == 40
+
+
+def test_busy_attempt_is_distinct_from_failure():
+    from neurostack.cli.learn_status import record_busy, record_ok
+
+    record_ok("session-a", "omp", 2)
+    record_busy("session-a", "omp")
+    status = load_learn_status()
+    assert status["last_result"] == "busy"
+    assert status["last_error"] is None
+    assert status["saved_today"] == 2
+
+
 def test_status_says_so_when_the_server_has_no_counts(server, isolated_home):
     server.replies["vault_stats"] = {"memories": {"total": 9}}
 
@@ -352,7 +375,7 @@ def test_a_session_whose_transcript_outran_the_offer_counts_as_behind(isolated_h
     _transcript(isolated_home, "s-behind", 6)
     state = load_state("s-behind")
     state.offered_index = 2
-    state.save()
+    state.save(checkpoint=True)
 
     assert sessions_behind() == 1
 
@@ -361,7 +384,7 @@ def test_a_session_the_model_has_seen_is_not_behind(isolated_home):
     _transcript(isolated_home, "s-caught-up", 6)
     state = load_state("s-caught-up")
     state.offered_index = 6
-    state.save()
+    state.save(checkpoint=True)
 
     assert sessions_behind() == 0
 
@@ -370,7 +393,7 @@ def test_a_state_file_older_than_a_week_is_not_counted(isolated_home):
     _transcript(isolated_home, "s-old", 6)
     state = load_state("s-old")
     state.offered_index = 0
-    state.save()
+    state.save(checkpoint=True)
     old = _state_path("s-old")
     stale = os.stat(old).st_mtime - 8 * 86400
     os.utime(old, (stale, stale))
