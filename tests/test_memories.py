@@ -8,6 +8,7 @@ from neurostack.memories import (
     VALID_ENTITY_TYPES,
     Memory,
     forget_memory,
+    get_memory_source_counts,
     get_memory_stats,
     list_archived_memories,
     merge_memories,
@@ -254,6 +255,33 @@ class TestMemoryStats:
         assert stats["total"] == 3
         assert stats["by_type"]["decision"] == 2
         assert stats["by_type"]["bug"] == 1
+
+
+class TestMemorySourceCounts:
+    """The 7-day grouped count `neurostack status` shows as its LEARN table."""
+
+    def test_groups_by_source_agent(self, in_memory_db):
+        save_memory(in_memory_db, content="One", source_agent="checkpoint/omp")
+        save_memory(in_memory_db, content="Two", source_agent="checkpoint/omp")
+        save_memory(in_memory_db, content="Three", source_agent="harvest/claude-code")
+
+        counts = get_memory_source_counts(in_memory_db)
+
+        assert counts == {"checkpoint/omp": 2, "harvest/claude-code": 1}
+
+    def test_older_memories_fall_outside_the_window(self, in_memory_db):
+        save_memory(in_memory_db, content="Recent", source_agent="checkpoint/cli")
+        in_memory_db.execute(
+            "UPDATE memories SET created_at = datetime('now', '-9 days')"
+            " WHERE content = 'Recent'"
+        )
+
+        assert get_memory_source_counts(in_memory_db) == {}
+
+    def test_a_memory_with_no_source_is_counted_as_unknown(self, in_memory_db):
+        save_memory(in_memory_db, content="Anonymous")
+
+        assert get_memory_source_counts(in_memory_db) == {"unknown": 1}
 
 
 class TestUpdateMemory:
