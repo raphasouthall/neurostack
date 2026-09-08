@@ -702,16 +702,15 @@ Session since the last checkpoint:
 def _checkpoint_body(window: list[dict]) -> str:
     """The window as a flat transcript.
 
-    User messages go in whole — they are the point. Everything the model wrote
-    or read back is clipped, because a single tool output can outweigh the
+    User and assistant text go in whole — the decisions and corrections live
+    there. Tool output is clipped, because a single dump can outweigh the
     entire conversation.
     """
     lines: list[str] = []
     for message in window:
         text = message["text"].strip()
         if text:
-            role = message["role"]
-            lines.append(f"[{role}] {text if role == 'user' else _clip(text)}")
+            lines.append(f"[{message['role']}] {text}")
         for name in message["tools"]:
             lines.append(f"[tool] {name}")
         for output in message["outputs"]:
