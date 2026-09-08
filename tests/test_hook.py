@@ -308,7 +308,10 @@ def test_omp_adapter_is_generated_without_an_address(isolated_home, tmp_path):
     assert "__NEUROSTACK_BIN__" not in source
     assert not any(part.replace(".", "").isdigit() and part.count(".") == 3
                    for part in source.split())
-    assert len(source.splitlines()) < 120
+    # The adapter maps events and captures the reply; every retrieval rule
+    # stays in the CLI. The ceiling rose once for the reply filter and the
+    # note on what omp's message API cannot hide (issue #153).
+    assert len(source.splitlines()) < 150
 
 
 @pytest.mark.skipif(BUN is None, reason="bun not installed")
