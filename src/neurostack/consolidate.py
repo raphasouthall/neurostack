@@ -92,6 +92,24 @@ def _slugify(title: str) -> str:
     return slug[:60] or "consolidated"
 
 
+def _existing_note(filename: str, preferred_folder: str) -> str | None:
+    """Vault-relative path of a note already named ``filename``, if any.
+
+    The preferred folder wins; otherwise the first match walking the vault.
+    """
+    from .tools import file_tools
+
+    root = file_tools._vault_root()
+    candidate = root / preferred_folder / filename
+    if candidate.is_file():
+        return f"{preferred_folder}/{filename}"
+    for path in sorted(root.rglob(filename)):
+        if any(part.startswith(".") for part in path.relative_to(root).parts):
+            continue
+        return path.relative_to(root).as_posix()
+    return None
+
+
 def _memory_rows(conn: sqlite3.Connection, memory_ids: list[int]) -> list[dict]:
     if not memory_ids:
         return []
@@ -320,6 +338,15 @@ def consolidate_replay(
             report["skipped"].append(plan)
             continue
 
+        if cluster["action"] != "extend":
+            slug = f"{_slugify(synth['title'])}.md"
+            twin = _existing_note(slug, cluster["target_folder"])
+            if twin:
+                # A note with this name already exists somewhere: the folder
+                # vote drifts night to night, so extend that one rather than
+                # leave twins in inbox/ and the project folder.
+                cluster["action"] = "extend"
+                cluster["target"] = twin
         if cluster["action"] == "extend":
             target = cluster["target"]
             abs_path = file_tools._vault_root() / target
