@@ -556,6 +556,17 @@ def test_run_without_a_command_says_so(server, capsys):
     assert _tool_calls(server, "vault_remember") == []
 
 
+def test_run_refuses_an_outdated_omp_adapter_session(server, capsys):
+    """A per-process `omp-<ts>-<pid>` id means the adapter predates #163: no
+    lock, no receipts, so it re-saves the same window. Refuse and say why."""
+    payload = {**_payload(_messages(20)), "session": "omp-mtsryxg2-437813"}
+    verdict = run_checkpoint(payload, "omp", cfg=_cfg(server, checkpoint_command="cat"))
+    assert verdict.text == ""
+    assert "restart omp" in capsys.readouterr().err
+    assert "outdated omp adapter" in load_learn_status()["last_error"]
+    assert _tool_calls(server, "vault_remember") == []
+
+
 def test_run_reads_legacy_window_once_and_leaves_file(server, tmp_path):
     server.replies["vault_remember"] = {"saved": True, "memory_id": 4}
     window = _write_window("s1", _messages(20))
