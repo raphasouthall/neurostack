@@ -52,6 +52,43 @@ def parse_trigger(tag: str) -> tuple[str, str] | None:
     return head, value
 
 
+# Tool names that a session calls dozens of times; a trigger on one of these
+# fires on nearly every call and only costs a retry (issue #167).
+_GENERIC_TOOLS = frozenset({
+    "bash", "read", "write", "edit", "glob", "grep", "eval", "task", "todo",
+    "ask", "hub", "ls", "cat", "curl", "ssh", "git", "python", "python3", "uv",
+    "az", "gh", "docker", "vault_search", "vault_remember", "vault_memories",
+    "vault_read_file", "search_code", "web_search",
+})
+_GENERIC_ERRORS = frozenset({
+    "error", "failed", "failure", "exception", "not found", "permission denied",
+    "timeout", "timed out", "traceback (most recent call last):", "migration",
+    "invalid", "denied", "refused",
+})
+_MIN_ERROR_CHARS = 8
+
+
+def is_broad_trigger(tag: str) -> bool:
+    """True when a well-formed trigger would match nearly everything.
+
+    Broad calling triggers name a generic tool; broad error triggers are
+    short, numeric, or a stock phrase; broad editing globs carry no literal
+    path text. Malformed tags are not triggers and return False.
+    """
+    parsed = parse_trigger(tag)
+    if parsed is None:
+        return False
+    event, value = parsed
+    value = value.strip().lower()
+    if event == "calling":
+        return value in _GENERIC_TOOLS
+    if event == "error":
+        return (len(value) < _MIN_ERROR_CHARS or value.isdigit()
+                or value.rstrip(":") in _GENERIC_ERRORS
+                or value in _GENERIC_ERRORS)
+    return not any(ch.isalnum() for ch in value)
+
+
 def _match(event: str, pattern: str, value: str) -> bool:
     if event == "editing":
         # fnmatch's ``*`` spans ``/``, so ``**`` needs no special casing.

@@ -101,3 +101,32 @@ def test_vault_remember_stores_trigger_tags_verbatim(db):
     assert "when-bogus:x" in tags
     hits = match_triggers(db, "calling", "vault_write_file")
     assert [h["memory_id"] for h in hits] == [m.memory_id]
+
+
+@pytest.mark.parametrize("tag", [
+    "when-calling:Bash", "when-calling:read", "when-calling:vault_search",
+    "when-error:404", "when-error:traceback (most recent call last):",
+    "when-error:error", "when-editing:*", "when-editing:**/*",
+])
+def test_is_broad_trigger_rejects_catch_alls(tag):
+    from neurostack.triggers import is_broad_trigger
+    assert is_broad_trigger(tag)
+
+
+@pytest.mark.parametrize("tag", [
+    "when-calling:az rest", "when-calling:vault_write_file",
+    "when-error:OAuth session expired", "when-editing:*.drawio",
+    "when-editing:models.yml", "plain-tag", "when-writing:x",
+])
+def test_is_broad_trigger_keeps_specific_and_non_triggers(tag):
+    from neurostack.triggers import is_broad_trigger
+    assert not is_broad_trigger(tag)
+
+
+def test_remember_args_drops_broad_triggers_from_field_and_tags():
+    from neurostack.cli.hook import _remember_args
+    item = {"content": "x", "tags": ["azure", "when-calling:Bash"],
+            "trigger": "when-error:404"}
+    assert _remember_args(item, "omp", None)["tags"] == ["azure"]
+    item = {"content": "x", "tags": ["azure"], "trigger": "when-calling:az rest"}
+    assert _remember_args(item, "omp", None)["tags"] == ["azure", "when-calling:az rest"]
