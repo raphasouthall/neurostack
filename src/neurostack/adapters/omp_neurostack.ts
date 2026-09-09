@@ -37,7 +37,7 @@ function spawn(args: string[], stdin: string) {
   return proc;
 }
 function event(name: string, payload: Record<string, unknown>, args: string[] = []) {
-  return spawn([name, ...args], JSON.stringify({ session, workspace: process.cwd(), ...payload }));
+  return spawn([name, ...args], JSON.stringify({ session, harness: "omp", workspace: process.cwd(), ...payload }));
 }
 async function hook(name: string, payload: Record<string, unknown>) {
   const proc = event(name, payload);
