@@ -130,3 +130,11 @@ def test_remember_args_drops_broad_triggers_from_field_and_tags():
     assert _remember_args(item, "omp", None)["tags"] == ["azure"]
     item = {"content": "x", "tags": ["azure"], "trigger": "when-calling:az rest"}
     assert _remember_args(item, "omp", None)["tags"] == ["azure", "when-calling:az rest"]
+
+
+def test_remember_args_coerces_unknown_entity_type():
+    from neurostack.cli.hook import _remember_args
+    made_up = {"content": "x", "entity_type": "correction"}
+    assert _remember_args(made_up, "omp", None)["entity_type"] == "observation"
+    real = {"content": "x", "entity_type": "bug"}
+    assert _remember_args(real, "omp", None)["entity_type"] == "bug"
