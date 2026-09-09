@@ -34,7 +34,7 @@ from pathlib import Path
 
 from ..client import ClientConfig, McpClient, load_client_config
 from ..redact import redact_secrets
-from ..triggers import parse_trigger
+from ..triggers import is_broad_trigger, parse_trigger
 from .events import post_event
 from .learn_status import cache_dir, learn_line, record_busy, record_error, record_ok
 
@@ -835,7 +835,11 @@ Reply with a JSON array, no prose around it:
 - trigger: optional, and only when the memory should surface on its own.
   "when-calling:<tool>" shows it before that tool runs, "when-editing:<glob>"
   before a matching file is edited, "when-error:<substring>" when a tool error
-  contains that text.
+  contains that text. Be specific: name the exact command ("az rest",
+  "vault_write_file"), a file name or narrow glob, or the distinctive part of
+  the error message. Never a generic tool (Bash, read, edit, vault_search), a
+  bare status code, "traceback", or "*": those fire on every call and are
+  dropped.
 - Reply with [] when nothing here is worth keeping.
 
 Pipe that JSON on stdin to:
@@ -976,19 +980,21 @@ def _remember_args(item: dict, harness: str, workspace: str | None) -> dict:
 
     A trigger is a tag, not a column (issue #131), so a well-formed `trigger`
     field joins `tags`; a malformed one is dropped rather than saved as a tag
-    that can never match.
+    that can never match, and a broad one (`when-calling:Bash`) is dropped
+    because it would match every call (issue #167).
     """
     content, _kinds = redact_secrets(item["content"])
     args: dict = {"content": content, "source_agent": f"checkpoint/{harness}"}
     entity_type = _first_str(item, "entity_type", "type")
     if entity_type:
         args["entity_type"] = entity_type
-    tags = [t for t in item.get("tags", []) if isinstance(t, str) and t] \
+    tags = [t for t in item.get("tags", [])
+            if isinstance(t, str) and t and not is_broad_trigger(t)] \
         if isinstance(item.get("tags"), list) else []
     trigger = _first_str(item, "trigger")
     if trigger:
         trigger, _kinds = redact_secrets(trigger)
-        if parse_trigger(trigger) and trigger not in tags:
+        if parse_trigger(trigger) and not is_broad_trigger(trigger) and trigger not in tags:
             tags.append(trigger)
     if tags:
         args["tags"] = tags
