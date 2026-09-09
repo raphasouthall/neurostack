@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..client import ClientConfig, McpClient, load_client_config
+from ..memories import VALID_ENTITY_TYPES
 from ..redact import redact_secrets
 from ..triggers import is_broad_trigger, parse_trigger
 from .events import post_event
@@ -1000,9 +1001,11 @@ def _remember_args(item: dict, harness: str, workspace: str | None) -> dict:
     """
     content, _kinds = redact_secrets(item["content"])
     args: dict = {"content": content, "source_agent": f"checkpoint/{harness}"}
+    # The extractor sometimes invents a type ("correction"); the server would
+    # reject the whole item with a plain-text error, so fall back to observation.
     entity_type = _first_str(item, "entity_type", "type")
     if entity_type:
-        args["entity_type"] = entity_type
+        args["entity_type"] = entity_type if entity_type in VALID_ENTITY_TYPES else "observation"
     tags = [t for t in item.get("tags", [])
             if isinstance(t, str) and t and not is_broad_trigger(t)] \
         if isinstance(item.get("tags"), list) else []
