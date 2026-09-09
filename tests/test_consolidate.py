@@ -236,6 +236,26 @@ class TestRealRun:
         assert reasons[a] == "promoted:covered.md"
         assert reasons[b] == "promoted:homelab/synth-title.md"
 
+    def test_same_slug_elsewhere_extends_it_instead_of_a_twin(self, vault_db, tmp_path,
+                                                              monkeypatch):
+        """The folder vote drifts night to night; a note that already carries
+        the slug in another folder is extended, never duplicated."""
+        conn, cid, a, b = vault_db
+        writes = self._patch_write(monkeypatch, tmp_path)
+        self._patch_llm(monkeypatch)
+        (tmp_path / "inbox").mkdir()
+        (tmp_path / "inbox" / "synth-title.md").write_text(
+            "---\ndate: 2026-01-01\n---\n\n# Synth Title\n\nearlier digest\n")
+
+        report = consolidate_replay(conn, dry_run=False)
+
+        assert report["skipped"] == []
+        paths = {w["path"] for w in writes}
+        assert "homelab/synth-title.md" not in paths
+        twin = next(w for w in writes if w["path"] == "inbox/synth-title.md")
+        assert "earlier digest" in twin["content"]
+        assert "## Synth Title (consolidated" in twin["content"]
+
     def test_failed_push_skips_and_keeps_memories(self, vault_db, tmp_path,
                                                   monkeypatch):
         conn, cid, a, b = vault_db
