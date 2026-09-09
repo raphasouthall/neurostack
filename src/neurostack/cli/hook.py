@@ -470,6 +470,8 @@ def _observe_error(client: McpClient, state: SessionState, text: str) -> None:
             _report_outcome(client, state, memory_id, False, "same error recurred")
 
 
+# `omp-<base36 ms>-<pid>`: the per-process fallback id older adapters used.
+_LEGACY_OMP_SESSION = re.compile(r"^omp-[0-9a-z]{6,10}-\d+$")
 _WHY = {"calling": "before calling", "editing": "before editing", "error": "on error"}
 
 
@@ -1114,6 +1116,11 @@ def run_checkpoint(payload: dict, harness: str = "cli",
     cfg = cfg or load_client_config()
     payload = _with_session(payload)
     session = _session_id(payload)
+    if harness == "omp" and _LEGACY_OMP_SESSION.match(session):
+        # The adapter that minted per-process ids predates the per-conversation
+        # lock and receipts (#163); left running, it re-saves the same window.
+        return _run_failed(session, harness,
+                           "outdated omp adapter in this window; restart omp", cfg)
     try:
         lock = _file_lock(_lock_path(session), blocking=False)
         with lock as acquired:
