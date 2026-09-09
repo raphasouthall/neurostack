@@ -470,9 +470,22 @@ def _observe_error(client: McpClient, state: SessionState, text: str) -> None:
             _report_outcome(client, state, memory_id, False, "same error recurred")
 
 
-def _format_hits(hits: list[dict], header: str) -> str:
-    lines = [f"- [memory {h['memory_id']}, {h['trigger']}] {h['content']}" for h in hits]
-    return header + "\n" + "\n".join(lines)
+_WHY = {"calling": "before calling", "editing": "before editing", "error": "on error"}
+
+
+def _format_hits(hits: list[dict], footer: str) -> str:
+    """One reminder per line, the memory text first.
+
+    Harnesses show the first line when the block is collapsed, so that line
+    must already say what fired and what it remembers; the explanation of the
+    mechanism goes last.
+    """
+    lines = []
+    for h in hits:
+        parsed = parse_trigger(h["trigger"])
+        why = f"{_WHY[parsed[0]]} {parsed[1]}" if parsed else h["trigger"]
+        lines.append(f"REMINDER (memory {h['memory_id']}, {why}): {h['content']}")
+    return "\n".join(lines) + "\n" + footer
 
 
 # ---------------------------------------------------------------------------
@@ -575,8 +588,8 @@ def _event_tool_call(client: McpClient, payload: dict, state: SessionState,
     return Verdict(
         _format_hits(
             hits,
-            "NeuroStack trigger memories apply to this call (fires once per session; "
-            "re-issue the call with them in mind):",
+            "NeuroStack showed these once for this session; the call was held so "
+            "you can re-issue it with them in mind.",
         ),
         block=True,
     )
@@ -599,7 +612,7 @@ def _event_tool_result(client: McpClient, payload: dict, state: SessionState,
     return Verdict(
         _format_hits(
             hits,
-            "NeuroStack trigger memories for this error (fires once per session):",
+            "NeuroStack showed these once for this session because the error matched.",
         )
     )
 
