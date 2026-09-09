@@ -164,14 +164,16 @@ def learn_report(client=None, cfg=None) -> dict:
     from ..client import McpClient, load_client_config
     from .hook import sessions_behind
 
+    resolved_cfg = cfg or load_client_config()
     report = {
         "line": learn_line(),
         "by_source": {},
         "sessions_behind": sessions_behind(),
         "warn": None,
         "error": None,
+        "event_url": resolved_cfg.event_url,
     }
-    client = client or McpClient(cfg or load_client_config())
+    client = client or McpClient(resolved_cfg)
     try:
         stats = client.call_json("vault_stats", {})
     finally:

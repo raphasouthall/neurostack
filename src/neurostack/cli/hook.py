@@ -35,6 +35,7 @@ from pathlib import Path
 from ..client import ClientConfig, McpClient, load_client_config
 from ..redact import redact_secrets
 from ..triggers import parse_trigger
+from .events import post_event
 from .learn_status import cache_dir, learn_line, record_busy, record_error, record_ok
 
 _CURSOR_EVENT = "checkpoint-cursor"
@@ -487,8 +488,10 @@ def _event_session_start(client: McpClient, payload: dict, state: SessionState,
     # The LEARN line comes first so it survives a brief that gets cut short,
     # and it is the whole verdict when the server never answers (issue #151).
     line = learn_line()
-    args: dict = {}
     workspace = _workspace(cfg, payload)
+    harness = _first_str(payload, "harness") or "cli"
+    post_event(cfg, "session-start", "ok", state.session, harness, workspace=workspace)
+    args: dict = {}
     if workspace:
         args["workspace"] = workspace
     text = client.call("session_brief", args)
@@ -1002,7 +1005,10 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
     if not _locked:
         with _file_lock(_lock_path(session), blocking=False) as acquired:
             if not acquired:
+                cfg = cfg or load_client_config()
                 record_busy(session, harness)
+                post_event(cfg, "checkpoint", "busy", session, harness,
+                           workspace=cfg.workspace_for(os.getcwd()))
                 return Verdict("neurostack: checkpoint already running")
             return run_checkpoint_save(reply, session, harness, cfg, client, _locked=True)
     cfg = cfg or load_client_config()
@@ -1060,14 +1066,22 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
         print(f"neurostack hook checkpoint: {client.errors[0]}", file=sys.stderr)
     if lost is not None:
         record_error(session, harness, lost)
+        post_event(cfg, "checkpoint", "failed", session, harness, error=lost,
+                   workspace=workspace)
         return Verdict(f"neurostack: checkpoint {lost}")
     if saved:
         record_ok(session, harness, saved)
+        post_event(cfg, "checkpoint", "saved", session, harness, saved=saved,
+                   workspace=workspace)
     if saved + duplicates != len(items):
-        record_error(session, harness, client.errors[0] if client.errors
-                     else f"saved {saved} of {len(items) - duplicates} remaining memories")
+        checkpoint_error = (client.errors[0] if client.errors
+                            else f"saved {saved} of {len(items) - duplicates} remaining memories")
+        record_error(session, harness, checkpoint_error)
+        post_event(cfg, "checkpoint", "failed", session, harness, error=checkpoint_error,
+                   saved=saved, workspace=workspace)
     elif not saved:
         record_ok(session, harness, 0)
+        post_event(cfg, "checkpoint", "saved", session, harness, saved=0, workspace=workspace)
     return Verdict(f"neurostack: saved {saved} of {len(items) - duplicates} checkpoint memories; "
                    f"skipped {duplicates} acknowledged duplicates; "
                    f"settled through {state.since_index}")
@@ -1086,9 +1100,11 @@ def run_checkpoint(payload: dict, harness: str = "cli",
         with lock as acquired:
             if not acquired:
                 record_busy(session, harness)
+                post_event(cfg, "checkpoint", "busy", session, harness,
+                           workspace=cfg.workspace_for(os.getcwd()))
                 return Verdict("neurostack: checkpoint already running")
             if not cfg.checkpoint_command:
-                return _run_failed(session, harness, "no checkpoint_command in client.toml")
+                return _run_failed(session, harness, "no checkpoint_command in client.toml", cfg)
             state = load_state(session)
             if state.checkpoint_end > state.since_index and not state.checkpoint_reply:
                 if state.checkpoint_messages:
@@ -1120,12 +1136,12 @@ def run_checkpoint(payload: dict, harness: str = "cli",
                 )
             except (OSError, subprocess.TimeoutExpired) as exc:
                 _reoffer(session)
-                return _run_failed(session, harness, f"{type(exc).__name__}: {exc}")
+                return _run_failed(session, harness, f"{type(exc).__name__}: {exc}", cfg)
             if proc.returncode != 0:
                 _reoffer(session)
                 tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
                 return _run_failed(session, harness,
-                                   f"command exited {proc.returncode}: {tail[0]}")
+                                   f"command exited {proc.returncode}: {tail[0]}", cfg)
             items = _parse_items(proc.stdout)
             if _lost_reply(proc.stdout, items) is not None:
                 _reoffer(session)
@@ -1135,12 +1151,14 @@ def run_checkpoint(payload: dict, harness: str = "cli",
             state.save(checkpoint=True)
             return run_checkpoint_save(proc.stdout, session, harness, cfg, _locked=True)
     except OSError as exc:
-        return _run_failed(session, harness, f"lock unavailable: {exc}")
+        return _run_failed(session, harness, f"lock unavailable: {exc}", cfg)
 
 
-def _run_failed(session: str, harness: str, message: str) -> Verdict:
+def _run_failed(session: str, harness: str, message: str, cfg: ClientConfig) -> Verdict:
     """One stderr line and one LEARN error, and no verdict text."""
     record_error(session, harness, message)
+    post_event(cfg, "checkpoint", "failed", session, harness, error=message,
+               workspace=cfg.workspace_for(os.getcwd()))
     print(f"neurostack hook checkpoint: {message}", file=sys.stderr)
     return Verdict()
 
@@ -1219,7 +1237,10 @@ def run_event(event: str, payload: dict, cfg: ClientConfig | None = None,
         try:
             with _file_lock(_lock_path(session), blocking=False) as acquired:
                 if not acquired:
+                    cfg = cfg or load_client_config()
                     record_busy(session, "hook")
+                    post_event(cfg, "checkpoint", "busy", session, "hook",
+                               workspace=cfg.workspace_for(os.getcwd()))
                     return Verdict("neurostack: checkpoint already running")
                 return run_event(event, payload, cfg, client, _checkpoint_locked=True)
         except OSError as exc:
@@ -1289,6 +1310,10 @@ def cmd_hook(args) -> None:
     # herdr marks a session idle from outside it and knows only the id.
     if getattr(args, "session", None):
         payload["session"] = args.session
+    # `--harness` is a CLI flag, not a stdin field; carry it through so
+    # `_event_session_start` can attribute its posted event (issue #165).
+    if getattr(args, "harness", None):
+        payload["harness"] = args.harness
 
     try:
         if event == "checkpoint" and getattr(args, "run", False):

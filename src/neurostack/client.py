@@ -44,6 +44,10 @@ class ClientConfig:
     checkpoint_command: str | None = None
     checkpoint_timeout_s: float = 300.0
     workspace_map: dict[str, str] = field(default_factory=dict)
+    # Where to POST session-start/checkpoint outcomes so a board can show
+    # agent activity next to the server-side jobs (issue #165). None means
+    # no webhook: `post_event` is a no-op.
+    event_url: str | None = None
 
     def urls(self) -> list[str]:
         """Primary URL, then the fallback when it is a distinct address."""
@@ -103,6 +107,8 @@ def load_client_config(path: Path | None = None) -> ClientConfig:
         cfg.fallback_url = raw["fallback_url"]
     if isinstance(raw.get("token"), str):
         cfg.token = raw["token"]
+    if isinstance(raw.get("event_url"), str) and raw["event_url"].strip():
+        cfg.event_url = raw["event_url"].strip()
     if isinstance(raw.get("checkpoint_command"), str) and raw["checkpoint_command"].strip():
         cfg.checkpoint_command = raw["checkpoint_command"].strip()
     for key in ("timeout_s", "harvest_timeout_s", "checkpoint_timeout_s"):
