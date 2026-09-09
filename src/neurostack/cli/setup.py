@@ -1973,3 +1973,5 @@ def _print_learn(report: dict) -> None:
         print("  Memories (7d):  none")
     print(f"  Sessions behind: {report['sessions_behind']}")
     print(f"  {warn_line(report.get('warn'))}")
+    if report.get("event_url"):
+        print(f"  events: {report['event_url']}")
