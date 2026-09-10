@@ -3,17 +3,14 @@
 // blocks the call and stdout is the reason, stdout otherwise gets injected. Every
 // retrieval and suppression decision belongs to the CLI, never to this file.
 //
-// Checkpoints say nothing to the session model. The adapter sends one frozen
-// message window to `hook checkpoint --run`; Python persists it before running
-// `checkpoint_command`, then saves outside the chat. `/save` starts the same
-// path and displays one brief status line.
+// Checkpoints are manual now (issue #176): `/save` hands a checkpoint request to
+// the server-side queue and shows whatever it answers — queued, already queued,
+// cap reached, or unreachable. Nothing here counts messages or watches a clock;
+// a background worker on the queue side decides when a checkpoint actually runs.
 type Block = { type?: string; text?: string };
 type Content = string | Block[] | undefined;
 type Msg = { role?: string; content?: Content };
-type Ctx = {
-  sessionManager?: { getSessionId?: () => string };
-  setInterval?: (fn: () => void, ms: number) => unknown;
-};
+type Ctx = { sessionManager?: { getSessionId?: () => string } };
 type Ev = Msg & { toolName?: string; input?: unknown; isError?: boolean; messages?: Msg[] };
 type Pi = {
   on: (e: string, h: (ev: Ev, ctx: Ctx) => unknown) => void;
@@ -24,11 +21,6 @@ type Pi = {
 const BIN = "__NEUROSTACK_BIN__";
 const FALLBACK_SESSION = `omp-${Date.now().toString(36)}-${process.pid}`;
 let session = FALLBACK_SESSION;
-// Checkpoint cadence: 40 new messages, or 30 quiet minutes with at least 5.
-const EVERY_MESSAGES = 40;
-const QUIET_MS = 30 * 60_000;
-const MIN_MESSAGES = 5;
-const TICK_MS = 60_000;
 
 function spawn(args: string[], stdin: string) {
   const proc = Bun.spawn([BIN, "hook", ...args], { stdin: "pipe", stdout: "pipe", stderr: "ignore" });
@@ -39,8 +31,8 @@ function spawn(args: string[], stdin: string) {
 function event(name: string, payload: Record<string, unknown>, args: string[] = []) {
   return spawn([name, ...args], JSON.stringify({ session, harness: "omp", workspace: process.cwd(), ...payload }));
 }
-async function hook(name: string, payload: Record<string, unknown>) {
-  const proc = event(name, payload);
+async function hook(name: string, payload: Record<string, unknown>, args: string[] = []) {
+  const proc = event(name, payload, args);
   const text = (await new Response(proc.stdout).text()).trim();
   return { text, code: await proc.exited };
 }
@@ -49,61 +41,19 @@ const textOf = (c: Content): string =>
 const append = (c: Content, note: string): Content =>
   typeof c === "string" ? c + note : [...(c ?? []), { type: "text", text: note }];
 
-async function cursor(): Promise<number> {
-  const { text } = await hook("checkpoint-cursor", {});
-  try {
-    const value = JSON.parse(text).since_index;
-    return typeof value === "number" && value >= 0 ? value : 0;
-  } catch {
-    return 0;
-  }
-}
-
 export default function neurostack(pi: Pi): void {
-  let seen: Msg[] = [];
-  let settled = 0;
-  let offered = 0;
-  let lastMessageAt = Date.now();
-
-  async function checkpoint(): Promise<{ pending: number; busy: boolean }> {
-    const pending = seen.length - settled;
-    if (pending < MIN_MESSAGES) return { pending, busy: false };
-    if (offered > settled) return { pending, busy: true };
-    offered = seen.length;
-    const submittedStart = settled;
-    const submittedEnd = offered;
-    const proc = event("checkpoint", { since_index: submittedStart,
-      messages: seen.slice(submittedStart, submittedEnd) },
-      ["--run", "--harness", "omp", "--session", session]);
-    void new Response(proc.stdout).text().then(async () => {
-      settled = Math.max(settled, await cursor());
-    }).finally(() => {
-      offered = settled;
-    });
-    proc.unref();
-    return { pending, busy: false };
-  }
-
   pi.on("session_start", async (_e, ctx) => {
     session = ctx?.sessionManager?.getSessionId?.() || FALLBACK_SESSION;
-    settled = await cursor();
-    offered = settled;
     const { text } = await hook("session-start", {});
     if (text) pi.sendMessage({ customType: "neurostack-brief", content: text, display: true });
-    ctx?.setInterval?.(() => {
-      if (Date.now() - lastMessageAt >= QUIET_MS) void checkpoint();
-    }, TICK_MS);
   });
   pi.registerCommand("save", {
-    description: "Checkpoint this session into NeuroStack memory",
+    description: "Queue a checkpoint for this session",
     handler: async () => {
-      const result = await checkpoint();
+      const { text } = await hook("enqueue", {}, ["--harness", "omp", "--session", session]);
       pi.sendMessage({
         customType: "neurostack-save",
-        content: result.pending < MIN_MESSAGES
-          ? `NeuroStack: nothing to save yet (${result.pending} messages)`
-          : result.busy ? "NeuroStack: checkpoint already running"
-          : "NeuroStack: checkpoint started in the background",
+        content: text || "NeuroStack: checkpoint queue did not answer",
         display: true,
       });
     },
@@ -119,9 +69,6 @@ export default function neurostack(pi: Pi): void {
   });
   pi.on("context", async (e) => {
     const messages = e.messages ?? [];
-    seen = messages;
-    lastMessageAt = Date.now();
-    if (messages.length - settled >= EVERY_MESSAGES) void checkpoint();
     const i = messages.map((m) => m.role).lastIndexOf("user");
     if (i < 0) return;
     const { text } = await hook("prompt", { prompt: textOf(messages[i].content) });
@@ -129,15 +76,5 @@ export default function neurostack(pi: Pi): void {
     const next = messages.slice();
     next[i] = { ...messages[i], content: append(messages[i].content, `\n\n${text}`) };
     return { messages: next };
-  });
-  // On shutdown, checkpoint what is left below the usual threshold; the
-  // detached `--run` outlives the process. No transcript harvest: it re-read
-  // the whole conversation on every quit and duplicated everything.
-  pi.on("session_shutdown", () => {
-    const pending = seen.length - settled;
-    if (pending <= 0 || offered > settled) return;
-    offered = seen.length;
-    event("checkpoint", { since_index: settled, messages: seen.slice(settled) },
-      ["--run", "--harness", "omp", "--session", session]).unref();
   });
 }
