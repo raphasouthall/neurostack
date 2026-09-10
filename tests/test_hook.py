@@ -373,14 +373,13 @@ def test_claude_adapter_writes_entries_that_invoke_the_hook(isolated_home):
     commands = {
         event: hooks[event][0]["hooks"][0]["command"]
         for event in ("SessionStart", "UserPromptSubmit", "PreToolUse",
-                      "PostToolUse", "Stop", "SessionEnd")
+                      "PostToolUse", "Stop")
     }
     assert commands["SessionStart"] == "/opt/bin/neurostack hook session-start --harness claude"
     assert commands["UserPromptSubmit"].endswith("hook prompt --harness claude")
     assert commands["PreToolUse"].endswith("hook tool-call --harness claude")
     assert commands["PostToolUse"].endswith("hook tool-result --harness claude")
-    assert "hook session-end --harness claude" in commands["SessionEnd"]
-    assert commands["SessionEnd"].startswith("nohup ")
+    assert "SessionEnd" not in hooks
     # The checkpoint summarises itself in the background now (issue #155).
     assert "hook checkpoint --run --harness claude" in commands["Stop"]
     assert commands["Stop"].startswith("nohup ")
@@ -420,8 +419,9 @@ def test_claude_install_replaces_the_hand_written_hooks(isolated_home):
     assert "sh '/home/u/.claude/hooks/adhd.sh'" in prompt_commands
     assert not any("neurostack-rag.py" in c for c in prompt_commands)
     assert sum("neurostack hook" in c for c in prompt_commands) == 1
-    session_end = [h["command"] for m in data["hooks"]["SessionEnd"] for h in m["hooks"]]
-    assert not any("neurostack-post-sessions.py" in c for c in session_end)
+    # The old hand-written SessionEnd harvest poster must be gone entirely:
+    # nothing in _CLAUDE_EVENTS writes to SessionEnd any more (issue #174).
+    assert "SessionEnd" not in data["hooks"]
     assert data["model"] == "opus"
 
 
@@ -432,7 +432,7 @@ def test_claude_install_is_idempotent(isolated_home):
         install_claude_adapter()
         _status, path = install_claude_adapter()
     hooks = json.loads(path.read_text())["hooks"]
-    assert [len(hooks[event]) for event in hooks] == [1, 1, 1, 1, 1, 1]
+    assert [len(hooks[event]) for event in hooks] == [1, 1, 1, 1, 1]
 
 
 # ---------------------------------------------------------------------------
