@@ -10,10 +10,17 @@ reporting live here instead of once per harness.
 The `checkpoint` event (issue #143) is the one that hands work back. `--run`
 is how it runs now (#147, #155): it builds the prompt, pipes it through
 `checkpoint_command` from client.toml (for example `claude -p --model sonnet`)
-and saves the reply, so a harness can spawn it detached and put nothing in the
-session. The window comes from the payload, from the `<session>.window.json`
-an adapter left behind, or from the transcript. `checkpoint --save` still
-reads a model's JSON reply on stdin, for herdr and for hand use.
+and saves the reply. `--format` names which transcript root to search when
+nothing else does — the server-side queue's worker calls `--run` over SSH
+with an empty stdin and only `--session`/`--harness`/`--format` to go on
+(issue #176). `checkpoint --save` still reads a model's JSON reply on
+stdin, for herdr and for hand use.
+
+Checkpoints are otherwise manual now: `enqueue` (issue #176) is the only
+thing an adapter's `/save` runs. It hands the request to the queue named by
+`queue_url` in client.toml and relays the one line the queue answers with —
+queued, already queued, cap reached, or unreachable — never running a
+checkpoint itself.
 
 Fail open, always: an unreachable server, a malformed payload, or an
 unexpected exception prints one line to stderr and exits 0.
@@ -38,10 +45,12 @@ from ..redact import redact_secrets
 from ..triggers import is_broad_trigger, parse_trigger
 from .events import post_event
 from .learn_status import cache_dir, learn_line, record_busy, record_error, record_ok
+from .queue import enqueue as queue_enqueue
 
 _CURSOR_EVENT = "checkpoint-cursor"
+ENQUEUE_EVENT = "enqueue"
 EVENTS = ("session-start", "prompt", "tool-call", "tool-result", "checkpoint",
-          _CURSOR_EVENT, "session-end")
+          _CURSOR_EVENT, "session-end", ENQUEUE_EVENT)
 
 # After a calling/editing trigger fires, watch this many later tool calls: the
 # next call says nothing either way — re-issuing the blocked call unchanged is
@@ -1224,6 +1233,20 @@ def _latest_session() -> str | None:
     return max(files, key=lambda p: p.stat().st_mtime).stem
 
 
+def run_enqueue(payload: dict, harness: str = "cli",
+                cfg: ClientConfig | None = None) -> tuple[int, str]:
+    """`hook enqueue`: hand a checkpoint request to the server-side queue.
+
+    No OS lock, no McpClient, no session state to load: the request either
+    lands on the queue or it does not, and this only relays which (#176).
+    """
+    cfg = cfg or load_client_config()
+    payload = _with_session(payload)
+    session = _session_id(payload)
+    workspace = _workspace(cfg, payload) or cfg.workspace_for(os.getcwd())
+    return queue_enqueue(cfg, session, harness, workspace)
+
+
 def sessions_behind() -> int:
     """Live sessions whose transcript has grown past the last offered window.
 
@@ -1343,6 +1366,22 @@ def cmd_hook(args) -> None:
     # `_event_session_start` can attribute its posted event (issue #165).
     if getattr(args, "harness", None):
         payload["harness"] = args.harness
+    # `--format` names the transcript root for a `--run` with no stdin, the
+    # only way the queue's SSH worker can say which one (issue #176).
+    if getattr(args, "format", None):
+        payload["format"] = args.format
+
+    if event == ENQUEUE_EVENT:
+        try:
+            code, line = run_enqueue(payload, getattr(args, "harness", None) or "cli")
+        except Exception as exc:  # a hook never takes the agent down with it
+            print(f"neurostack hook {event}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return
+        if line:
+            print(line)
+        if code:
+            sys.exit(code)
+        return
 
     try:
         if event == "checkpoint" and getattr(args, "run", False):

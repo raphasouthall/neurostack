@@ -172,6 +172,7 @@ def learn_report(client=None, cfg=None) -> dict:
         "warn": None,
         "error": None,
         "event_url": resolved_cfg.event_url,
+        "queue_url": resolved_cfg.queue_url,
     }
     client = client or McpClient(resolved_cfg)
     try:
