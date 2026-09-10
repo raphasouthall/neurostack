@@ -2,7 +2,7 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """Harness adapters for `neurostack hook` (issue #141).
 
-An adapter is the smallest thing that turns a harness's events into the five
+An adapter is the smallest thing that turns a harness's events into the
 hook events and applies the verdict. Claude Code needs settings entries; omp
 needs a small extension file. Both are generated here so a machine never
 carries hand-written client code with a server address baked into it.
@@ -24,44 +24,25 @@ _OMP_TEMPLATE = Path(__file__).parent / "omp_neurostack.ts"
 _BIN_PLACEHOLDER = "__NEUROSTACK_BIN__"
 
 # Claude Code hook event -> the `neurostack hook` event it maps to, plus the
-# seconds Claude waits for it. Stop is backgrounded and gets no timeout: a
-# checkpoint runs a model and may not hold up the turn. There is no SessionEnd
-# entry: the transcript harvest it used to run re-read the whole conversation
-# on every exit and duplicated what the checkpoints had already saved.
+# seconds Claude waits for it. There is no Stop entry: checkpoints are manual
+# now (issue #176), so `/save` is the only thing that ever runs one — see
+# `claude_save_command`. There is no SessionEnd entry either: the transcript
+# harvest it used to run re-read the whole conversation on every exit and
+# duplicated what the checkpoints had already saved.
 _CLAUDE_EVENTS = (
     ("SessionStart", "session-start", 15),
     ("UserPromptSubmit", "prompt", 15),
     ("PreToolUse", "tool-call", 10),
     ("PostToolUse", "tool-result", 10),
-    ("Stop", "checkpoint", None),
 )
 # Every event we ever wrote, so reinstall and remove also clear the retired
-# SessionEnd harvest entry from older installs.
-_OWNED_CLAUDE_EVENTS = tuple(event for event, _h, _t in _CLAUDE_EVENTS) + ("SessionEnd",)
-
-# Checkpoint cadence (issue #143), stated here because the adapters own the
-# trigger and the CLI owns the skip rules.
-CHECKPOINT_EVERY_MESSAGES = 40
-CHECKPOINT_QUIET_MINUTES = 30
-CHECKPOINT_MIN_MESSAGES = 5
-
-
-def _hook_log() -> Path:
-    return Path.home() / ".local" / "state" / "neurostack-hook.log"
+# Stop checkpoint trigger and SessionEnd harvest entry from older installs.
+_OWNED_CLAUDE_EVENTS = tuple(event for event, _h, _t in _CLAUDE_EVENTS) + ("Stop", "SessionEnd")
 
 
 def claude_hook_command(binary: str, event: str) -> str:
     """The shell command Claude Code runs for one hook event."""
-    command = f"{binary} hook {event} --harness claude"
-    if event == "checkpoint":
-        # The Stop hook used to block with exit 2 so the prompt reached the
-        # model, which put a prompt and a JSON reply in the transcript. `--run`
-        # summarizes through `checkpoint_command` instead, so there is nobody
-        # to talk to and nothing to wait for (issue #155).
-        command = f"{binary} hook checkpoint --run --harness claude"
-    if event == "checkpoint":
-        return f"nohup {command} >>{_hook_log()} 2>&1 &"
-    return command
+    return f"{binary} hook {event} --harness claude"
 
 
 def claude_hook_entries(binary: str) -> dict[str, list[dict]]:
@@ -135,14 +116,13 @@ def claude_save_command_path() -> Path:
 
 
 def claude_save_command(binary: str) -> str:
-    """The `/save` shell line: the Stop hook's command with stdin closed.
+    """The `/save` shell line: queue a checkpoint request (issue #176).
 
-    A slash command has no hook payload to pipe in, and `--run` reading a
-    terminal would sit there waiting for one. With stdin at /dev/null the CLI
-    takes the session from the newest state file the Stop hook wrote.
+    A slash command has no hook payload to pipe in. With stdin at /dev/null
+    the CLI takes the session from the newest state file `session-start`
+    wrote — the same fallback `--save` and `--run` have always used.
     """
-    return (f"nohup {binary} hook checkpoint --run --harness claude "
-            f"</dev/null >>{_hook_log()} 2>&1 &")
+    return f"{binary} hook enqueue --harness claude </dev/null"
 
 
 _CLAUDE_SAVE_COMMAND = """\
@@ -156,11 +136,10 @@ Run this:
 {command}
 ```
 
-It returns at once and the checkpoint finishes in the background: NeuroStack
-reads this session's transcript, summarizes it through `checkpoint_command`
-from `client.toml`, and writes the memories itself. Nothing comes back into
-this conversation, so there is nothing here to answer. Say that the checkpoint
-started and stop; `neurostack status` reports what it saved.
+It queues a checkpoint request with the server-side scheduler and prints one
+line: the session is queued, already queued, the daily cap is reached, or
+the queue could not be reached. Say that line and stop; `neurostack status`
+reports what got saved once the queue works through it.
 """
 
 
@@ -196,7 +175,6 @@ def install_claude_adapter() -> tuple[str, Path]:
         if not isinstance(hooks.get(event), list):
             hooks[event] = []
         hooks[event].extend(matchers)
-    _hook_log().parent.mkdir(parents=True, exist_ok=True)
     write_claude_save_command(binary)
     _write_json(path, settings)
     return "installed", path

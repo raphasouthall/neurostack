@@ -402,8 +402,10 @@ neurostack hooks status
 neurostack triggers stats                # fired, followed, ignored per memory (30d)
 neurostack triggers stats --days 7
 
-# Checkpoint: a background model writes the memories, mid-session
-neurostack hook checkpoint --run --session <id>  # summarise and save, silently
+# Checkpoint: manual only — a harness never fires one on its own (issue #176).
+# `/save` (both harnesses) queues a request instead of running one directly:
+neurostack hook enqueue --harness claude    # or: omp — POSTs to client.toml's queue_url
+neurostack hook checkpoint --run --session <id>  # what the queue's worker runs
 neurostack hook checkpoint --save               # a model's JSON reply on stdin
 ```
 
@@ -427,6 +429,15 @@ conversation retains the 256 most recent SHA-256 receipts of exact redacted cont
 facts produce different receipts. A connection can still fail after the server commits but
 before it acknowledges the write. Avoiding that remote duplicate requires server-side
 idempotency, which the current `vault_remember` contract does not provide.
+
+No harness fires a checkpoint on its own: `/save` is the only trigger, and it hands the
+request to a server-side queue named by `queue_url` in `client.toml` instead of running one
+directly. `neurostack hook enqueue --harness <claude|omp>` POSTs the request and prints one
+line back — queued, already queued, the daily cap reached, or unreachable — and exits 0 on a
+landed request, 1 otherwise. `neurostack status` shows the configured `queue_url` under LEARN.
+Whatever runs the actual checkpoint (a queue worker, a timer, herdr) passes `--format omp` or
+`--format claude-code` to `checkpoint --run` so it knows which transcript root to search when
+nothing is piped in on stdin.
 
 </details>
 
