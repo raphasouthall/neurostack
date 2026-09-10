@@ -372,17 +372,15 @@ def test_claude_adapter_writes_entries_that_invoke_the_hook(isolated_home):
     hooks = json.loads(path.read_text())["hooks"]
     commands = {
         event: hooks[event][0]["hooks"][0]["command"]
-        for event in ("SessionStart", "UserPromptSubmit", "PreToolUse",
-                      "PostToolUse", "Stop")
+        for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse")
     }
     assert commands["SessionStart"] == "/opt/bin/neurostack hook session-start --harness claude"
     assert commands["UserPromptSubmit"].endswith("hook prompt --harness claude")
     assert commands["PreToolUse"].endswith("hook tool-call --harness claude")
     assert commands["PostToolUse"].endswith("hook tool-result --harness claude")
     assert "SessionEnd" not in hooks
-    # The checkpoint summarises itself in the background now (issue #155).
-    assert "hook checkpoint --run --harness claude" in commands["Stop"]
-    assert commands["Stop"].startswith("nohup ")
+    # Checkpoints are manual now: no Stop entry fires one on its own (#176).
+    assert "Stop" not in hooks
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +405,13 @@ def test_claude_install_replaces_the_hand_written_hooks(isolated_home):
                             "command": "nohup python3 $HOME/scripts/"
                                        "neurostack-post-sessions.py --stdin-hook &"}]},
             ],
+            # An older, pre-#176 install wired Stop to fire a checkpoint on its
+            # own; reinstalling must strip it, since checkpoints are manual now.
+            "Stop": [
+                {"hooks": [{"type": "command",
+                            "command": "nohup /opt/bin/neurostack hook checkpoint --run "
+                                       "--harness claude >>/tmp/hook.log 2>&1 &"}]},
+            ],
         },
     }))
     with patch("neurostack.adapters._resolve_neurostack_binary",
@@ -422,6 +427,8 @@ def test_claude_install_replaces_the_hand_written_hooks(isolated_home):
     # The old hand-written SessionEnd harvest poster must be gone entirely:
     # nothing in _CLAUDE_EVENTS writes to SessionEnd any more (issue #174).
     assert "SessionEnd" not in data["hooks"]
+    # Same for a Stop entry an older adapter left behind (issue #176).
+    assert "Stop" not in data["hooks"]
     assert data["model"] == "opus"
 
 
@@ -432,7 +439,7 @@ def test_claude_install_is_idempotent(isolated_home):
         install_claude_adapter()
         _status, path = install_claude_adapter()
     hooks = json.loads(path.read_text())["hooks"]
-    assert [len(hooks[event]) for event in hooks] == [1, 1, 1, 1, 1]
+    assert [len(hooks[event]) for event in hooks] == [1, 1, 1, 1]
 
 
 # ---------------------------------------------------------------------------

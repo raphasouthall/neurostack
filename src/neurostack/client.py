@@ -48,6 +48,10 @@ class ClientConfig:
     # agent activity next to the server-side jobs (issue #165). None means
     # no webhook: `post_event` is a no-op.
     event_url: str | None = None
+    # Where to POST a checkpoint request so the server-side queue can run it
+    # in turn (issue #176). None means no queue: `enqueue` fails closed
+    # instead of guessing at a checkpoint the caller never asked to run.
+    queue_url: str | None = None
 
     def urls(self) -> list[str]:
         """Primary URL, then the fallback when it is a distinct address."""
@@ -109,6 +113,8 @@ def load_client_config(path: Path | None = None) -> ClientConfig:
         cfg.token = raw["token"]
     if isinstance(raw.get("event_url"), str) and raw["event_url"].strip():
         cfg.event_url = raw["event_url"].strip()
+    if isinstance(raw.get("queue_url"), str) and raw["queue_url"].strip():
+        cfg.queue_url = raw["queue_url"].strip()
     if isinstance(raw.get("checkpoint_command"), str) and raw["checkpoint_command"].strip():
         cfg.checkpoint_command = raw["checkpoint_command"].strip()
     for key in ("timeout_s", "harvest_timeout_s", "checkpoint_timeout_s"):

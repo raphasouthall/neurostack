@@ -1946,3 +1946,5 @@ def _print_learn(report: dict) -> None:
     print(f"  {warn_line(report.get('warn'))}")
     if report.get("event_url"):
         print(f"  events: {report['event_url']}")
+    if report.get("queue_url"):
+        print(f"  queue: {report['queue_url']}")

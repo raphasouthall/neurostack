@@ -830,6 +830,9 @@ def main():
     p.add_argument("--run", action="store_true",
                    help="checkpoint only: pipe the prompt through checkpoint_command "
                         "from client.toml and save the reply")
+    p.add_argument("--format", default=None, choices=["omp", "claude-code"],
+                   help="checkpoint --run only: transcript root to search when stdin "
+                        "carries no messages (the queue's SSH worker)")
     p.add_argument("--session", default=None,
                    help="Session id, for callers outside the session (herdr, /save)")
     p.set_defaults(func=cmd_hook)
