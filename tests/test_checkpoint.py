@@ -407,6 +407,7 @@ const messages = Array.from({{ length: {count} }}, (_v, i) => ({{
 await handlers.context?.({{ messages }}, ctx);
 await settle();
 {save}
+{shutdown}
 await settle();
 console.log(JSON.stringify({{
   injected: injected.length, shown, timer: intervalMs,
@@ -425,7 +426,7 @@ esac
 """
 
 
-def _drive(isolated_home, tmp_path, count, save=False):
+def _drive(isolated_home, tmp_path, count, save=False, shutdown=False):
     """Drive the generated extension under Bun with a stub `pi` and CLI."""
     calls = tmp_path / "calls.txt"
     calls.write_text("")
@@ -437,6 +438,7 @@ def _drive(isolated_home, tmp_path, count, save=False):
     driver.write_text(_DRIVER.format(
         adapter=adapter, count=count,
         save="await commands.save?.handler();" if save else "",
+        shutdown="await handlers.session_shutdown?.({}, ctx);" if shutdown else "",
     ))
     result = subprocess.run(
         [BUN, "run", str(driver)], capture_output=True, text=True, timeout=120,
@@ -470,6 +472,20 @@ def test_the_omp_adapter_leaves_a_short_window_alone(isolated_home, tmp_path):
     # 12 messages is under the 40-message rule, so the CLI is never asked.
     assert spawned == []
     assert cursors == ["hook checkpoint-cursor"]
+    assert _windows() == []
+    assert reported["shown"] == []
+
+
+@pytest.mark.skipif(BUN is None, reason="bun not installed")
+def test_the_omp_adapter_checkpoints_on_shutdown_instead_of_posting_a_transcript(
+    isolated_home, tmp_path,
+):
+    """Issue #174: shutdown checkpoints the pending window; no session-end poster."""
+    reported, spawned, cursors = _drive(isolated_home, tmp_path, 12, shutdown=True)
+    assert len(spawned) == 1
+    assert spawned[0].endswith("--session conversation-stable-42")
+    all_calls = (tmp_path / "calls.txt").read_text()
+    assert "session-end" not in all_calls
     assert _windows() == []
     assert reported["shown"] == []
 

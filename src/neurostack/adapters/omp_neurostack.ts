@@ -130,8 +130,14 @@ export default function neurostack(pi: Pi): void {
     next[i] = { ...messages[i], content: append(messages[i].content, `\n\n${text}`) };
     return { messages: next };
   });
-  // Harvest outlives the session: hand the transcript id over and detach.
-  pi.on("session_shutdown", (_e, ctx) => {
-    event("session-end", { session: ctx?.sessionManager?.getSessionId?.() ?? session, format: "omp" }).unref();
+  // On shutdown, checkpoint what is left below the usual threshold; the
+  // detached `--run` outlives the process. No transcript harvest: it re-read
+  // the whole conversation on every quit and duplicated everything.
+  pi.on("session_shutdown", () => {
+    const pending = seen.length - settled;
+    if (pending <= 0 || offered > settled) return;
+    offered = seen.length;
+    event("checkpoint", { since_index: settled, messages: seen.slice(settled) },
+      ["--run", "--harness", "omp", "--session", session]).unref();
   });
 }
