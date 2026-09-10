@@ -243,6 +243,9 @@ class TestRealRun:
         conn, cid, a, b = vault_db
         writes = self._patch_write(monkeypatch, tmp_path)
         self._patch_llm(monkeypatch)
+        archived = tmp_path / "archive" / "inbox" / "2026-08"
+        archived.mkdir(parents=True)
+        (archived / "synth-title.md").write_text("---\ndate: 2026-08-01\n---\n\nretired\n")
         (tmp_path / "inbox").mkdir()
         (tmp_path / "inbox" / "synth-title.md").write_text(
             "---\ndate: 2026-01-01\n---\n\n# Synth Title\n\nearlier digest\n")
@@ -252,6 +255,7 @@ class TestRealRun:
         assert report["skipped"] == []
         paths = {w["path"] for w in writes}
         assert "homelab/synth-title.md" not in paths
+        assert not any("archive/" in p for p in paths)
         twin = next(w for w in writes if w["path"] == "inbox/synth-title.md")
         assert "earlier digest" in twin["content"]
         assert "## Synth Title (consolidated" in twin["content"]
