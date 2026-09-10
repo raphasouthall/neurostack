@@ -93,9 +93,10 @@ def _slugify(title: str) -> str:
 
 
 def _existing_note(filename: str, preferred_folder: str) -> str | None:
-    """Vault-relative path of a note already named ``filename``, if any.
+    """Vault-relative path of a live note already named ``filename``, if any.
 
     The preferred folder wins; otherwise the first match walking the vault.
+    Archived notes never count: extending one resurrects retired content.
     """
     from .tools import file_tools
 
@@ -104,7 +105,8 @@ def _existing_note(filename: str, preferred_folder: str) -> str | None:
     if candidate.is_file():
         return f"{preferred_folder}/{filename}"
     for path in sorted(root.rglob(filename)):
-        if any(part.startswith(".") for part in path.relative_to(root).parts):
+        parts = path.relative_to(root).parts
+        if any(part.startswith(".") for part in parts) or "archive" in parts:
             continue
         return path.relative_to(root).as_posix()
     return None
