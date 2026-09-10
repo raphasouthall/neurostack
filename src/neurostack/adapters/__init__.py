@@ -24,17 +24,20 @@ _OMP_TEMPLATE = Path(__file__).parent / "omp_neurostack.ts"
 _BIN_PLACEHOLDER = "__NEUROSTACK_BIN__"
 
 # Claude Code hook event -> the `neurostack hook` event it maps to, plus the
-# seconds Claude waits for it. SessionEnd and Stop are backgrounded and get no
-# timeout: harvesting a transcript takes minutes, a checkpoint runs a model,
-# and neither may hold up the turn.
+# seconds Claude waits for it. Stop is backgrounded and gets no timeout: a
+# checkpoint runs a model and may not hold up the turn. There is no SessionEnd
+# entry: the transcript harvest it used to run re-read the whole conversation
+# on every exit and duplicated what the checkpoints had already saved.
 _CLAUDE_EVENTS = (
     ("SessionStart", "session-start", 15),
     ("UserPromptSubmit", "prompt", 15),
     ("PreToolUse", "tool-call", 10),
     ("PostToolUse", "tool-result", 10),
     ("Stop", "checkpoint", None),
-    ("SessionEnd", "session-end", None),
 )
+# Every event we ever wrote, so reinstall and remove also clear the retired
+# SessionEnd harvest entry from older installs.
+_OWNED_CLAUDE_EVENTS = tuple(event for event, _h, _t in _CLAUDE_EVENTS) + ("SessionEnd",)
 
 # Checkpoint cadence (issue #143), stated here because the adapters own the
 # trigger and the CLI owns the skip rules.
@@ -56,7 +59,7 @@ def claude_hook_command(binary: str, event: str) -> str:
         # summarizes through `checkpoint_command` instead, so there is nobody
         # to talk to and nothing to wait for (issue #155).
         command = f"{binary} hook checkpoint --run --harness claude"
-    if event in ("checkpoint", "session-end"):
+    if event == "checkpoint":
         return f"nohup {command} >>{_hook_log()} 2>&1 &"
     return command
 
@@ -69,9 +72,8 @@ def claude_hook_entries(binary: str) -> dict[str, list[dict]]:
         if timeout is not None:
             hook["timeout"] = timeout
         matcher: dict = {"hooks": [hook]}
-        # SessionEnd and Stop are session-wide: Claude Code has nothing to
-        # match them against.
-        if claude_event not in ("SessionEnd", "Stop"):
+        # Stop is session-wide: Claude Code has nothing to match it against.
+        if claude_event != "Stop":
             matcher["matcher"] = "*"
         entries[claude_event] = [matcher]
     return entries
@@ -186,8 +188,7 @@ def install_claude_adapter() -> tuple[str, Path]:
         return "no-binary", path
 
     settings = _read_json(path)
-    events = tuple(event for event, _h, _t in _CLAUDE_EVENTS)
-    _strip_neurostack_hooks(settings, events)
+    _strip_neurostack_hooks(settings, _OWNED_CLAUDE_EVENTS)
     if not isinstance(settings.get("hooks"), dict):
         settings["hooks"] = {}
     hooks = settings["hooks"]
@@ -205,8 +206,7 @@ def remove_claude_adapter() -> bool:
     """Strip our hook entries and the `/save` command from Claude Code."""
     path = _claude_settings_path()
     settings = _read_json(path)
-    events = tuple(event for event, _h, _t in _CLAUDE_EVENTS)
-    removed = _strip_neurostack_hooks(settings, events)
+    removed = _strip_neurostack_hooks(settings, _OWNED_CLAUDE_EVENTS)
     save_command = claude_save_command_path()
     if save_command.exists():
         save_command.unlink()

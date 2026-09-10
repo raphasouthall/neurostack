@@ -211,14 +211,6 @@ _DECAY_TIMER = {
     "on_calendar": "*-*-* 03:00:00",
 }
 
-_HARVEST_TIMER = {
-    "unit": "neurostack-harvest",
-    "service_desc": "NeuroStack harvest - extract session insights",
-    "exec": "%h/.local/bin/neurostack harvest --sessions 3",
-    "timer_desc": "Run neurostack harvest every hour",
-    "on_calendar": "hourly",
-}
-
 
 def _install_user_timer(spec):
     """Write and enable a systemd --user timer/service pair; return the timer path."""
@@ -320,17 +312,9 @@ def cmd_hooks(args):
         if harness:
             _install_harness_adapter(args, harness)
             return
-        hook_type = args.type or "harvest-timer"
+        hook_type = args.type or "decay-timer"
 
-        if hook_type == "harvest-timer":
-            timer_path = _install_user_timer(_HARVEST_TIMER)
-            if args.json:
-                print(json.dumps({"installed": True, "type": hook_type}))
-            else:
-                print(f"  \033[32m\u2713\033[0m Installed {hook_type}")
-                print(f"    Timer: {timer_path}")
-                print("    Check: systemctl --user status neurostack-harvest.timer")
-        elif hook_type == "decay-timer":
+        if hook_type == "decay-timer":
             timer_path = _install_user_timer(_DECAY_TIMER)
             if args.json:
                 print(json.dumps({"installed": True, "type": hook_type}))
@@ -345,26 +329,17 @@ def cmd_hooks(args):
         import subprocess
 
         from ..adapters import claude_adapter_installed, omp_extension_path
-        from ..setup import claude_session_hook_installed
 
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", "neurostack-harvest.timer"],
-            capture_output=True, text=True,
-        )
-        active = result.stdout.strip() == "active"
         decay = subprocess.run(
             ["systemctl", "--user", "is-active", "neurostack-decay.timer"],
             capture_output=True, text=True,
         )
         decay_active = decay.stdout.strip() == "active"
-        claude_hook = claude_session_hook_installed()
         claude_adapter = claude_adapter_installed()
         omp_adapter = omp_extension_path().exists()
         if args.json:
             print(json.dumps({
-                "harvest_timer": "active" if active else "inactive",
                 "decay_timer": "active" if decay_active else "inactive",
-                "claude_session_hook": "installed" if claude_hook else "absent",
                 "claude_adapter": "installed" if claude_adapter else "absent",
                 "omp_adapter": "installed" if omp_adapter else "absent",
             }))
@@ -372,9 +347,7 @@ def cmd_hooks(args):
             def _mark(flag, yes="installed", no="absent"):
                 return f"\033[32m{yes}\033[0m" if flag else f"\033[31m{no}\033[0m"
 
-            print(f"  harvest-timer: {_mark(active, 'active', 'inactive')}")
             print(f"  decay-timer: {_mark(decay_active, 'active', 'inactive')}")
-            print(f"  claude-session-hook: {_mark(claude_hook)}")
             print(f"  claude-adapter: {_mark(claude_adapter)}")
             print(f"  omp-adapter: {_mark(omp_adapter)}")
 
@@ -382,11 +355,12 @@ def cmd_hooks(args):
         if harness:
             _remove_harness_adapter(args, harness)
             return
-        hook_type = getattr(args, "type", None) or "harvest-timer"
+        hook_type = getattr(args, "type", None) or "decay-timer"
         if hook_type == "decay-timer":
             _remove_user_timer("neurostack-decay")
         else:
-            _remove_user_timer("neurostack-harvest")
+            print(f"  Unknown hook type: {hook_type}")
+            return
         if args.json:
             print(json.dumps({"removed": True, "type": hook_type}))
         else:

@@ -396,30 +396,11 @@ def _full_index_pipeline(vault_root, cfg):
         print(f"  \033[33m!\033[0m Communities failed: {e}")
 
 
-def _install_automation_hooks():
-    """Install harvest timer + Claude Code session hook; print a summary."""
-    import shutil
-
-    from ..setup import install_claude_session_hook
-    from .sessions import _HARVEST_TIMER, _install_user_timer
-
-    print("\n  \033[1mAutomation hooks\033[0m")
-
-    if shutil.which("systemctl"):
-        timer_path = _install_user_timer(_HARVEST_TIMER)
-        print(f"  \033[32m✓\033[0m Harvest timer (hourly): {timer_path}")
-    else:
-        print("  - Harvest timer skipped (no systemd on this system)")
-
-    result = install_claude_session_hook()
-    if result == "installed":
-        print("  \033[32m✓\033[0m Claude Code SessionEnd hook installed")
-    elif result == "already":
-        print("  \033[32m✓\033[0m Claude Code SessionEnd hook already present")
-    elif result == "not-detected":
-        print("  - Claude Code not detected — session hook skipped")
-    else:
-        print("  \033[33m!\033[0m neurostack binary not found — session hook skipped")
+def _print_checkpoint_hint():
+    """Point the user at the harness adapter that runs checkpoints."""
+    print("\n  \033[1mLearning\033[0m")
+    print("  Checkpoints run once a harness adapter is installed:"
+          " neurostack hooks install --harness claude|omp")
 
 
 def cmd_init(args):
@@ -449,8 +430,7 @@ def cmd_init(args):
         if mode == "full" and args.index:
             _full_index_pipeline(vault_root, cfg)
 
-        if getattr(args, "hooks", True):
-            _install_automation_hooks()
+        _print_checkpoint_hint()
 
         print("\n  \033[32m✓\033[0m Setup complete.")
         print("    neurostack search 'query' # Search")
@@ -574,13 +554,6 @@ def cmd_init(args):
             else:
                 embed_api_key = index_llm_api_key
 
-    # ── Step 6: Automation hooks ──
-    print()
-    install_hooks = getattr(args, "hooks", True) and _confirm(
-        "Install automation hooks? (harvest timer + session hooks)",
-        default=True,
-    )
-
     # ── Summary ──
     print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
     print(f"  Mode:       {mode}")
@@ -597,7 +570,6 @@ def cmd_init(args):
         print("  Index:      full (summaries + triples + communities)")
     else:
         print("  Index:      lite (FTS5 only)")
-    print(f"  Hooks:      {'yes' if install_hooks else 'no'}")
 
     if not _confirm("\n  Proceed?", default=True):
         print("\n  Cancelled.")
@@ -634,8 +606,7 @@ def cmd_init(args):
         # Lite: create vault with FTS5-only index
         _do_init(vault_root, cfg, profession_name=profession, run_index=True)
 
-    if install_hooks:
-        _install_automation_hooks()
+    _print_checkpoint_hint()
 
     # 4. PATH check
     local_bin = str(Path.home() / ".local" / "bin")
