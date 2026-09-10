@@ -89,10 +89,6 @@ def main():
         "--no-index", action="store_false", dest="index",
         help="Skip indexing after init",
     )
-    p.add_argument(
-        "--no-hooks", action="store_false", dest="hooks", default=True,
-        help="Skip automation hook setup (harvest timer + session hooks)",
-    )
     p.add_argument("--pull-models", action="store_true", default=False,
                    help="Pull Ollama models (full mode)")
     p.add_argument("--embed-model", help="Embedding model override")
@@ -809,16 +805,16 @@ def main():
     hp = hooks_sub.add_parser("install", help="Install automation hooks")
     hp.add_argument("--harness", default=None, choices=list(ADAPTER_HARNESSES),
                     help="Install the harness adapter that invokes 'neurostack hook'")
-    hp.add_argument("--type", default="harvest-timer",
-                    choices=["harvest-timer", "decay-timer"],
-                    help="Timer to install when --harness is absent (default: harvest-timer)")
+    hp.add_argument("--type", default="decay-timer",
+                    choices=["decay-timer"],
+                    help="Timer to install when --harness is absent (default: decay-timer)")
     hooks_sub.add_parser("status", help="Show hook status")
     rp = hooks_sub.add_parser("remove", help="Remove automation hooks")
     rp.add_argument("--harness", default=None, choices=list(ADAPTER_HARNESSES),
                     help="Remove the harness adapter")
-    rp.add_argument("--type", default="harvest-timer",
-                    choices=["harvest-timer", "decay-timer"],
-                    help="Timer to remove when --harness is absent (default: harvest-timer)")
+    rp.add_argument("--type", default="decay-timer",
+                    choices=["decay-timer"],
+                    help="Timer to remove when --harness is absent (default: decay-timer)")
     p.set_defaults(func=cmd_hooks)
 
     # hook (issue #141): one harness event in on stdin, context or a block out

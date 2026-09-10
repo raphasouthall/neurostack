@@ -392,9 +392,9 @@ neurostack memories prune --expired
 # Sessions
 neurostack harvest --sessions 5          # extract session insights
 neurostack sessions search "query"       # search transcripts
-neurostack hooks install                 # hourly harvest timer
+neurostack hooks install                 # decay timer (default --type)
 
-# Harness hooks (session brief, auto-RAG, trigger memories, checkpoints, harvest)
+# Harness hooks (session brief, auto-RAG, trigger memories, checkpoints)
 neurostack hooks install --harness claude   # or: omp
 neurostack hooks status
 

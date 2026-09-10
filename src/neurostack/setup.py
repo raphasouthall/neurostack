@@ -139,7 +139,7 @@ def _merge_mcp_entry(config: dict, key: str, server_name: str, entry: dict) -> t
 
 
 # ---------------------------------------------------------------------------
-# Claude Code SessionEnd harvest hook
+# Claude Code settings helpers
 # ---------------------------------------------------------------------------
 
 def _claude_settings_path() -> Path:
@@ -162,75 +162,9 @@ def _resolve_neurostack_binary() -> str | None:
     return None
 
 
-def _session_hook_command(binary: str) -> str:
-    """Backgrounded harvest command that logs instead of vanishing."""
-    log = Path.home() / ".local" / "state" / "neurostack-hook.log"
-    return f"nohup {binary} harvest --sessions 1 >>{log} 2>&1 &"
-
-
 def claude_code_detected() -> bool:
     """True when a Claude Code installation is present for this user."""
     return (Path.home() / ".claude").is_dir()
-
-
-def claude_session_hook_installed() -> bool:
-    """True when a neurostack harvest SessionEnd hook is already configured."""
-    settings = _read_json(_claude_settings_path())
-    for matcher in settings.get("hooks", {}).get("SessionEnd", []):
-        for hook in matcher.get("hooks", []):
-            if "neurostack" in hook.get("command", "") and "harvest" in hook.get("command", ""):
-                return True
-    return False
-
-
-def install_claude_session_hook() -> str:
-    """Add a SessionEnd harvest hook to Claude Code settings.
-
-    Returns one of: 'installed', 'already', 'not-detected', 'no-binary'.
-    Idempotent: an existing neurostack harvest hook is left untouched.
-    """
-    if not claude_code_detected():
-        return "not-detected"
-    if claude_session_hook_installed():
-        return "already"
-    binary = _resolve_neurostack_binary()
-    if binary is None:
-        return "no-binary"
-
-    path = _claude_settings_path()
-    settings = _read_json(path)
-    session_end = settings.setdefault("hooks", {}).setdefault("SessionEnd", [])
-    session_end.append({
-        "hooks": [{"type": "command", "command": _session_hook_command(binary)}],
-    })
-    (Path.home() / ".local" / "state").mkdir(parents=True, exist_ok=True)
-    _write_json(path, settings)
-    return "installed"
-
-
-def remove_claude_session_hook() -> bool:
-    """Strip neurostack harvest SessionEnd hooks. Returns True if any removed."""
-    path = _claude_settings_path()
-    settings = _read_json(path)
-    session_end = settings.get("hooks", {}).get("SessionEnd")
-    if not session_end:
-        return False
-    removed = False
-    kept = []
-    for matcher in session_end:
-        hooks = [
-            h for h in matcher.get("hooks", [])
-            if not ("neurostack" in h.get("command", "") and "harvest" in h.get("command", ""))
-        ]
-        if len(hooks) != len(matcher.get("hooks", [])):
-            removed = True
-        if hooks or not matcher.get("hooks"):
-            matcher["hooks"] = hooks
-            kept.append(matcher)
-    if removed:
-        settings["hooks"]["SessionEnd"] = kept
-        _write_json(path, settings)
-    return removed
 
 
 # ---------------------------------------------------------------------------
