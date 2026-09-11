@@ -837,6 +837,64 @@ def cmd_stats(args):
         print("Communities: \033[33mnot built\033[0m — run: neurostack communities build")
 
 
+def _verify_prediction_errors(conn, args) -> None:
+    """Re-run each flagged query and resolve flags that no longer reproduce.
+
+    A flag is a single observation frozen at search time. Re-indexing, a new
+    note or a ranking change can make it obsolete, and nothing re-checked it,
+    so the report filled with notes that no longer answer the query at all.
+    """
+    from ..search import PREDICTION_ERROR_SIM_THRESHOLD, hybrid_search
+
+    rows = conn.execute(
+        "SELECT error_id, note_path, query, context FROM prediction_errors"
+        " WHERE resolved_at IS NULL AND memory_id IS NULL"
+        " AND error_type IN ('low_overlap', 'coverage_gap', 'contextual_mismatch')"
+    ).fetchall()
+
+    stale, kept, failed = [], [], []
+    for r in rows:
+        try:
+            results = hybrid_search(r["query"], top_k=5, context=r["context"],
+                                    record=False)
+        except Exception as exc:
+            failed.append({"error_id": r["error_id"], "reason": str(exc)[:120]})
+            continue
+        paths = [res.note_path for res in results]
+        # The flag blamed the top hit. It only still holds if that note is
+        # still what the query pulls up first.
+        if paths[:1] == [r["note_path"]]:
+            kept.append(r["note_path"])
+        else:
+            stale.append({"error_id": r["error_id"], "note_path": r["note_path"],
+                          "query": r["query"],
+                          "top_now": paths[0] if paths else ""})
+
+    if stale:
+        conn.executemany(
+            "UPDATE prediction_errors SET resolved_at = datetime('now')"
+            " WHERE error_id = ?",
+            [(s["error_id"],) for s in stale],
+        )
+        conn.commit()
+
+    if args.json:
+        print(json.dumps({"checked": len(rows), "kept": len(kept),
+                          "resolved_stale": len(stale), "errors": failed,
+                          "stale": stale}, indent=2, default=str))
+        return
+
+    print(f"Verified {len(rows)} flag(s): {len(kept)} still reproduce, "
+          f"{len(stale)} resolved as stale.")
+    for s in stale:
+        print(f"  stale: {s['note_path']}")
+        print(f"    query \"{s['query'][:70]}\" now returns {s['top_now']}")
+    for f in failed:
+        print(f"  could not check flag {f['error_id']}: {f['reason']}")
+    if PREDICTION_ERROR_SIM_THRESHOLD and not rows:
+        print("No unresolved note flags to verify.")
+
+
 def cmd_prediction_errors(args):
     from ..schema import DB_PATH, get_db
     from ..search import PREDICTION_ERROR_MIN_OCCURRENCES, _normalize_workspace
@@ -858,6 +916,10 @@ def cmd_prediction_errors(args):
             return
         print(f"Resolved {len(paths)} note(s).")
         return
+    if args.verify:
+        _verify_prediction_errors(conn, args)
+        return
+
 
     # Note-centric only: memory_drift rows (memory_id set) are surfaced by the
     # vault_prediction_errors MCP tool, not this aggregated note view (issue #38).
@@ -937,7 +999,8 @@ def cmd_prediction_errors(args):
 
     for etype, entries in sorted(by_type.items()):
         label = {
-            "low_overlap": "LOW OVERLAP  \u2014 semantically distant from retrieval query",
+            "low_overlap": "LOW OVERLAP  \u2014 a closer note ranked below this one",
+            "coverage_gap": "COVERAGE GAP \u2014 no note fits the query; write one",
             "contextual_mismatch": "CONTEXT MISMATCH \u2014 surfaced outside expected domain",
         }.get(etype, etype.upper())
         print(f"\u25b6 {label}")
@@ -953,7 +1016,8 @@ def cmd_prediction_errors(args):
             print(f"    query: \"{sample}\"")
         print()
 
-    print("Resolve a note: cli.py prediction-errors --resolve <note_path>")
+    print("Resolve a note: neurostack prediction-errors --resolve <note_path>")
+    print("Drop flags that no longer reproduce: neurostack prediction-errors --verify")
 
 
 def cmd_record_usage(args):

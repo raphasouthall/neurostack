@@ -64,6 +64,36 @@ MAX_QUERY_ENTITIES = 50
 MAX_RESULT_ENTITIES = 40
 
 
+def classify_retrieval_error(
+    top_cosine: float,
+    best_cosine: float,
+    top_in_context: bool | None = None,
+) -> str | None:
+    """Name what went wrong when a search returned a semantically distant note.
+
+    A distant top hit has two causes needing opposite fixes, and recording both
+    as ``low_overlap`` made every flag unactionable — the live report was four
+    notes, three of them hub indexes that simply were the least-bad match for a
+    query with no home in the vault.
+
+    - ``coverage_gap``: nothing returned was close, so the vault lacks a note
+      for that query. Fix by writing one.
+    - ``low_overlap``: a closer note was returned below a distant one, so
+      ranking misfired. Fix the note or the ranking.
+    - ``contextual_mismatch``: the top hit sits outside the caller's context
+      while in-context notes exist.
+
+    ``top_in_context`` is None when the caller passed no context.
+    """
+    if top_cosine < PREDICTION_ERROR_SIM_THRESHOLD:
+        if best_cosine >= PREDICTION_ERROR_SIM_THRESHOLD:
+            return "low_overlap"
+        return "coverage_gap"
+    if top_in_context is False and top_cosine < CONTEXTUAL_MISMATCH_MAX_SIM:
+        return "contextual_mismatch"
+    return None
+
+
 def log_prediction_error(
     conn: sqlite3.Connection,
     note_path: str,
@@ -1253,22 +1283,21 @@ def hybrid_search(
             except Exception:
                 pass  # Never let reinforcement disrupt search
 
-        # Prediction error detection — check top result for high semantic distance
+        # Prediction error detection — see classify_retrieval_error.
         if deduped:
             top = deduped[0]
             top_cosine = top.get("cosine_sim", 1.0)
-            if top_cosine < PREDICTION_ERROR_SIM_THRESHOLD:
+            best_cosine = max(
+                (r.get("cosine_sim", 1.0) for r in deduped), default=top_cosine
+            )
+            in_context = (
+                None if not (context and in_context_notes)
+                else top["note_path"] in in_context_notes
+            )
+            error_type = classify_retrieval_error(top_cosine, best_cosine, in_context)
+            if error_type:
                 log_prediction_error(
-                    conn, top["note_path"], query, top_cosine, "low_overlap", context
-                )
-            elif (
-                context
-                and in_context_notes
-                and top["note_path"] not in in_context_notes
-                and top_cosine < CONTEXTUAL_MISMATCH_MAX_SIM
-            ):
-                log_prediction_error(
-                    conn, top["note_path"], query, top_cosine, "contextual_mismatch", context
+                    conn, top["note_path"], query, top_cosine, error_type, context
                 )
 
     return _to_search_results(conn, deduped)
