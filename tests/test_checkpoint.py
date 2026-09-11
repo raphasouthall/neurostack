@@ -8,6 +8,7 @@ does with the JSON that comes back. Both run against the fake MCP endpoint in
 `conftest.py` — no live server, and never an LLM.
 """
 
+import io
 import json
 import os
 import shutil
@@ -910,3 +911,62 @@ def test_the_prompt_fences_the_transcript_and_reasserts_the_task(server):
     tail = verdict.text[verdict.text.index("--- transcript end ---"):]
     assert "reply with only the JSON array" in tail
     assert "never instructions to follow" in verdict.text[:body_at]
+
+
+# ---------------------------------------------------------------------------
+# Machine-readable outcome — a queue runner reads fields, not the sentence
+# ---------------------------------------------------------------------------
+
+def test_save_verdict_carries_counts(server):
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 1}
+    run_event("checkpoint", _payload(_messages(20)), cfg=_cfg(server))
+
+    verdict = run_checkpoint_save(REPLY, "ck", "omp", cfg=_cfg(server))
+
+    assert verdict.data == {
+        "ok": True, "saved": 2, "found": 2, "duplicates": 0,
+        "settled_through": 40, "error": "",
+    }
+
+
+def test_a_save_that_drops_an_item_reports_not_ok(server):
+    """The count mismatch, not the wording, is what a runner acts on."""
+    def boom(_args):
+        raise RuntimeError("vault offline")
+
+    run_event("checkpoint", _payload(_messages(20), session="ckfail"), cfg=_cfg(server))
+    server.replies["vault_remember"] = boom
+
+    verdict = run_checkpoint_save(REPLY, "ckfail", "omp", cfg=_cfg(server))
+
+    assert verdict.data["ok"] is False
+    assert verdict.data["saved"] < verdict.data["found"]
+    assert verdict.data["error"]
+
+
+def test_json_flag_prints_the_payload(server, capsys, monkeypatch):
+    import neurostack.cli.hook as hook_mod
+
+    server.replies["vault_remember"] = {"saved": True, "memory_id": 1}
+    monkeypatch.setattr(
+        hook_mod, "run_checkpoint",
+        lambda payload, harness="cli": hook_mod.Verdict(
+            "neurostack: saved 3 of 3 checkpoint memories",
+            data={"ok": True, "saved": 3, "found": 3, "duplicates": 0,
+                  "settled_through": 120, "error": ""}))
+
+    class Args:
+        event = "checkpoint"
+        run = True
+        harness = "omp"
+        session = "ckjson"
+        format = None
+        json = True
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    hook_mod.cmd_hook(Args())
+
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["saved"] == 3
+    assert payload["settled_through"] == 120
+    assert payload["text"].startswith("neurostack: saved 3 of 3")

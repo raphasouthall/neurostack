@@ -82,10 +82,16 @@ _XD_PREFIX = "xd://"
 
 @dataclass
 class Verdict:
-    """What the harness should do with this event."""
+    """What the harness should do with this event.
+
+    ``data`` carries the same outcome as ``text`` in machine-readable form, so
+    a queue runner can read fields instead of regexing the sentence. Only the
+    checkpoint paths fill it in.
+    """
 
     text: str = ""
     block: bool = False
+    data: dict | None = None
 
 
 @dataclass
@@ -1193,11 +1199,15 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
         record_error(session, harness, lost)
         post_event(cfg, "checkpoint", "failed", session, harness, error=lost,
                    workspace=workspace)
-        return Verdict(f"neurostack: checkpoint {lost}")
+        return Verdict(f"neurostack: checkpoint {lost}",
+                       data={"ok": False, "saved": 0, "found": len(items),
+                             "duplicates": duplicates, "settled_through":
+                             state.since_index, "error": lost})
     if saved:
         record_ok(session, harness, saved)
         post_event(cfg, "checkpoint", "saved", session, harness, saved=saved,
                    workspace=workspace)
+    checkpoint_error = ""
     if saved + duplicates != len(items):
         checkpoint_error = (client.errors[0] if client.errors
                             else f"saved {saved} of {len(items) - duplicates} remaining memories")
@@ -1209,7 +1219,12 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
         post_event(cfg, "checkpoint", "saved", session, harness, saved=0, workspace=workspace)
     return Verdict(f"neurostack: saved {saved} of {len(items) - duplicates} checkpoint memories; "
                    f"skipped {duplicates} acknowledged duplicates; "
-                   f"settled through {state.since_index}")
+                   f"settled through {state.since_index}",
+                   data={"ok": saved + duplicates == len(items), "saved": saved,
+                         "found": len(items) - duplicates,
+                         "duplicates": duplicates,
+                         "settled_through": state.since_index,
+                         "error": checkpoint_error})
 
 
 def run_checkpoint(payload: dict, harness: str = "cli",
@@ -1290,7 +1305,8 @@ def _run_failed(session: str, harness: str, message: str, cfg: ClientConfig) -> 
     post_event(cfg, "checkpoint", "failed", session, harness, error=message,
                workspace=cfg.workspace_for(os.getcwd()))
     print(f"neurostack hook checkpoint: {message}", file=sys.stderr)
-    return Verdict()
+    return Verdict(data={"ok": False, "saved": 0, "found": 0,
+                         "duplicates": 0, "error": message})
 
 
 def _with_session(payload: dict) -> dict:
@@ -1482,6 +1498,14 @@ def cmd_hook(args) -> None:
             verdict = run_event(event, payload)
     except Exception as exc:  # a hook never takes the agent down with it
         print(f"neurostack hook {event}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return
+
+    # A queue runner asking for --json reads fields instead of matching the
+    # sentence; wording changes then stop breaking it silently.
+    if getattr(args, "json", False) and verdict.data is not None:
+        print(json.dumps({"text": verdict.text, **verdict.data}, default=str))
+        if verdict.block:
+            sys.exit(2)
         return
 
     if verdict.block:
