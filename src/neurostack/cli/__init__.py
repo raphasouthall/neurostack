@@ -13,6 +13,7 @@ from .api import cmd_api, cmd_bundle, cmd_serve
 from .hook import EVENTS as HOOK_EVENTS
 from .hook import cmd_hook
 from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
+from .jobqueue import cmd_queue
 from .memories import cmd_consolidate, cmd_memories, cmd_promote, cmd_synthesize
 from .search import (
     cmd_ask,
@@ -868,6 +869,31 @@ def main():
     p.add_argument("--demote", action="store_true",
                    help="Demote dormant notes to status=dormant in note_metadata")
     p.set_defaults(func=cmd_decay)
+
+    # queue — the scheduler-facing job queue (issue #191)
+    p = sub.add_parser("queue", help="Job queue for background extraction work")
+    p.add_argument("queue_action", nargs="?", default="list",
+                   choices=["add", "claim", "finish", "reap", "list"],
+                   help="What to do (default: list)")
+    p.add_argument("--queue", default=None,
+                   help="Queue name, e.g. checkpoint or harvest")
+    p.add_argument("--key", default=None,
+                   help="Dedupe key: the session id or transcript path")
+    p.add_argument("--payload", default=None,
+                   help="JSON object stored with the job")
+    p.add_argument("--job-id", type=int, default=0, help="Job to finish")
+    p.add_argument("--saved", type=int, default=0, help="Memories saved")
+    p.add_argument("--output", default=None, help="Outcome text to record")
+    p.add_argument("--failed", action="store_true", help="Finish as failed")
+    p.add_argument("--cap", type=int, default=0,
+                   help="Max jobs finished per day, 0 for uncapped")
+    p.add_argument("--stale-minutes", type=int, default=30,
+                   help="Age at which a running job counts as abandoned")
+    p.add_argument("--concurrency", type=int, default=1,
+                   help="Jobs allowed to run at once")
+    p.add_argument("--status", default=None, help="Filter the listing")
+    p.add_argument("--limit", type=int, default=50, help="Max rows to list")
+    p.set_defaults(func=cmd_queue)
 
     # cooccurrence
     p = sub.add_parser("cooccurrence", help="Inspect entity co-occurrence pairs")
