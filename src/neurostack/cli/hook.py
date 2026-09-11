@@ -1272,7 +1272,12 @@ def run_checkpoint(payload: dict, harness: str = "cli",
                 state.save(checkpoint=True)
                 client.close()
             if not prompt.text:
-                return Verdict()
+                # Nothing new to summarise is a success, not a failure: a queue
+                # runner that treats a silent exit as broken retries forever.
+                return Verdict(data={"ok": True, "saved": 0, "found": 0,
+                                     "duplicates": 0,
+                                     "settled_through": state.since_index,
+                                     "error": ""})
             try:
                 proc = subprocess.run(
                     cfg.checkpoint_command, shell=True, input=prompt.text,
