@@ -66,6 +66,12 @@ class Config:
     # phi3.5 is MIT licensed.
     index_llm_model: str = "phi3.5"
     index_llm_api_key: str = ""
+    # Shell command that answers a prompt on stdin and prints the reply on
+    # stdout, used instead of `index_llm_url` when set. It exists so a job can
+    # run through a subscription CLI (`claude -p --model haiku`), which has no
+    # HTTP endpoint, optionally over an SSH hop to the host holding the login.
+    index_llm_command: str = ""
+    index_llm_command_timeout_s: float = 300.0
     embed_api_key: str = ""
     session_dir: Path = field(default_factory=lambda: Path.home() / ".claude" / "projects")
     api_host: str = "127.0.0.1"
@@ -194,9 +200,12 @@ def load_config() -> Config:
             if key in data:
                 setattr(cfg, key, Path(os.path.expanduser(data[key])))
         for key in ("embed_url", "embed_model", "index_llm_url", "index_llm_model",
-                    "index_llm_api_key", "embed_api_key", "api_host", "api_key"):
+                    "index_llm_api_key", "index_llm_command", "embed_api_key",
+                    "api_host", "api_key"):
             if key in data:
                 setattr(cfg, key, data[key])
+        if "index_llm_command_timeout_s" in data:
+            cfg.index_llm_command_timeout_s = float(data["index_llm_command_timeout_s"])
         for old, new in _LEGACY_LLM_KEYS.items():
             if old not in data:
                 continue
