@@ -168,11 +168,31 @@ def cluster_observations(
     return clusters, no_embedding
 
 
+def run_index_llm(prompt: str, command: str, timeout_s: float) -> str:
+    """Answer ``prompt`` with a shell command: stdin in, stdout out.
+
+    The escape hatch for a model with no HTTP endpoint — a subscription CLI,
+    or an SSH hop to the host that holds its login (issue #184).
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        command, shell=True, input=prompt, capture_output=True, text=True,
+        timeout=timeout_s,
+    )
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
+        raise RuntimeError(f"index_llm_command exited {proc.returncode}: {tail[0]}")
+    return proc.stdout
+
+
 def _synthesize(
     members: list[dict],
     index_llm_url: str,
     index_llm_model: str,
     api_key: str = "",
+    command: str = "",
+    command_timeout_s: float = 300.0,
 ) -> str:
     """One LLM synthesis for a cluster. Raises on failure — caller skips cluster."""
     import httpx
@@ -187,20 +207,23 @@ def _synthesize(
         )
     prompt = _SYNTH_PROMPT.format(n=len(members), observations="\n\n".join(blocks))
 
-    resp = httpx.post(
-        f"{index_llm_url}/v1/chat/completions",
-        headers=_auth_headers(api_key),
-        json={
-            "model": index_llm_model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "temperature": 0.2,
-            "max_tokens": 1000,
-        },
-        timeout=300.0,
-    )
-    resp.raise_for_status()
-    content = _strip_fences(resp.json()["choices"][0]["message"]["content"])
+    if command:
+        content = _strip_fences(run_index_llm(prompt, command, command_timeout_s))
+    else:
+        resp = httpx.post(
+            f"{index_llm_url}/v1/chat/completions",
+            headers=_auth_headers(api_key),
+            json={
+                "model": index_llm_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+                "temperature": 0.2,
+                "max_tokens": 1000,
+            },
+            timeout=300.0,
+        )
+        resp.raise_for_status()
+        content = _strip_fences(resp.json()["choices"][0]["message"]["content"])
     if not content:
         raise ValueError("LLM returned an empty synthesis")
     return content
@@ -314,7 +337,11 @@ def synthesize_observations(
         plan = _plan(cluster)
         members = cluster["members"]
         try:
-            learning = _synthesize(members, index_llm_url, index_llm_model, cfg.index_llm_api_key)
+            learning = _synthesize(
+                members, index_llm_url, index_llm_model, cfg.index_llm_api_key,
+                command=cfg.index_llm_command,
+                command_timeout_s=cfg.index_llm_command_timeout_s,
+            )
         except Exception as exc:
             plan["error"] = f"synthesis failed: {exc}"
             report["skipped"].append(plan)
