@@ -153,19 +153,41 @@ def cmd_sessions(args):
 
 def cmd_harvest(args):
     """Extract insights from recent AI coding sessions."""
-    from ..harvest import get_provider_names, harvest_sessions
+    from ..harvest import (
+        get_provider_names,
+        harvest_session_file,
+        harvest_sessions,
+        pending_sessions,
+    )
 
     if getattr(args, "list_providers", False):
         for name in get_provider_names():
             print(f"  {name}")
         return
 
-    result = harvest_sessions(
-        n_sessions=args.sessions,
-        dry_run=args.dry_run,
-        embed_url=args.embed_url,
-        provider=getattr(args, "provider", None),
-    )
+    if getattr(args, "pending", False):
+        # A scan window of 1 is the harvest default; listing wants the backlog.
+        scan = args.sessions if args.sessions > 1 else 50
+        rows = pending_sessions(scan, provider=getattr(args, "provider", None))
+        if args.json:
+            print(json.dumps(rows, indent=2, default=str))
+            return
+        for row in rows:
+            print(f"  {row['provider']:<12} {row['path']}")
+        print(f"\n  {len(rows)} transcript(s) pending of {scan} scanned")
+        return
+
+    if getattr(args, "session", None):
+        result = harvest_session_file(
+            args.session, dry_run=args.dry_run, embed_url=args.embed_url,
+        )
+    else:
+        result = harvest_sessions(
+            n_sessions=args.sessions,
+            dry_run=args.dry_run,
+            embed_url=args.embed_url,
+            provider=getattr(args, "provider", None),
+        )
 
     if args.json:
         print(json.dumps(result, indent=2, default=str))
