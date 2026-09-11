@@ -1169,16 +1169,7 @@ def harvest_sessions(
     if not all_sessions:
         return {"error": "No sessions found", "saved": [], "skipped": [], "counts": {}}
 
-    # Filter out sessions already harvested at their current mtime
-    harvest_state = _load_harvest_state()
-    sessions = []
-    for s in all_sessions:
-        prev_mtime = harvest_state.get(str(s.path))
-        # `mcp:` keys hold a transcript hash, never an mtime — compare numbers only.
-        if isinstance(prev_mtime, (int, float)) and prev_mtime == s.mtime:
-            log.debug("Skipping already-harvested session: %s (%s)", s.path.name, s.provider)
-            continue
-        sessions.append(s)
+    sessions = _unharvested(all_sessions)
 
     if not sessions:
         return {"sessions_scanned": 0, "counts": {}, "saved": [], "skipped": [],
@@ -1194,8 +1185,8 @@ def harvest_sessions(
             saved=saved, skipped=skipped, counts=counts,
         )
 
-    # Record harvested sessions (skip on dry run)
     if not dry_run:
+        harvest_state = _load_harvest_state()
         for s in sessions:
             harvest_state[str(s.path)] = s.mtime
         _save_harvest_state(harvest_state)
@@ -1203,6 +1194,88 @@ def harvest_sessions(
     return {
         "sessions_scanned": len(sessions),
         "providers": list({s.provider for s in sessions}),
+        "counts": counts,
+        "saved": saved,
+        "skipped": skipped,
+        "dry_run": dry_run,
+    }
+
+
+def _unharvested(sessions: list[SessionFile]) -> list[SessionFile]:
+    """Sessions whose current mtime has not been harvested yet.
+
+    ``mcp:`` keys hold a transcript hash, never an mtime, so only numeric
+    state values count as a previous harvest of this file.
+    """
+    state = _load_harvest_state()
+    fresh = []
+    for s in sessions:
+        seen = state.get(str(s.path))
+        if isinstance(seen, (int, float)) and seen == s.mtime:
+            continue
+        fresh.append(s)
+    return fresh
+
+
+def pending_sessions(n_sessions: int = 50, provider: str | None = None) -> list[dict]:
+    """Transcripts waiting to be harvested, newest first (issue #180).
+
+    A queue scheduler enqueues these; nothing is read or written here beyond
+    the state file, so calling it is cheap and repeatable.
+    """
+    return [
+        {
+            "path": str(s.path),
+            "provider": s.provider,
+            "mtime": s.mtime,
+            "session_id": s.path.stem,
+        }
+        for s in _unharvested(find_recent_sessions(n_sessions, provider=provider))
+    ]
+
+
+def harvest_session_file(
+    path: str,
+    dry_run: bool = False,
+    embed_url: str | None = None,
+    use_llm: bool = True,
+    scan: int = 200,
+) -> dict:
+    """Harvest exactly one transcript, addressed by path (issue #180).
+
+    The provider registry owns format detection, so the path must be one the
+    registry already discovers; an unknown path is an error rather than a
+    guess at its shape.
+    """
+    from .config import get_config
+    from .schema import DB_PATH, get_db
+
+    target = Path(path).expanduser()
+    match = next(
+        (s for s in find_recent_sessions(scan) if s.path == target), None,
+    )
+    if match is None:
+        return {"error": f"No provider owns transcript {target}",
+                "saved": [], "skipped": [], "counts": {}}
+
+    cfg = get_config()
+    conn = get_db(DB_PATH)
+    saved: list[dict] = []
+    skipped: list[dict] = []
+    counts: dict[str, int] = {}
+    _harvest_messages(
+        conn, extract_messages(match), match.provider,
+        cfg=cfg, embed_url=embed_url or cfg.embed_url, dry_run=dry_run,
+        use_llm=use_llm, saved=saved, skipped=skipped, counts=counts,
+    )
+    if not dry_run:
+        state = _load_harvest_state()
+        state[str(match.path)] = match.mtime
+        _save_harvest_state(state)
+    return {
+        "sessions_scanned": 1,
+        "providers": [match.provider],
+        "path": str(match.path),
         "counts": counts,
         "saved": saved,
         "skipped": skipped,

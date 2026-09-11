@@ -889,6 +889,14 @@ def main():
         help="List available session providers and exit",
     )
     p.add_argument(
+        "--pending", action="store_true",
+        help="List transcripts not harvested yet and exit (queue schedulers)",
+    )
+    p.add_argument(
+        "--session", type=str, default=None, metavar="PATH",
+        help="Harvest exactly this transcript file",
+    )
+    p.add_argument(
         "--dry-run", "-n", action="store_true",
         help="Show what would be saved without saving",
     )
