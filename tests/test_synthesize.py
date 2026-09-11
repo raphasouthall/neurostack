@@ -291,3 +291,64 @@ class TestRealRun:
                 "SELECT tags FROM memories WHERE memory_id = ?", (mid,)
             ).fetchone()["tags"]
             assert "superseded_by" not in tags
+
+
+class TestIndexLlmCommand:
+    """A subscription CLI has no HTTP endpoint, so the prompt goes to a shell
+    command on stdin and the reply comes back on stdout (issue #184)."""
+
+    def test_command_answers_instead_of_http(self):
+        members = [{"memory_id": 1, "created_at": "2026-09-01", "content": "a fact"}]
+        out = synth_mod._synthesize(
+            members, "http://unused.invalid", "ignored",
+            command="cat >/dev/null; printf 'the synthesised learning'",
+        )
+        assert out == "the synthesised learning"
+
+    def test_command_receives_the_prompt_on_stdin(self, tmp_path):
+        seen = tmp_path / "prompt.txt"
+        members = [{"memory_id": 7, "created_at": "2026-09-01",
+                    "content": "BASSnet needs 8000 MB"}]
+        synth_mod._synthesize(
+            members, "http://unused.invalid", "ignored",
+            command=f"tee {seen} >/dev/null; printf 'ok'",
+        )
+        prompt = seen.read_text()
+        assert "BASSnet needs 8000 MB" in prompt
+        assert "memory 7" in prompt
+
+    def test_a_failing_command_raises_so_the_cluster_is_skipped(self):
+        members = [{"memory_id": 1, "created_at": "2026-09-01", "content": "a fact"}]
+        with pytest.raises(RuntimeError, match="exited 3"):
+            synth_mod._synthesize(
+                members, "http://unused.invalid", "ignored",
+                command="echo 'session limit reached' >&2; exit 3",
+            )
+
+    def test_an_empty_reply_still_raises(self):
+        members = [{"memory_id": 1, "created_at": "2026-09-01", "content": "a fact"}]
+        with pytest.raises(ValueError, match="empty synthesis"):
+            synth_mod._synthesize(
+                members, "http://unused.invalid", "ignored", command="true",
+            )
+
+    def test_fences_are_stripped_from_a_cli_reply(self):
+        members = [{"memory_id": 1, "created_at": "2026-09-01", "content": "a fact"}]
+        out = synth_mod._synthesize(
+            members, "http://unused.invalid", "ignored",
+            command="printf '```\\nthe learning\\n```'",
+        )
+        assert out == "the learning"
+
+
+def test_config_reads_index_llm_command(tmp_path, monkeypatch):
+    import neurostack.config as cfgmod
+    path = tmp_path / "config.toml"
+    path.write_text('index_llm_command = "claude -p --model haiku"\n'
+                    'index_llm_command_timeout_s = 120\n')
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", path)
+    cfgmod._config = None
+    cfg = cfgmod.get_config()
+    assert cfg.index_llm_command == "claude -p --model haiku"
+    assert cfg.index_llm_command_timeout_s == 120.0
+    cfgmod._config = None
