@@ -1,169 +1,188 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""Tests for the checkpoint queue client (issue #176).
+"""Tests for the job queue (issue #191).
 
-`enqueue` never runs a checkpoint — it POSTs one request and relays what the
-queue answers. `urlopen` is monkeypatched instead of touching the network:
-deterministic, and it proves the request shape and every reply the queue's
-contract defines (queued, duplicate, cap reached, unreachable) without a
-live receiver.
+These pin the four rules the orchestrator used to own, each of which broke at
+least once while it lived in n8n JavaScript: one live job per key, a daily cap
+on finished jobs, a job claimed by exactly one worker, and a running job whose
+runner vanished getting failed instead of wedging the queue.
 """
 
-import io
-import json
-import urllib.error
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-import neurostack.cli.queue as queue_mod
-from neurostack.cli.queue import enqueue
-from neurostack.client import ClientConfig
+from neurostack.queue import QueueLimits, add, claim, finish, listing, reap
 
 
-def _cfg(**kwargs):
-    return ClientConfig(queue_url="http://queue.test/webhook/checkpoint-request", **kwargs)
+def _iso(moment):
+    return moment.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _body(request) -> dict:
-    return json.loads(request.data.decode("utf-8"))
-
-
-class _FakeResponse:
-    def __init__(self, body: dict):
-        self._body = json.dumps(body).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self._body
-
-
-def _capture(monkeypatch, body: dict):
-    """Patch `urlopen` to record the request and answer with `body`."""
-    calls = []
-
-    def _fake_urlopen(request, timeout=None):
-        calls.append((request, timeout))
-        return _FakeResponse(body)
-
-    monkeypatch.setattr(queue_mod.urllib.request, "urlopen", _fake_urlopen)
-    return calls
-
-
-def _raise(monkeypatch, exc: Exception):
-    def _fake_urlopen(request, timeout=None):
-        raise exc
-
-    monkeypatch.setattr(queue_mod.urllib.request, "urlopen", _fake_urlopen)
-
-
-def _http_error(code: int, body: dict) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError(
-        "http://queue.test/webhook/checkpoint-request", code, "error", {},
-        io.BytesIO(json.dumps(body).encode("utf-8")),
+def _age(conn, job_id, minutes):
+    """Backdate a running job's start, the way a crashed runner leaves it."""
+    conn.execute(
+        "UPDATE job_queue SET started_at = ? WHERE job_id = ?",
+        (_iso(datetime.now(timezone.utc) - timedelta(minutes=minutes)), job_id),
     )
+    conn.commit()
 
 
-def test_no_call_when_queue_url_unset(monkeypatch):
-    calls = _capture(monkeypatch, {"ok": True, "position": 1})
-    code, line = enqueue(ClientConfig(), "s1", "omp", None)
-    assert calls == []
-    assert code == 1
-    assert "no queue_url" in line
+class TestAdd:
+    def test_second_request_for_a_live_key_is_a_duplicate(self, in_memory_db):
+        first = add(in_memory_db, "checkpoint", "sess-1")
+        second = add(in_memory_db, "checkpoint", "sess-1")
+
+        assert first["job_id"] == second["job_id"]
+        assert second["duplicate"] is True
+        assert listing(in_memory_db, "checkpoint")["counts"] == {"queued": 1}
+
+    def test_a_settled_key_can_be_queued_again(self, in_memory_db):
+        job = add(in_memory_db, "checkpoint", "sess-1")
+        claim(in_memory_db, "checkpoint")
+        finish(in_memory_db, job["job_id"], ok=True)
+
+        again = add(in_memory_db, "checkpoint", "sess-1")
+
+        assert again["duplicate"] is False
+        assert again["job_id"] != job["job_id"]
+
+    def test_the_same_key_in_another_queue_is_independent(self, in_memory_db):
+        add(in_memory_db, "checkpoint", "shared")
+        other = add(in_memory_db, "harvest", "shared")
+
+        assert other["duplicate"] is False
+
+    def test_position_counts_the_jobs_ahead(self, in_memory_db):
+        add(in_memory_db, "checkpoint", "a")
+        add(in_memory_db, "checkpoint", "b")
+
+        assert add(in_memory_db, "checkpoint", "c")["position"] == 3
+
+    def test_cap_refuses_once_enough_finished_today(self, in_memory_db):
+        limits = QueueLimits(cap_per_day=2)
+        for key in ("a", "b"):
+            job = add(in_memory_db, "harvest", key, limits=limits)
+            claim(in_memory_db, "harvest", limits)
+            finish(in_memory_db, job["job_id"], ok=True)
+
+        refused = add(in_memory_db, "harvest", "c", limits=limits)
+
+        assert refused["ok"] is False
+        assert "cap" in refused["reason"]
+
+    def test_a_missing_key_is_rejected(self, in_memory_db):
+        with pytest.raises(ValueError):
+            add(in_memory_db, "checkpoint", "")
 
 
-def test_queued_body_shape(monkeypatch):
-    calls = _capture(monkeypatch, {"ok": True, "position": 3})
-    code, line = enqueue(_cfg(), "s1", "omp", "home/projects/x")
-    assert code == 0
-    assert "queued (position 3)" in line
-    assert len(calls) == 1
-    request, timeout = calls[0]
-    assert request.full_url == "http://queue.test/webhook/checkpoint-request"
-    assert request.get_header("Content-type") == "application/json"
-    assert timeout == 2.0
-    body = _body(request)
-    assert body == {
-        "session": "s1", "harness": "omp", "workspace": "home/projects/x",
-        "host": body["host"], "requested_at": body["requested_at"],
-    }
-    assert body["host"]
-    assert body["requested_at"][-6] in "+-" or body["requested_at"].endswith("Z")
+class TestClaim:
+    def test_oldest_queued_job_is_claimed_first(self, in_memory_db):
+        add(in_memory_db, "checkpoint", "first")
+        add(in_memory_db, "checkpoint", "second")
+
+        assert claim(in_memory_db, "checkpoint")["job"]["key"] == "first"
+
+    def test_a_job_is_claimed_only_once(self, in_memory_db):
+        add(in_memory_db, "checkpoint", "only")
+        add(in_memory_db, "checkpoint", "next")
+
+        first = claim(in_memory_db, "checkpoint")
+        second = claim(in_memory_db, "checkpoint")
+
+        assert first["claimed"] is True
+        assert second["claimed"] is False
+        assert second["reason"] == "1 already running"
+
+    def test_concurrency_allows_more_than_one(self, in_memory_db):
+        limits = QueueLimits(concurrency=2)
+        for key in ("a", "b", "c"):
+            add(in_memory_db, "checkpoint", key)
+
+        assert claim(in_memory_db, "checkpoint", limits)["claimed"] is True
+        assert claim(in_memory_db, "checkpoint", limits)["claimed"] is True
+        assert claim(in_memory_db, "checkpoint", limits)["claimed"] is False
+
+    def test_empty_queue_says_so(self, in_memory_db):
+        assert claim(in_memory_db, "checkpoint")["reason"] == "queue empty"
+
+    def test_cap_blocks_claiming_too(self, in_memory_db):
+        limits = QueueLimits(cap_per_day=1)
+        job = add(in_memory_db, "harvest", "a", limits=limits)
+        claim(in_memory_db, "harvest", limits)
+        finish(in_memory_db, job["job_id"], ok=True)
+        in_memory_db.execute(
+            "INSERT INTO job_queue (queue, key) VALUES ('harvest', 'b')")
+        in_memory_db.commit()
+
+        result = claim(in_memory_db, "harvest", limits)
+
+        assert result["claimed"] is False
+        assert "daily cap 1/1" in result["reason"]
 
 
-def test_timeout_never_exceeds_two_seconds(monkeypatch):
-    calls = _capture(monkeypatch, {"ok": True, "position": 1})
-    enqueue(_cfg(timeout_s=30.0), "s1", "cli", None)
-    assert calls[0][1] == 2.0
+class TestReap:
+    def test_a_stale_running_job_is_failed_and_unblocks_the_queue(self, in_memory_db):
+        """The bug this replaces: a crashed runner held its queue for good."""
+        stuck = add(in_memory_db, "checkpoint", "stuck")
+        claim(in_memory_db, "checkpoint")
+        _age(in_memory_db, stuck["job_id"], minutes=31)
+        add(in_memory_db, "checkpoint", "waiting")
+
+        result = claim(in_memory_db, "checkpoint")
+
+        assert [r["key"] for r in result["reaped"]] == ["stuck"]
+        assert result["job"]["key"] == "waiting"
+        row = in_memory_db.execute(
+            "SELECT status, output FROM job_queue WHERE job_id = ?",
+            (stuck["job_id"],)).fetchone()
+        assert row["status"] == "failed"
+        assert "stale" in row["output"]
+
+    def test_a_fresh_running_job_is_left_alone(self, in_memory_db):
+        add(in_memory_db, "checkpoint", "busy")
+        claim(in_memory_db, "checkpoint")
+
+        assert reap(in_memory_db, "checkpoint") == []
+
+    def test_a_running_job_with_no_start_stamp_counts_as_stale(self, in_memory_db):
+        in_memory_db.execute(
+            "INSERT INTO job_queue (queue, key, status) "
+            "VALUES ('checkpoint', 'orphan', 'running')")
+        in_memory_db.commit()
+
+        assert [r["key"] for r in reap(in_memory_db, "checkpoint")] == ["orphan"]
+
+    def test_only_the_named_queue_is_reaped(self, in_memory_db):
+        other = add(in_memory_db, "harvest", "other")
+        claim(in_memory_db, "harvest")
+        _age(in_memory_db, other["job_id"], minutes=90)
+
+        assert reap(in_memory_db, "checkpoint") == []
 
 
-def test_duplicate_is_still_a_success(monkeypatch):
-    _capture(monkeypatch, {"ok": True, "position": 0, "duplicate": True})
-    code, line = enqueue(_cfg(), "s1", "omp", None)
-    assert code == 0
-    assert "already queued" in line
+class TestFinish:
+    def test_outcome_and_counts_are_recorded(self, in_memory_db):
+        job = add(in_memory_db, "harvest", "t.jsonl", {"provider": "omp"})
+        claim(in_memory_db, "harvest")
 
+        done = finish(in_memory_db, job["job_id"], ok=True, saved=3,
+                      output="haiku saved 3 of 3")
 
-def test_daily_cap_reached_is_exit_one(monkeypatch):
-    _raise(monkeypatch, _http_error(429, {"ok": False, "reason": "daily cap reached"}))
-    code, line = enqueue(_cfg(), "s1", "omp", None)
-    assert code == 1
-    assert "daily cap reached" in line
+        assert done["status"] == "done"
+        assert done["saved"] == 3
+        assert done["finished_at"]
+        assert done["payload"] == {"provider": "omp"}
 
+    def test_failure_is_recorded_as_failed(self, in_memory_db):
+        job = add(in_memory_db, "harvest", "t.jsonl")
+        claim(in_memory_db, "harvest")
 
-def test_daily_cap_with_no_reason_still_says_cap(monkeypatch):
-    _raise(monkeypatch, _http_error(429, {"ok": False}))
-    code, line = enqueue(_cfg(), "s1", "omp", None)
-    assert code == 1
-    assert "cap" in line
+        done = finish(in_memory_db, job["job_id"], ok=False, output="vault offline")
 
+        assert done["status"] == "failed"
+        assert done["output"] == "vault offline"
 
-def test_unreachable_on_connection_failure(monkeypatch):
-    _raise(monkeypatch, OSError("connection refused"))
-    code, line = enqueue(_cfg(), "s1", "omp", None)
-    assert code == 1
-    assert "unreachable" in line
-
-
-def test_unreachable_on_an_unexpected_status(monkeypatch):
-    _raise(monkeypatch, _http_error(500, {}))
-    code, line = enqueue(_cfg(), "s1", "omp", None)
-    assert code == 1
-    assert "unreachable" in line
-
-
-def test_unreachable_on_a_reply_outside_the_contract(monkeypatch):
-    _capture(monkeypatch, {"ok": True})  # no position, no duplicate — still queued
-    code, line = enqueue(_cfg(), "s1", "omp", None)
-    assert code == 0
-    assert "queued" in line
-
-    _capture(monkeypatch, {"unexpected": "shape"})
-    code, line = enqueue(_cfg(), "s1", "omp", None)
-    assert code == 1
-    assert "unreachable" in line
-
-
-@pytest.mark.parametrize("bad_json", [b"not json", b"[]", b'"a string"'])
-def test_unreachable_on_malformed_json(monkeypatch, bad_json):
-    class _BadResponse:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-        def read(self):
-            return bad_json
-
-    def _fake_urlopen(request, timeout=None):
-        return _BadResponse()
-
-    monkeypatch.setattr(queue_mod.urllib.request, "urlopen", _fake_urlopen)
-    code, line = enqueue(_cfg(), "s1", "omp", None)
-    assert code == 1
-    assert "unreachable" in line
+    def test_an_unknown_job_raises(self, in_memory_db):
+        with pytest.raises(ValueError):
+            finish(in_memory_db, 999, ok=True)
