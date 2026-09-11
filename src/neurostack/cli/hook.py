@@ -42,7 +42,7 @@ from pathlib import Path
 from ..client import ClientConfig, McpClient, load_client_config
 from ..memories import VALID_ENTITY_TYPES
 from ..redact import redact_secrets
-from ..triggers import is_broad_trigger, parse_trigger
+from ..triggers import is_broad_trigger, normalise_tool, parse_trigger
 from .events import post_event
 from .learn_status import cache_dir, learn_line, record_busy, record_error, record_ok
 from .queue import enqueue as queue_enqueue
@@ -324,27 +324,45 @@ def _xd_device(value: str) -> str | None:
     """
     if not value.startswith(_XD_PREFIX):
         return None
-    device = value[len(_XD_PREFIX):]
-    if not device.startswith("mcp__"):
-        return device or None
-    rest = device[len("mcp__"):]
-    sep = rest.find("_")
-    return rest[sep + 1:] if sep > 0 else rest or None
+    device = value[len(_XD_PREFIX):].strip("/")
+    return normalise_tool(device) or None
 
 
 def _tool_names(tool: str, tool_input) -> list[str]:
-    """Every name a `when-calling:` tag could plausibly be written as."""
+    """Every name a `when-calling:` tag could plausibly be written as.
+
+    A shell tool also yields its command line, so a tag naming a command
+    (`when-calling:az rest`) has something to match against (issue #178).
+    """
     names: list[str] = []
     device = _xd_device(tool)
     if device:
         names.append(device)
     elif tool:
         names.append(tool)
-        if isinstance(tool_input, dict) and isinstance(tool_input.get("path"), str):
-            nested = _xd_device(tool_input["path"])
-            if nested:
-                names.append(nested)
+        if isinstance(tool_input, dict):
+            nested = tool_input.get("path")
+            if isinstance(nested, str):
+                device = _xd_device(nested)
+                if device:
+                    names.append(device)
+            command = tool_input.get("command")
+            if isinstance(command, str) and command.strip():
+                names.append(command.strip())
     return list(dict.fromkeys(names))
+
+
+def _plain_path(value: str) -> str:
+    """A read selector or query string is not part of the file name.
+
+    `read` accepts `file.png?q=...`, `file.svg:img` and `a.py:10-40`; an
+    `when-editing:` glob is written against the path alone (issue #178).
+    """
+    path = value.split("?", 1)[0]
+    head, sep, tail = path.rpartition(":")
+    if sep and head and "/" not in tail:
+        path = head
+    return path.strip()
 
 
 def _edited_paths(payload: dict, tool: str, tool_input) -> list[str]:
@@ -353,20 +371,30 @@ def _edited_paths(payload: dict, tool: str, tool_input) -> list[str]:
     The harness may pass `paths` outright; otherwise derive them the way the
     write and edit tools carry them (`path`/`file_path`, or hashline section
     headers in an edit body) so an adapter stays a pure event mapping.
+    A `path` may hold a `;`-separated list and a read selector, so each entry
+    is split and reduced to the file name (issue #178).
     """
-    paths: list[str] = []
+    raw: list[str] = []
     given = payload.get("paths")
     if isinstance(given, list):
-        paths += [p for p in given if isinstance(p, str) and p]
+        raw += [p for p in given if isinstance(p, str) and p]
     if isinstance(tool_input, dict):
         for key in ("path", "file_path", "notebook_path"):
             value = tool_input.get(key)
             if isinstance(value, str) and value:
-                paths.append(value)
+                raw.append(value)
         body = tool_input.get("input")
         if tool == "edit" and isinstance(body, str):
-            paths += _HASHLINE_HEADER.findall(body)
-    return [p for p in dict.fromkeys(paths) if not p.startswith(_XD_PREFIX)]
+            raw += _HASHLINE_HEADER.findall(body)
+    paths: list[str] = []
+    for entry in raw:
+        if entry.startswith(_XD_PREFIX):
+            continue
+        for part in entry.split(";"):
+            plain = _plain_path(part)
+            if plain and not plain.startswith(_XD_PREFIX):
+                paths.append(plain)
+    return list(dict.fromkeys(paths))
 
 
 def _error_text(payload: dict) -> str:

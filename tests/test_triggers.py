@@ -138,3 +138,55 @@ def test_remember_args_coerces_unknown_entity_type():
     assert _remember_args(made_up, "omp", None)["entity_type"] == "observation"
     real = {"content": "x", "entity_type": "bug"}
     assert _remember_args(real, "omp", None)["entity_type"] == "bug"
+
+
+def test_calling_command_trigger_matches_the_command_line(db):
+    mid = _add_memory(db, "az rest needs --uri with an api-version",
+                      tags=["when-calling:az rest"])
+    hits = match_triggers(db, "calling", "az rest --method get --uri /subscriptions")
+    assert [h["memory_id"] for h in hits] == [mid]
+    # A different command, and the bare shell tool, stay quiet.
+    assert match_triggers(db, "calling", "az network watcher show") == []
+    assert match_triggers(db, "calling", "bash") == []
+
+
+def test_calling_matches_across_mcp_name_spellings(db):
+    mid = _add_memory(db, "vault_write_file commits and pushes",
+                      tags=["when-calling:mcp__neurostack__vault_write_file"])
+    for spelling in ("vault_write_file", "mcp__neurostack__vault_write_file",
+                     "neurostack_vault_write_file"):
+        assert [h["memory_id"] for h in match_triggers(db, "calling", spelling)] == [mid]
+    assert match_triggers(db, "calling", "vault_delete_file") == []
+
+
+def test_is_broad_trigger_sees_through_mcp_prefixes():
+    from neurostack.triggers import is_broad_trigger
+    assert is_broad_trigger("when-calling:mcp__neurostack__vault_read_file")
+    assert is_broad_trigger("when-calling:neurostack_vault_search")
+    assert not is_broad_trigger("when-calling:mcp__neurostack__vault_write_file")
+
+
+def test_edited_paths_drop_read_selectors_and_split_lists():
+    from neurostack.cli.hook import _edited_paths
+    assert _edited_paths({}, "read", {"path": "diagrams/a.png?q=is it clear"}) == [
+        "diagrams/a.png"]
+    assert _edited_paths({}, "read", {"path": "src/hook.py:335-360"}) == ["src/hook.py"]
+    assert _edited_paths({}, "grep", {"path": "src/a.py;tests/b.py"}) == [
+        "src/a.py", "tests/b.py"]
+    assert _edited_paths({}, "write", {"path": "xd://lsp"}) == []
+
+
+def test_editing_glob_matches_a_path_carrying_a_selector(db):
+    mid = _add_memory(db, "Helvetica on every cell",
+                      tags=["when-editing:*.drawio"])
+    from neurostack.cli.hook import _edited_paths
+    (path,) = _edited_paths({}, "read", {"path": "diagrams/knowledge.drawio:raw"})
+    assert [h["memory_id"] for h in match_triggers(db, "editing", path)] == [mid]
+
+
+def test_tool_names_include_the_shell_command():
+    from neurostack.cli.hook import _tool_names
+    assert _tool_names("bash", {"command": " az rest --uri /x "}) == [
+        "bash", "az rest --uri /x"]
+    assert _tool_names("write", {"path": "xd://mcp__neurostack__vault_remember"}) == [
+        "write", "vault_remember"]
