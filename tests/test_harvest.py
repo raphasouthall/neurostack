@@ -1299,3 +1299,94 @@ class TestHarvestTriggers:
         assert [r["status"] for r in report["saved"]] == ["saved"]
         assert "trigger" not in report["saved"][0]
         assert not [t for t in self._tags(in_memory_db)[0] if t.startswith("when-")]
+
+
+# ---------------------------------------------------------------------------
+# pending_sessions / harvest_session_file — queue driving (issue #180)
+# ---------------------------------------------------------------------------
+
+class TestHarvestQueueEntryPoints:
+    """A queue scheduler lists what is outstanding, then harvests one path."""
+
+    def _sessions(self, tmp_path):
+        from neurostack.harvest import SessionFile
+        return [
+            SessionFile(path=tmp_path / "new.jsonl", mtime=200.0, provider="omp"),
+            SessionFile(path=tmp_path / "old.jsonl", mtime=100.0, provider="claude-code"),
+        ]
+
+    def _wire(self, tmp_path, monkeypatch, sessions):
+        import neurostack.harvest as harvest_mod
+        monkeypatch.setattr(harvest_mod, "find_recent_sessions",
+                            lambda *a, **k: sessions)
+        monkeypatch.setattr(harvest_mod, "_harvest_state_path",
+                            lambda: tmp_path / "state.json")
+
+    def test_pending_excludes_sessions_already_harvested_at_that_mtime(
+            self, tmp_path, monkeypatch):
+        from neurostack.harvest import _save_harvest_state, pending_sessions
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions)
+        assert [r["provider"] for r in pending_sessions()] == ["omp", "claude-code"]
+
+        _save_harvest_state({str(tmp_path / "old.jsonl"): 100.0})
+        assert [r["path"] for r in pending_sessions()] == [str(tmp_path / "new.jsonl")]
+
+        # A changed mtime makes a harvested transcript pending again.
+        _save_harvest_state({str(tmp_path / "old.jsonl"): 99.0})
+        assert len(pending_sessions()) == 2
+
+    def test_pending_ignores_posted_transcript_hashes(self, tmp_path, monkeypatch):
+        from neurostack.harvest import _save_harvest_state, pending_sessions
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions)
+        _save_harvest_state({"mcp:abc": "deadbeef",
+                             str(tmp_path / "new.jsonl"): "not-a-number"})
+        assert len(pending_sessions()) == 2
+
+    def test_harvest_session_file_rejects_a_path_no_provider_owns(
+            self, tmp_path, monkeypatch):
+        from neurostack.harvest import harvest_session_file
+        self._wire(tmp_path, monkeypatch, self._sessions(tmp_path))
+        out = harvest_session_file(str(tmp_path / "stray.jsonl"))
+        assert "No provider owns" in out["error"]
+        assert out["saved"] == []
+
+    def test_harvest_session_file_marks_only_that_transcript_harvested(
+            self, in_memory_db, tmp_path, monkeypatch):
+        import json as _json
+
+        import neurostack.harvest as harvest_mod
+        from neurostack.harvest import harvest_session_file
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions)
+        monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [])
+        monkeypatch.setattr(harvest_mod, "_harvest_messages",
+                            lambda *a, **k: None)
+        monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
+        cfg = SimpleNamespace(embed_url="http://embed.test",
+                              index_llm_url="http://llm.test", index_llm_model="m",
+                              index_llm_api_key=None, writeback_enabled=False)
+        monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+
+        out = harvest_session_file(str(tmp_path / "new.jsonl"))
+        assert out["providers"] == ["omp"]
+        state = _json.loads((tmp_path / "state.json").read_text())
+        assert state == {str(tmp_path / "new.jsonl"): 200.0}
+
+    def test_dry_run_leaves_the_transcript_pending(
+            self, in_memory_db, tmp_path, monkeypatch):
+        import neurostack.harvest as harvest_mod
+        from neurostack.harvest import harvest_session_file, pending_sessions
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions)
+        monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [])
+        monkeypatch.setattr(harvest_mod, "_harvest_messages", lambda *a, **k: None)
+        monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
+        cfg = SimpleNamespace(embed_url="http://embed.test",
+                              index_llm_url="http://llm.test", index_llm_model="m",
+                              index_llm_api_key=None, writeback_enabled=False)
+        monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+
+        harvest_session_file(str(tmp_path / "new.jsonl"), dry_run=True)
+        assert str(tmp_path / "new.jsonl") in [r["path"] for r in pending_sessions()]
