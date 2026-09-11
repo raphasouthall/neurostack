@@ -43,6 +43,11 @@ class ClientConfig:
     # what comes back. Empty means the harness model answers the prompt itself.
     checkpoint_command: str | None = None
     checkpoint_timeout_s: float = 300.0
+    # Largest window a single `checkpoint --run` may summarize. A backlog
+    # transcript can exceed the model's context outright (a 9 MB omp session
+    # is ~270k tokens against haiku's 200k), so the window is cut and the
+    # cursor advances; the next run takes the next slice. 0 means no cap.
+    checkpoint_max_messages: int = 0
     workspace_map: dict[str, str] = field(default_factory=dict)
     # Where to POST session-start/checkpoint outcomes so a board can show
     # agent activity next to the server-side jobs (issue #165). None means
@@ -121,6 +126,9 @@ def load_client_config(path: Path | None = None) -> ClientConfig:
         value = raw.get(key)
         if isinstance(value, (int, float)) and value > 0:
             setattr(cfg, key, float(value))
+    cap = raw.get("checkpoint_max_messages")
+    if isinstance(cap, int) and cap > 0:
+        cfg.checkpoint_max_messages = cap
     mapping = raw.get("workspace_map")
     if isinstance(mapping, dict):
         cfg.workspace_map = {
