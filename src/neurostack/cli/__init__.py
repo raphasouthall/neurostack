@@ -702,11 +702,15 @@ def main():
         help="Show notes flagged as prediction errors"
         " (poor retrieval fit)",
     )
-    p.add_argument("--type", choices=["low_overlap", "contextual_mismatch"], default=None,
+    p.add_argument("--type", default=None,
+                   choices=["low_overlap", "coverage_gap", "contextual_mismatch"],
                    help="Filter by error type")
     p.add_argument("--limit", type=int, default=30, help="Max results to show")
     p.add_argument("--resolve", nargs="+", metavar="NOTE_PATH",
                    help="Mark note(s) as resolved")
+    p.add_argument("--verify", action="store_true",
+                   help="Re-run each flagged query and resolve flags whose note "
+                        "no longer tops the results")
     p.add_argument(
         "--workspace", "-w", default=None,
         help="Restrict results to vault subdirectory "
