@@ -970,3 +970,13 @@ def test_json_flag_prints_the_payload(server, capsys, monkeypatch):
     assert payload["saved"] == 3
     assert payload["settled_through"] == 120
     assert payload["text"].startswith("neurostack: saved 3 of 3")
+
+
+def test_nothing_to_save_is_reported_as_success(server, tmp_path):
+    """An empty window must not read as a failure, or the queue retries forever."""
+    verdict = run_checkpoint({"session": "cknoop", "messages": [], "since_index": 0},
+                             "omp", cfg=_cfg(server, checkpoint_command="cat"))
+
+    assert verdict.data["ok"] is True
+    assert verdict.data["saved"] == 0
+    assert verdict.data["error"] == ""
