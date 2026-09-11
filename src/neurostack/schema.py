@@ -32,7 +32,30 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
+
+# One row per queued job. The orchestrator (n8n, cron, anything) only calls
+# `neurostack queue`; dedupe, the daily cap, claiming and stale reaping live
+# here so they are tested once instead of reimplemented per scheduler.
+JOB_QUEUE_SQL = """
+CREATE TABLE IF NOT EXISTS job_queue (
+    job_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    queue TEXT NOT NULL,
+    key TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'queued',
+    saved INTEGER NOT NULL DEFAULT 0,
+    output TEXT NOT NULL DEFAULT '',
+    requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at TEXT,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_job_queue_pick ON job_queue(queue, status, job_id);
+CREATE INDEX IF NOT EXISTS idx_job_queue_finished ON job_queue(queue, finished_at);
+-- Dedupe is a constraint, not a scan: one live job per key per queue.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_live
+    ON job_queue(queue, key) WHERE status IN ('queued', 'running');
+"""
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -417,6 +440,8 @@ CREATE TABLE IF NOT EXISTS triple_extraction_failed (
 CREATE INDEX IF NOT EXISTS idx_triple_failed_retry
     ON triple_extraction_failed(next_retry_at);
 """
+
+SCHEMA_SQL += JOB_QUEUE_SQL
 
 # Migration from v1 to v2: add triples tables
 MIGRATION_V2 = """
@@ -1240,6 +1265,16 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (26)")
         conn.commit()
         log.info("Migration to v26 complete.")
+
+    if current < 27:
+        log.info(
+            "Migrating schema v26 -> v27: job_queue — checkpoint and harvest "
+            "queue state moves out of the orchestrator (issue #191)..."
+        )
+        conn.executescript(JOB_QUEUE_SQL)
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (27)")
+        conn.commit()
+        log.info("Migration to v27 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
