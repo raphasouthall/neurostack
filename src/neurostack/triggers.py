@@ -66,6 +66,31 @@ _GENERIC_ERRORS = frozenset({
     "invalid", "denied", "refused",
 })
 _MIN_ERROR_CHARS = 8
+# MCP servers whose tools a tag may name with the server glued on the front
+# (``neurostack_vault_search``). Only these prefixes are stripped, so a tool
+# genuinely called ``session_brief`` keeps its own first word.
+_MCP_SERVERS = frozenset({
+    "neurostack", "claude_context", "claude-context", "codebase_memory",
+    "codebase-memory", "n8n",
+})
+
+
+def normalise_tool(value: str) -> str:
+    """Bare tool name: lowercased, MCP server prefix dropped.
+
+    The same tool reaches us as ``Bash``, ``mcp__neurostack__vault_search`` or
+    ``neurostack_vault_search`` depending on the harness and on how the author
+    typed the tag. Triggers compare the bare name so all three agree.
+    """
+    name = value.strip().lower()
+    if name.startswith("mcp__"):
+        name = name[len("mcp__"):]
+        head, sep, rest = name.partition("__")
+        name = rest if sep and rest else name
+    head, sep, rest = name.partition("_")
+    if sep and rest and head in _MCP_SERVERS:
+        name = rest
+    return name
 
 
 def is_broad_trigger(tag: str) -> bool:
@@ -81,7 +106,7 @@ def is_broad_trigger(tag: str) -> bool:
     event, value = parsed
     value = value.strip().lower()
     if event == "calling":
-        return value in _GENERIC_TOOLS
+        return normalise_tool(value) in _GENERIC_TOOLS
     if event == "error":
         return (len(value) < _MIN_ERROR_CHARS or value.isdigit()
                 or value.rstrip(":") in _GENERIC_ERRORS
@@ -96,7 +121,12 @@ def _match(event: str, pattern: str, value: str) -> bool:
             return True
         return not pattern.startswith("/") and fnmatch.fnmatch(value, "*/" + pattern)
     if event == "calling":
-        return value.lower() == pattern.lower()
+        pat = normalise_tool(pattern)
+        if pat == normalise_tool(value):
+            return True
+        # A multi-word pattern names a command line, not a tool: the event
+        # carries the command text, so match the prefix the author wrote.
+        return " " in pat and pat in value.strip().lower()
     if event == "error":
         return pattern.lower() in value.lower()
     return False
