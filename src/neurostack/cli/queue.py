@@ -21,7 +21,9 @@ from datetime import datetime
 
 from ..client import ClientConfig
 
-_MAX_TIMEOUT_S = 2.0
+# The request webhook enqueues over SSH, so a normal reply takes about two
+# seconds. The cap only exists so `/save` can never hang on a wedged queue.
+_MAX_TIMEOUT_S = 10.0
 
 
 def enqueue(cfg: ClientConfig, session: str, harness: str,
