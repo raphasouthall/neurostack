@@ -279,8 +279,10 @@ def record_outcome(
     obey count is as measurable as the ignore count (issue #159).
     ``followed=False`` also inserts one ``prediction_errors`` row
     (``error_type='trigger_ignored'``, ``context`` = the trigger tag that
-    fired, ``query`` = the caller's note). The reply carries the running
-    ignore count and ``suggest: "retire"`` once it reaches
+    fired, ``query`` = the caller's note). ``followed=True`` settles the
+    memory's open ignore rows, so the count means consecutive ignores and a
+    trigger that starts being obeyed stops showing up as work. The reply
+    carries the running ignore count and ``suggest: "retire"`` once it reaches
     ``RETIRE_AFTER_IGNORES``; the memory row itself is never touched.
     """
     row = conn.execute(
@@ -294,6 +296,12 @@ def record_outcome(
             "UPDATE trigger_log SET followed = ?, outcome_at = datetime('now')"
             " WHERE log_id = ?",
             (1 if followed else 0, fired["log_id"]),
+        )
+    if followed:
+        conn.execute(
+            "UPDATE prediction_errors SET resolved_at = datetime('now')"
+            " WHERE memory_id = ? AND error_type = ? AND resolved_at IS NULL",
+            (memory_id, IGNORED_ERROR_TYPE),
         )
     if not followed:
         tags = _trigger_tags(row["tags"])
