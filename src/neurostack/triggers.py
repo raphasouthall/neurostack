@@ -222,6 +222,24 @@ def ignored_count(conn: sqlite3.Connection, memory_id: int) -> int:
     ).fetchone()[0]
 
 
+def resolve_ignored(conn: sqlite3.Connection, memory_id: int) -> int:
+    """Close the open ``trigger_ignored`` rows of a memory that no longer has a
+    live trigger tag. A retired trigger cannot fire again, so its ignore rows
+    are history rather than work; left open they sat in the promotion queue for
+    runs on end with nothing able to clear them. Returns rows affected."""
+    row = conn.execute(
+        "SELECT tags FROM memories WHERE memory_id = ?", (memory_id,)
+    ).fetchone()
+    if row is not None and _trigger_tags(row["tags"]):
+        return 0
+    cur = conn.execute(
+        "UPDATE prediction_errors SET resolved_at = datetime('now')"
+        " WHERE memory_id = ? AND error_type = ? AND resolved_at IS NULL",
+        (memory_id, IGNORED_ERROR_TYPE),
+    )
+    return cur.rowcount
+
+
 def _pending_firing(
     conn: sqlite3.Connection,
     memory_id: int,
