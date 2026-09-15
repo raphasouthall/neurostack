@@ -94,6 +94,31 @@ class TestDriftDetection:
         assert row["error_type"] == "memory_drift"
         assert row["query"] == f"memory:{mid}"
 
+    def test_promoted_pointer_is_not_drift(self, db):
+        # Promotion leaves the memory pointing at a note that now holds the
+        # prose, so the distance between them is the intended outcome.
+        _add_note(db, "work/project.md", "X was resolved.", _vec(1, 0, 0, 0))
+        mid = _add_memory(db, CONTENT, _vec(0, 1, 0, 0), tags='["promoted"]')
+        assert detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0)) == []
+        assert _drift_count(db) == 0
+
+    def test_promotion_clears_rows_written_before(self, db):
+        _add_note(db, "work/project.md", "X was resolved.", _vec(1, 0, 0, 0))
+        mid = _add_memory(db, CONTENT, _vec(0, 1, 0, 0))
+        assert len(detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0))) == 1
+        db.execute(
+            "UPDATE memories SET tags = ? WHERE memory_id = ?",
+            ('["promoted", "promoted-2026-09-15"]', mid),
+        )
+        db.commit()
+        assert detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0)) == []
+        assert _unresolved_count(db) == 0
+
+    def test_other_tags_still_drift(self, db):
+        _add_note(db, "work/project.md", "X was resolved.", _vec(1, 0, 0, 0))
+        mid = _add_memory(db, CONTENT, _vec(0, 1, 0, 0), tags='["handoff"]')
+        assert len(detect_memory_drift(db, mid, CONTENT, _vec(0, 1, 0, 0))) == 1
+
     def test_no_wiki_links_skipped(self, db):
         mid = _add_memory(db, "plain memory, no links", _vec(0, 1, 0, 0))
         assert detect_memory_drift(
