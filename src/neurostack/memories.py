@@ -482,6 +482,11 @@ def update_memory(
     if content is not None:
         from .memory_drift import resolve_memory_drift
         resolve_memory_drift(conn, memory_id)
+    # Retiring a trigger tag settles its ignore rows: the trigger cannot fire
+    # again, so nothing is left to obey (issue #197).
+    if tags_changed:
+        from .triggers import resolve_ignored
+        resolve_ignored(conn, memory_id)
     conn.commit()
 
     updated_row = conn.execute(

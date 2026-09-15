@@ -165,6 +165,38 @@ class TestRecordOutcome:
         assert _ignored_rows(db, mid)[0][2] == "when-error:no commits between"
 
 
+class TestRetiringATrigger:
+    def test_retiring_the_trigger_settles_its_ignore_rows(self, db):
+        from neurostack.memories import update_memory
+
+        mid = _add_memory(db, "m", ["when-calling:vault_write_file"])
+        _fire(db, "calling", "vault_write_file")
+        record_outcome(db, mid, followed=False)
+        assert _ignored_rows(db, mid)[0]["resolved_at"] is None
+        update_memory(db, mid, tags=["trigger-retired-2026-09-15"])
+        assert _ignored_rows(db, mid)[0]["resolved_at"] is not None
+
+    def test_a_live_trigger_keeps_its_ignore_rows_open(self, db):
+        from neurostack.memories import update_memory
+
+        mid = _add_memory(db, "m", ["when-calling:vault_write_file"])
+        _fire(db, "calling", "vault_write_file")
+        record_outcome(db, mid, followed=False)
+        update_memory(db, mid, add_tags=["reviewed"])
+        assert _ignored_rows(db, mid)[0]["resolved_at"] is None
+
+    def test_a_settled_trigger_leaves_the_promotion_queue(self, db):
+        from neurostack.memories import update_memory
+        from neurostack.promotion import compute_promotion_queue
+
+        mid = _add_memory(db, "m", ["when-calling:vault_write_file"])
+        _fire(db, "calling", "vault_write_file")
+        record_outcome(db, mid, followed=False)
+        assert compute_promotion_queue(db)["counts"]["drift"] == 1
+        update_memory(db, mid, tags=["trigger-retired-2026-09-15"])
+        assert compute_promotion_queue(db)["counts"]["drift"] == 0
+
+
 class TestDriftBucket:
     def test_ignored_trigger_in_drift_bucket(self, db):
         from neurostack.promotion import compute_promotion_queue
