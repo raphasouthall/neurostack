@@ -196,6 +196,27 @@ class TestRetiringATrigger:
         update_memory(db, mid, tags=["trigger-retired-2026-09-15"])
         assert compute_promotion_queue(db)["counts"]["drift"] == 0
 
+    def test_following_settles_earlier_ignores(self, db):
+        mid = _add_memory(db, "m", ["when-calling:vault_write_file"])
+        _fire(db, "calling", "vault_write_file")
+        record_outcome(db, mid, followed=False)
+        _fire(db, "calling", "vault_write_file")
+        out = record_outcome(db, mid, followed=True)
+        assert out["ignored_count"] == 0
+        assert all(r["resolved_at"] is not None for r in _ignored_rows(db, mid))
+
+    def test_retire_needs_consecutive_ignores(self, db):
+        mid = _add_memory(db, "m", ["when-calling:vault_write_file"])
+        for _ in range(RETIRE_AFTER_IGNORES - 1):
+            _fire(db, "calling", "vault_write_file")
+            record_outcome(db, mid, followed=False)
+        _fire(db, "calling", "vault_write_file")
+        record_outcome(db, mid, followed=True)
+        _fire(db, "calling", "vault_write_file")
+        out = record_outcome(db, mid, followed=False)
+        assert out["ignored_count"] == 1
+        assert "suggest" not in out
+
 
 class TestDriftBucket:
     def test_ignored_trigger_in_drift_bucket(self, db):
