@@ -32,6 +32,34 @@ import sqlite3
 # when the memory is far from every chunk — conservative by design.
 DRIFT_THRESHOLD = 0.40
 
+# Promotion moves a memory's prose into a note and leaves the memory holding
+# identifiers plus a `[[wiki-link]]` to it, tagging it `promoted`. Comparing the
+# two then measures that split, not staleness: on 2026-09-15, 56 of 64 open rows
+# were a promoted memory flagged against the very note it links to, and every
+# row read by hand over two runs was a false positive.
+PROMOTED_TAG = "promoted"
+
+
+def is_promotion_pointer(tags) -> bool:
+    """True when a memory is a promoted pointer, whose distance from its note is
+    the intended outcome rather than drift. `tags` is the stored JSON blob or a
+    sequence of tags."""
+    if isinstance(tags, str):
+        try:
+            tags = json.loads(tags)
+        except ValueError:
+            return False
+    if not isinstance(tags, (list, tuple, set)):
+        return False
+    return PROMOTED_TAG in {str(t).strip() for t in tags}
+
+
+def _tags_of(conn: sqlite3.Connection, memory_id: int):
+    row = conn.execute(
+        "SELECT tags FROM memories WHERE memory_id = ?", (memory_id,)
+    ).fetchone()
+    return row["tags"] if row else None
+
 
 def detect_memory_drift(
     conn: sqlite3.Connection,
@@ -40,15 +68,23 @@ def detect_memory_drift(
     embedding,
     threshold: float = DRIFT_THRESHOLD,
     link_index=None,
+    tags=None,
 ) -> list[dict]:
     """Detect drift of one memory from the notes it wiki-links.
 
     `embedding` is the memory's stored embedding (numpy array). Pass `link_index`
     (from graph._build_link_index) to reuse one index across a batch of memories.
     Returns the drift records written/refreshed; empty when the memory has no
-    embedding, no resolvable links, or no drift.
+    embedding, no resolvable links, no drift, or is a promoted pointer. Pass
+    `tags` to save a lookup when the caller already has them.
     """
     if embedding is None or not content:
+        return []
+    if is_promotion_pointer(tags if tags is not None else _tags_of(conn, memory_id)):
+        # Clear anything written before this was understood, so the promotion
+        # queue stops re-reporting a backlog that is not work.
+        resolve_memory_drift(conn, memory_id)
+        conn.commit()
         return []
 
     from .chunker import extract_wiki_links
@@ -150,7 +186,7 @@ def check_memory_drift(conn: sqlite3.Connection, memories) -> None:
             return
         placeholders = ",".join("?" * len(ids))
         rows = conn.execute(
-            f"SELECT memory_id, content, embedding FROM memories"
+            f"SELECT memory_id, content, embedding, tags FROM memories"
             f" WHERE memory_id IN ({placeholders}) AND embedding IS NOT NULL",
             ids,
         ).fetchall()
@@ -169,6 +205,7 @@ def check_memory_drift(conn: sqlite3.Connection, memories) -> None:
             detect_memory_drift(
                 conn, r["memory_id"], r["content"],
                 blob_to_embedding(r["embedding"]), link_index=link_index,
+                tags=r["tags"],
             )
     except Exception:
         pass  # drift detection must never disrupt retrieval
