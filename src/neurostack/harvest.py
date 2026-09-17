@@ -38,8 +38,15 @@ def _harvest_state_path() -> Path:
     return get_config().db_dir / "harvest_state.json"
 
 
-def _load_harvest_state() -> dict[str, float | str]:
-    """Load harvest state: session path -> mtime, or ``mcp:`` key -> transcript hash."""
+def _load_harvest_state() -> dict[str, float | str | dict]:
+    """Load harvest state.
+
+    Three value shapes live here. A number is a session file's mtime, written
+    by every version before the message watermark. A ``mcp:`` key holds a
+    posted transcript's hash. A dict holds ``{"mtime", "messages"}``: the same
+    mtime plus how many messages of that file have already been classified,
+    so a session that grows is read from where the last pass stopped.
+    """
     path = _harvest_state_path()
     if path.exists():
         try:
@@ -49,7 +56,34 @@ def _load_harvest_state() -> dict[str, float | str]:
     return {}
 
 
-def _save_harvest_state(state: dict[str, float | str]) -> None:
+def _state_mtime(seen) -> float | None:
+    """The harvested mtime in a state value, or None if it holds no mtime."""
+    if isinstance(seen, bool):
+        return None
+    if isinstance(seen, (int, float)):
+        return float(seen)
+    if isinstance(seen, dict):
+        mtime = seen.get("mtime")
+        if isinstance(mtime, (int, float)) and not isinstance(mtime, bool):
+            return float(mtime)
+    return None
+
+
+def _harvested_messages(state, path: Path) -> int:
+    """How many messages of this file are already classified.
+
+    Zero for a state written before the watermark existed, which reads that
+    file once more in full and then records its count.
+    """
+    seen = state.get(str(path))
+    if isinstance(seen, dict):
+        count = seen.get("messages")
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+            return count
+    return 0
+
+
+def _save_harvest_state(state: dict[str, float | str | dict]) -> None:
     """Persist harvest state atomically (temp file + os.replace)."""
     import os
     import tempfile
@@ -1177,10 +1211,17 @@ def harvest_sessions(
 
     saved, skipped = [], []
     counts: dict[str, int] = {}
+    state = _load_harvest_state()
+    totals: dict[str, int] = {}
 
     for session in sessions:
+        messages = extract_messages(session)
+        totals[str(session.path)] = len(messages)
+        # Skip what a previous pass already classified: a live session file
+        # grows all day, and re-reading it from the top pays the LLM twice.
+        already = _harvested_messages(state, session.path)
         _harvest_messages(
-            conn, extract_messages(session), session.provider,
+            conn, messages[already:], session.provider,
             cfg=cfg, embed_url=url, dry_run=dry_run, use_llm=use_llm,
             saved=saved, skipped=skipped, counts=counts,
         )
@@ -1188,7 +1229,9 @@ def harvest_sessions(
     if not dry_run:
         harvest_state = _load_harvest_state()
         for s in sessions:
-            harvest_state[str(s.path)] = s.mtime
+            harvest_state[str(s.path)] = {
+                "mtime": s.mtime, "messages": totals[str(s.path)],
+            }
         _save_harvest_state(harvest_state)
 
     return {
@@ -1204,14 +1247,13 @@ def harvest_sessions(
 def _unharvested(sessions: list[SessionFile]) -> list[SessionFile]:
     """Sessions whose current mtime has not been harvested yet.
 
-    ``mcp:`` keys hold a transcript hash, never an mtime, so only numeric
-    state values count as a previous harvest of this file.
+    ``mcp:`` keys hold a transcript hash, never an mtime, so only values
+    carrying one count as a previous harvest of this file.
     """
     state = _load_harvest_state()
     fresh = []
     for s in sessions:
-        seen = state.get(str(s.path))
-        if isinstance(seen, (int, float)) and seen == s.mtime:
+        if _state_mtime(state.get(str(s.path))) == s.mtime:
             continue
         fresh.append(s)
     return fresh
@@ -1263,14 +1305,16 @@ def harvest_session_file(
     saved: list[dict] = []
     skipped: list[dict] = []
     counts: dict[str, int] = {}
+    messages = extract_messages(match)
+    already = _harvested_messages(_load_harvest_state(), match.path)
     _harvest_messages(
-        conn, extract_messages(match), match.provider,
+        conn, messages[already:], match.provider,
         cfg=cfg, embed_url=embed_url or cfg.embed_url, dry_run=dry_run,
         use_llm=use_llm, saved=saved, skipped=skipped, counts=counts,
     )
     if not dry_run:
         state = _load_harvest_state()
-        state[str(match.path)] = match.mtime
+        state[str(match.path)] = {"mtime": match.mtime, "messages": len(messages)}
         _save_harvest_state(state)
     return {
         "sessions_scanned": 1,
