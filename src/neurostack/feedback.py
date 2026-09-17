@@ -18,6 +18,10 @@ Flow:
    ``vault_read_file`` has one *inferred* server-side — opening a note the
    vault just surfaced is the observed act of using it (issue #103), so the
    strong signal no longer depends on the client remembering to declare it.
+   The inferred path excludes a small set of always-read files (CLAUDE.md,
+   AGENTS.md, ...) that get opened every session regardless of the query —
+   crediting those taught a false signal (issue #205, see
+   ``should_infer_use``).
 3. **harvest** — :func:`feedback_labels` aggregates events into an ``EvalQuery``
    set for the existing eval / tune harness.
 
@@ -170,6 +174,55 @@ def record_use(note_paths: list[str], conn=None) -> int:
     return len(unique_paths)
 
 
+# Startup files a harness opens every session regardless of the query — agent
+# instructions (CLAUDE.md/AGENTS.md/RULES.md) and directory landing pages
+# (README.md/index.md). A search happening to surface one of these in the same
+# window is easy (they're common terms) and coincidental, not earned: crediting
+# the read taught a false "this note answers that query" signal in a retrieval
+# eval (issue #205). Matched on basename only — the exclusion should hold no
+# matter which folder the file lives in.
+ALWAYS_READ_BASENAMES = frozenset({
+    "CLAUDE.md",
+    "AGENTS.md",
+    "RULES.md",
+    "README.md",
+    "index.md",
+})
+
+
+def should_infer_use(conn, path: str, window_seconds: float = 1800.0) -> bool:
+    """Decide whether a read of ``path`` counts as an inferred use (issue #205).
+
+    True only when BOTH hold: a search surfaced ``path`` within
+    ``window_seconds``, and ``path``'s basename isn't a known always-read file
+    (see ``ALWAYS_READ_BASENAMES``) that would be opened regardless of the
+    query. Never raises — any lookup failure is treated as "no", same as a
+    cold read.
+    """
+    try:
+        from pathlib import PurePosixPath
+
+        if PurePosixPath(path).name in ALWAYS_READ_BASENAMES:
+            return False
+
+        rows = conn.execute(
+            "SELECT shown_paths FROM search_log "
+            "WHERE searched_at >= datetime('now', ?) "
+            "ORDER BY searched_at DESC, search_id DESC",
+            (f"-{int(window_seconds)} seconds",),
+        ).fetchall()
+        for r in rows:
+            try:
+                shown = json.loads(r[0])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if path in shown:
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def capture_read(path: str, conn=None) -> None:
     """Opt-in, fully-guarded read hook: infer a deliberate use from a read of a
     note the vault recently surfaced (issue #103). Never raises.
@@ -177,8 +230,9 @@ def capture_read(path: str, conn=None) -> None:
     Read-after-surface is the observable act of using a search result — the
     server watches for it instead of waiting for the client to declare a use.
     A read of a note NOT surfaced within ``feedback_window_seconds`` is a cold
-    read (direct navigation, an unrelated lookup) and records nothing: there is
-    no search to attribute it to and no evidence retrieval earned it.
+    read (direct navigation, an unrelated lookup) and records nothing; nor
+    does a read of a known always-read file (issue #205) — see
+    ``should_infer_use``.
 
     Records one 'used' / 'inferred' event plus the attribution. Repeated
     offset-0 re-opens each count, exactly as repeated explicit record_usage
@@ -196,23 +250,7 @@ def capture_read(path: str, conn=None) -> None:
 
             conn = get_db(DB_PATH)
 
-        rows = conn.execute(
-            "SELECT shown_paths FROM search_log "
-            "WHERE searched_at >= datetime('now', ?) "
-            "ORDER BY searched_at DESC, search_id DESC",
-            (f"-{int(cfg.feedback_window_seconds)} seconds",),
-        ).fetchall()
-
-        surfaced = False
-        for r in rows:
-            try:
-                shown = json.loads(r[0])
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if path in shown:
-                surfaced = True
-                break
-        if not surfaced:
+        if not should_infer_use(conn, path, cfg.feedback_window_seconds):
             return
 
         from .search import _record_note_usage
