@@ -16,8 +16,16 @@ import sqlite3
 import struct
 
 import numpy as np
+import pytest
 
-from neurostack.feedback import capture_read, feedback_stats, log_search, record_use
+from neurostack.feedback import (
+    ALWAYS_READ_BASENAMES,
+    capture_read,
+    feedback_stats,
+    log_search,
+    record_use,
+    should_infer_use,
+)
 from neurostack.search import hybrid_search
 
 DIM = 768
@@ -209,6 +217,58 @@ class TestReadAfterSurface:
         capture_read("research/foo.md", conn=conn)  # must not raise
 
 
+class TestAlwaysReadExclusion:
+    """A search that happens to surface a startup file must not teach a false
+    "this note answers that query" signal, because the file gets opened every
+    session regardless of the query (issue #205)."""
+
+    def test_should_infer_use_true_for_ordinary_surfaced_note(self, in_memory_db, monkeypatch):
+        conn = in_memory_db
+        _enable_feedback(monkeypatch)
+        log_search(conn, "retry config", ["research/foo.md"])
+
+        assert should_infer_use(conn, "research/foo.md", 1800.0) is True
+
+    def test_should_infer_use_false_for_startup_file_even_if_surfaced(
+        self, in_memory_db, monkeypatch,
+    ):
+        conn = in_memory_db
+        _enable_feedback(monkeypatch)
+        log_search(conn, "how do I set this up", ["CLAUDE.md", "AGENTS.md"])
+
+        assert should_infer_use(conn, "CLAUDE.md", 1800.0) is False
+        assert should_infer_use(conn, "AGENTS.md", 1800.0) is False
+
+    def test_should_infer_use_matches_on_basename_in_any_directory(self, in_memory_db, monkeypatch):
+        conn = in_memory_db
+        _enable_feedback(monkeypatch)
+        log_search(conn, "q", ["docs/nested/README.md"])
+
+        assert should_infer_use(conn, "docs/nested/README.md", 1800.0) is False
+
+    def test_should_infer_use_false_when_not_surfaced(self, in_memory_db, monkeypatch):
+        conn = in_memory_db
+        _enable_feedback(monkeypatch)
+        log_search(conn, "q", ["a.md"])
+
+        assert should_infer_use(conn, "z.md", 1800.0) is False
+
+    def test_covers_every_documented_always_read_basename(self):
+        assert ALWAYS_READ_BASENAMES == {
+            "CLAUDE.md", "AGENTS.md", "RULES.md", "README.md", "index.md",
+        }
+
+    def test_capture_read_of_startup_file_records_nothing(self, in_memory_db, monkeypatch):
+        conn = in_memory_db
+        _enable_feedback(monkeypatch)
+        log_search(conn, "how do I set this up", ["CLAUDE.md"])
+
+        capture_read("CLAUDE.md", conn=conn)
+
+        assert _usage_rows(conn) == []
+        assert _feedback_count(conn) == 0
+
+
 class TestSearchAndIgnore:
     def test_hybrid_search_returns_are_primed_only(self, in_memory_db, monkeypatch):
         """Acceptance: surfacing without a read leaves no strong signal."""
@@ -259,6 +319,62 @@ class TestRecordUse:
     def test_empty_paths_is_a_noop(self, in_memory_db):
         assert record_use([], conn=in_memory_db) == 0
         assert _usage_rows(in_memory_db) == []
+
+
+class TestRecordUsagePathsAlias:
+    """Real transcripts show agents calling vault_record_usage with `paths`,
+    getting a validation error, then retrying with `note_paths` (issue #205).
+    Accept either."""
+
+    def _patch_db(self, monkeypatch, conn):
+        import neurostack.schema as schema_mod
+
+        monkeypatch.setattr(schema_mod, "get_db", lambda path: conn)
+
+    def test_note_paths_still_works(self, in_memory_db, monkeypatch):
+        from neurostack.tools.search_tools import vault_record_usage
+
+        self._patch_db(monkeypatch, in_memory_db)
+
+        result = vault_record_usage(note_paths=["research/foo.md"])
+
+        assert result == {"recorded": 1, "paths": ["research/foo.md"]}
+        assert _usage_rows(in_memory_db)[0]["note_path"] == "research/foo.md"
+
+    def test_paths_alias_works(self, in_memory_db, monkeypatch):
+        from neurostack.tools.search_tools import vault_record_usage
+
+        self._patch_db(monkeypatch, in_memory_db)
+
+        result = vault_record_usage(paths=["research/bar.md"])
+
+        assert result == {"recorded": 1, "paths": ["research/bar.md"]}
+        assert _usage_rows(in_memory_db)[0]["note_path"] == "research/bar.md"
+
+    def test_neither_supplied_raises(self, in_memory_db, monkeypatch):
+        from neurostack.tools.search_tools import vault_record_usage
+
+        self._patch_db(monkeypatch, in_memory_db)
+
+        with pytest.raises(ValueError):
+            vault_record_usage()
+
+    def test_both_supplied_with_different_values_raises(self, in_memory_db, monkeypatch):
+        from neurostack.tools.search_tools import vault_record_usage
+
+        self._patch_db(monkeypatch, in_memory_db)
+
+        with pytest.raises(ValueError):
+            vault_record_usage(note_paths=["a.md"], paths=["b.md"])
+
+    def test_both_supplied_with_same_value_is_accepted(self, in_memory_db, monkeypatch):
+        from neurostack.tools.search_tools import vault_record_usage
+
+        self._patch_db(monkeypatch, in_memory_db)
+
+        result = vault_record_usage(note_paths=["a.md"], paths=["a.md"])
+
+        assert result == {"recorded": 1, "paths": ["a.md"]}
 
 
 class TestFeedbackStatsProvenance:

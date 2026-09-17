@@ -437,3 +437,99 @@ class TestConcurrency:
         log = _git(["log", "--oneline"], cwd=tmp_vault_repo).stdout
         assert "home/alpha.md" in log
         assert "home/bravo.md" in log
+
+
+# --------------------------- inferred usage (issue #205) ---------------------
+
+
+def _enable_feedback(monkeypatch, **overrides):
+    import dataclasses
+
+    cfg = dataclasses.replace(nsconfig.get_config(), feedback_enabled=True, **overrides)
+    monkeypatch.setattr(nsconfig, "get_config", lambda: cfg)
+    return cfg
+
+
+def _patch_db(monkeypatch, conn):
+    import neurostack.schema as schema_mod
+
+    monkeypatch.setattr(schema_mod, "get_db", lambda path: conn)
+
+
+class TestReadFileInferredUsage:
+    """Acceptance for issue #205: vault_read_file infers a real note use when
+    the read follows a search of the same note in the same window, through
+    the actual MCP tool function and the resulting table rows."""
+
+    def test_read_after_search_infers_use_with_correct_rank(
+        self, tmp_vault_repo, in_memory_db, monkeypatch,
+    ):
+        from neurostack.feedback import log_search
+
+        target = tmp_vault_repo / "research" / "foo.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(VALID_FRONTMATTER)
+
+        _enable_feedback(monkeypatch)
+        _patch_db(monkeypatch, in_memory_db)
+        log_search(in_memory_db, "retry config", ["other.md", "research/foo.md"])
+
+        vault_read_file(path="research/foo.md")
+
+        usage = in_memory_db.execute(
+            "SELECT note_path, tier, source FROM note_usage"
+        ).fetchall()
+        assert len(usage) == 1
+        assert (usage[0]["note_path"], usage[0]["tier"], usage[0]["source"]) == (
+            "research/foo.md", "used", "inferred",
+        )
+        feedback = in_memory_db.execute(
+            "SELECT chosen_path, rank FROM search_feedback"
+        ).fetchall()
+        assert len(feedback) == 1
+        assert (feedback[0]["chosen_path"], feedback[0]["rank"]) == ("research/foo.md", 2)
+
+    def test_read_of_startup_file_after_search_records_nothing(
+        self, tmp_vault_repo, in_memory_db, monkeypatch,
+    ):
+        from neurostack.feedback import log_search
+
+        # README.md ships at the vault root from tmp_vault_repo's init commit.
+        _enable_feedback(monkeypatch)
+        _patch_db(monkeypatch, in_memory_db)
+        log_search(in_memory_db, "vault setup", ["README.md"])
+
+        vault_read_file(path="README.md")
+
+        assert in_memory_db.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0] == 0
+        assert in_memory_db.execute("SELECT COUNT(*) FROM search_feedback").fetchone()[0] == 0
+
+    def test_read_without_preceding_search_records_nothing(
+        self, tmp_vault_repo, in_memory_db, monkeypatch,
+    ):
+        target = tmp_vault_repo / "home" / "cold.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(VALID_FRONTMATTER)
+
+        _enable_feedback(monkeypatch)
+        _patch_db(monkeypatch, in_memory_db)
+
+        vault_read_file(path="home/cold.md")
+
+        assert in_memory_db.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0] == 0
+
+    def test_read_with_feedback_disabled_records_nothing(
+        self, tmp_vault_repo, in_memory_db, monkeypatch,
+    ):
+        from neurostack.feedback import log_search
+
+        target = tmp_vault_repo / "home" / "note2.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(VALID_FRONTMATTER)
+
+        _patch_db(monkeypatch, in_memory_db)  # feedback_enabled left at its default (False)
+        log_search(in_memory_db, "q", ["home/note2.md"])
+
+        vault_read_file(path="home/note2.md")
+
+        assert in_memory_db.execute("SELECT COUNT(*) FROM note_usage").fetchone()[0] == 0
