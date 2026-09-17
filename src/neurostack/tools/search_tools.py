@@ -98,34 +98,52 @@ def vault_search(
     max_tokens: int = None,
     reference_only: bool = False,
 ) -> dict:
-    """Search the vault with tiered retrieval depth.
+    """Search the vault. One query, results ranked best first.
+
+    Pick `depth` by what you are going to do with the answer:
+
+    - Answering a factual question ("what IP", "which model") -> "triples".
+    - Deciding which note to open -> "summaries", or reference_only=True.
+    - About to edit or act on a note's content -> "full".
+    - Unsure -> leave "auto", which starts cheap and escalates.
+
+    Transcript evidence says agents mostly leave "auto" and sometimes invent
+    values like "shallow" or "quick". Only the four names above are accepted;
+    anything else raises rather than silently falling back, because a silent
+    fallback reads as a working search returning the wrong footprint.
 
     Args:
-        query: Natural language search query
-        top_k: Number of results to return (default 5)
-        mode: Search mode - "hybrid" (default), "semantic", or "keyword"
-        depth: Retrieval depth controlling token cost:
-            - "triples": ~10-20 tokens/fact. Structured SPO facts only. Cheapest.
-            - "summaries": ~50-100 tokens/note. Pre-computed note summaries.
-            - "full": ~200-500 tokens/result. Snippets + summaries.
-            - "auto": Start with triples, escalate to full if coverage is low. Default.
-        context: Optional project/domain context for boosting
-        workspace: Optional vault subdirectory prefix to restrict
-            results (e.g. "work/acme-cloud")
-        max_tokens: Optional size ceiling (~4 chars/token) on the returned
-            results. Once the estimate is hit, results stop accumulating (at
-            least one is always kept) and the response carries "truncated": True.
-            `depth` is the primary footprint dial; max_tokens trims on top of it
-            across every depth and the reference list, so an explicit budget is
-            never a silent no-op.
-        reference_only: If True, return a lean list of {path, score, snippet}
-            with no summaries or bodies, plus a hint to fetch detail on demand
-            via vault_read_file(path, offset, limit). Ignores `depth`. Lets an
-            agent scan cheaply, pick a path, then do a bounded read.
+        query: Natural language. Three or more words beats one; the index is
+            hybrid, so distinguishing nouns (hostnames, project names, error
+            strings) matter more than phrasing.
+        top_k: Results to return, default 5. Raise to 10 when scanning.
+        mode: "hybrid" (default), "semantic", or "keyword". Leave it alone
+            unless keyword-exact matching is the point.
+        depth: "triples" (~10-20 tokens/fact), "summaries" (~50-100
+            tokens/note), "full" (~200-500 tokens/result), or "auto".
+        context: Optional project or domain hint for boosting.
+        workspace: Vault subdirectory prefix to restrict results,
+            e.g. "work/acme-cloud".
+        max_tokens: Size ceiling (~4 chars/token). Trims on top of `depth`
+            across every depth and the reference list, so an explicit budget
+            is never a silent no-op. The response carries "truncated": True.
+        reference_only: Return {path, score, snippet} only, no bodies, plus a
+            hint to fetch detail with vault_read_file(path, offset, limit).
+            Ignores `depth`. Cheapest way to scan then commit to one read.
 
-    Use "triples" for quick factual lookups, "summaries" for overview,
-    "full" when you need actual content, "auto" to let the system decide.
+    The response shape follows the depth. "full" and reference_only return
+    `results`. "triples", "summaries" and "auto" return `depth_used` plus
+    whichever of `triples`, `summaries`, `chunks` was served.
+
+    After reading a result, call vault_record_usage([path]) once with every
+    path that actually informed the answer. That is what teaches ranking.
     """
+    VALID_DEPTHS = ("triples", "summaries", "full", "auto")
+    if depth not in VALID_DEPTHS:
+        raise ValueError(
+            f"depth must be one of {', '.join(VALID_DEPTHS)}, got {depth!r}"
+        )
+
     from ..budget import trim_to_budget
 
     _, embed_url = _cfg()
