@@ -593,7 +593,9 @@ def vault_stats() -> dict:
 
 
 @registry.tool(tags=["search", "usage"], annotations=_WRITE_ADDITIVE)
-def vault_record_usage(note_paths: list[str]) -> dict:
+def vault_record_usage(
+    note_paths: list[str] | None = None, paths: list[str] | None = None,
+) -> dict:
     """Record that specific notes were retrieved and used in this session.
 
     Drives hotness scoring — frequently used notes score higher in future
@@ -608,13 +610,28 @@ def vault_record_usage(note_paths: list[str]) -> dict:
 
     Args:
         note_paths: List of note paths that were used (e.g. ["research/foo.md", "work/bar.md"])
+        paths: Alias for note_paths (issue #205) — pass one or the other, not both.
     """
+    if note_paths is not None and paths is not None:
+        if note_paths != paths:
+            raise ValueError(
+                "vault_record_usage: pass either note_paths or paths, not both "
+                "with different values"
+            )
+        resolved = note_paths
+    elif note_paths is not None:
+        resolved = note_paths
+    elif paths is not None:
+        resolved = paths
+    else:
+        raise ValueError("vault_record_usage requires note_paths (or its alias paths)")
+
     from ..feedback import record_use
     from ..schema import DB_PATH, get_db
 
     conn = get_db(DB_PATH)
-    record_use(note_paths, conn=conn)
-    return {"recorded": len(note_paths), "paths": note_paths}
+    record_use(resolved, conn=conn)
+    return {"recorded": len(resolved), "paths": resolved}
 
 
 @registry.tool(tags=["search", "quality"], annotations=_READ_ONLY)
