@@ -317,11 +317,12 @@ def vault_read_file(path: str, offset: int = 0, limit: int | None = None) -> dic
     # Issue #103: opening a note the vault just surfaced is the observed strong
     # signal — the server infers the use instead of waiting to be told. Records
     # an inferred 'used' event and attributes it back to the surfacing search;
-    # a cold read (nothing surfaced it recently) records nothing. Only the first
-    # page (offset 0) counts as an open; continuation reads of the same note
-    # aren't a fresh use and must not inflate the signal. Opt-in via
-    # feedback_enabled, non-blocking, and writes only to the index DB (not the
-    # vault) — the read stays read-only.
+    # a cold read (nothing surfaced it recently) records nothing, and neither
+    # does a read of a known always-read file (CLAUDE.md, AGENTS.md, ...) —
+    # issue #205, see feedback.should_infer_use. Only the first page (offset 0)
+    # counts as an open; continuation reads of the same note aren't a fresh use
+    # and must not inflate the signal. Opt-in via feedback_enabled, non-blocking,
+    # and writes only to the index DB (not the vault) — the read stays read-only.
     if offset == 0:
         from ..feedback import capture_read
         capture_read(path)
