@@ -2,7 +2,10 @@
 
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from neurostack.harvest import (
     MAX_TRANSCRIPT_BYTES,
@@ -495,6 +498,60 @@ class TestHarvestState:
         _save_harvest_state({"second": 2.0})
         loaded = _load_harvest_state()
         assert loaded == {"second": 2.0}
+
+
+class TestMessageWatermark:
+    """A growing session file must be read only from where the last pass stopped."""
+
+    @pytest.fixture(autouse=True)
+    def _state(self, tmp_path, monkeypatch):
+        state_file = tmp_path / "harvest_state.json"
+        monkeypatch.setattr(
+            "neurostack.harvest._harvest_state_path", lambda: state_file,
+        )
+        return state_file
+
+    def test_a_fresh_file_starts_at_zero(self):
+        from neurostack.harvest import _harvested_messages
+
+        assert _harvested_messages({}, Path("/s.jsonl")) == 0
+
+    def test_the_count_survives_a_round_trip(self):
+        from neurostack.harvest import _harvested_messages
+
+        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        assert _harvested_messages(_load_harvest_state(), Path("/s.jsonl")) == 40
+
+    def test_state_written_before_the_watermark_reads_in_full(self):
+        """A bare mtime from an older version means no count is known yet."""
+        from neurostack.harvest import _harvested_messages
+
+        _save_harvest_state({"/s.jsonl": 12.0})
+        assert _harvested_messages(_load_harvest_state(), Path("/s.jsonl")) == 0
+
+    def test_an_unchanged_file_is_still_skipped_either_shape(self):
+        from neurostack.harvest import SessionFile, _unharvested
+
+        session = SessionFile(path=Path("/s.jsonl"), mtime=12.0, provider="claude")
+        _save_harvest_state({"/s.jsonl": 12.0})
+        assert _unharvested([session]) == []
+        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        assert _unharvested([session]) == []
+
+    def test_a_grown_file_comes_back_as_pending(self):
+        from neurostack.harvest import SessionFile, _unharvested
+
+        session = SessionFile(path=Path("/s.jsonl"), mtime=99.0, provider="claude")
+        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        assert _unharvested([session]) == [session]
+
+    def test_a_transcript_hash_is_not_read_as_an_mtime(self):
+        """``mcp:`` keys hold a hash; it must never satisfy the skip check."""
+        from neurostack.harvest import _state_mtime
+
+        assert _state_mtime("abc123") is None
+        assert _state_mtime(True) is None
+        assert _state_mtime({"messages": 40}) is None
 
 
 # ---------------------------------------------------------------------------
@@ -1354,10 +1411,8 @@ class TestHarvestQueueEntryPoints:
 
     def test_harvest_session_file_marks_only_that_transcript_harvested(
             self, in_memory_db, tmp_path, monkeypatch):
-        import json as _json
-
         import neurostack.harvest as harvest_mod
-        from neurostack.harvest import harvest_session_file
+        from neurostack.harvest import harvest_session_file, pending_sessions
         sessions = self._sessions(tmp_path)
         self._wire(tmp_path, monkeypatch, sessions)
         monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [])
@@ -1371,8 +1426,10 @@ class TestHarvestQueueEntryPoints:
 
         out = harvest_session_file(str(tmp_path / "new.jsonl"))
         assert out["providers"] == ["omp"]
-        state = _json.loads((tmp_path / "state.json").read_text())
-        assert state == {str(tmp_path / "new.jsonl"): 200.0}
+        # That transcript drops out of the queue; its siblings stay in it.
+        pending = [r["path"] for r in pending_sessions()]
+        assert str(tmp_path / "new.jsonl") not in pending
+        assert str(tmp_path / "old.jsonl") in pending
 
     def test_dry_run_leaves_the_transcript_pending(
             self, in_memory_db, tmp_path, monkeypatch):
