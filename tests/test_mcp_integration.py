@@ -95,6 +95,28 @@ def test_vault_search_keyword(mcp_vault):
         assert {"path", "title", "score"} <= set(r), r
 
 
+def test_an_invented_depth_is_rejected(mcp_vault):
+    # Agents guessed "shallow", "quick", "standard" in real transcripts, and a
+    # silent fallback looked like a working search with the wrong footprint.
+    with pytest.raises(Exception) as err:
+        _registry().call("vault_search", query="prediction", depth="shallow")
+    message = str(err.value)
+    assert "depth must be one of" in message
+    assert "triples" in message and "auto" in message
+
+
+@pytest.mark.parametrize("depth", ["triples", "summaries", "full", "auto"])
+def test_every_documented_depth_is_accepted(mcp_vault, depth):
+    result = _registry().call(
+        "vault_search", query="prediction", mode="keyword", depth=depth,
+    )
+    # Tiered depths answer with the tier they served; only "full" returns a
+    # flat result list. An agent has to read both shapes.
+    key = "results" if depth == "full" else "depth_used"
+    assert key in result, result
+    json.dumps(result)
+
+
 def test_vault_search_reference_only(mcp_vault):
     # Issue #62: reference mode returns lean {path, score, snippet} + a fetch hint.
     result = _registry().call(
