@@ -1447,3 +1447,166 @@ class TestHarvestQueueEntryPoints:
 
         harvest_session_file(str(tmp_path / "new.jsonl"), dry_run=True)
         assert str(tmp_path / "new.jsonl") in [r["path"] for r in pending_sessions()]
+
+
+# ---------------------------------------------------------------------------
+# harvest --pending --enqueue — CLI enqueue into the harvest job queue (#207)
+# ---------------------------------------------------------------------------
+
+class TestHarvestEnqueue:
+    """`neurostack harvest --pending --enqueue` replaces the n8n data table:
+    it queues every pending transcript through the same store `queue add`
+    uses, keyed on path@mtime so re-runs and mtime bumps dedupe correctly.
+    """
+
+    def _sessions(self, tmp_path):
+        from neurostack.harvest import SessionFile
+        return [
+            SessionFile(path=tmp_path / "new.jsonl", mtime=200.0, provider="omp"),
+            SessionFile(path=tmp_path / "old.jsonl", mtime=100.0, provider="claude-code"),
+        ]
+
+    def _wire(self, tmp_path, monkeypatch, sessions, in_memory_db):
+        import neurostack.harvest as harvest_mod
+        monkeypatch.setattr(harvest_mod, "find_recent_sessions",
+                            lambda *a, **k: sessions)
+        monkeypatch.setattr(harvest_mod, "_harvest_state_path",
+                            lambda: tmp_path / "state.json")
+        monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
+
+    def _args(self, **over):
+        from types import SimpleNamespace
+        base = dict(sessions=1, provider=None, list_providers=False,
+                    pending=True, enqueue=True, session=None, dry_run=False,
+                    json=True)
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def test_queues_every_pending_transcript_once(
+            self, tmp_path, monkeypatch, in_memory_db, capsys):
+        from neurostack.cli.sessions import cmd_harvest
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions, in_memory_db)
+
+        cmd_harvest(self._args())
+
+        out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert out["queued"] == 2
+        assert out["duplicates"] == 0
+        assert out["total"] == 2
+        assert {j["key"] for j in out["jobs"]} == {
+            f"{tmp_path / 'new.jsonl'}@200.0", f"{tmp_path / 'old.jsonl'}@100.0",
+        }
+        assert all(j["duplicate"] is False and j["job_id"] for j in out["jobs"])
+
+        rows = in_memory_db.execute(
+            "SELECT queue, key FROM job_queue ORDER BY key").fetchall()
+        assert [(r["queue"], r["key"]) for r in rows] == [
+            ("harvest", f"{tmp_path / 'new.jsonl'}@200.0"),
+            ("harvest", f"{tmp_path / 'old.jsonl'}@100.0"),
+        ]
+
+    def test_payload_carries_path_provider_mtime(
+            self, tmp_path, monkeypatch, in_memory_db, capsys):
+        from neurostack.cli.sessions import cmd_harvest
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions, in_memory_db)
+
+        cmd_harvest(self._args())
+
+        row = in_memory_db.execute(
+            "SELECT payload FROM job_queue WHERE key = ?",
+            (f"{tmp_path / 'new.jsonl'}@200.0",)).fetchone()
+        payload = json.loads(row["payload"])
+        assert payload["path"] == str(tmp_path / "new.jsonl")
+        assert payload["provider"] == "omp"
+        assert payload["mtime"] == 200.0
+
+    def test_second_run_reports_duplicates_not_requeues(
+            self, tmp_path, monkeypatch, in_memory_db, capsys):
+        from neurostack.cli.sessions import cmd_harvest
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions, in_memory_db)
+
+        cmd_harvest(self._args())
+        capsys.readouterr()
+        cmd_harvest(self._args())
+
+        out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert out["queued"] == 0
+        assert out["duplicates"] == 2
+        assert out["total"] == 2
+        assert in_memory_db.execute(
+            "SELECT COUNT(*) FROM job_queue").fetchone()[0] == 2
+
+    def test_changed_mtime_requeues_the_same_transcript(
+            self, tmp_path, monkeypatch, in_memory_db, capsys):
+        from neurostack.cli.sessions import cmd_harvest
+        from neurostack.harvest import SessionFile
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions, in_memory_db)
+        cmd_harvest(self._args())
+        capsys.readouterr()
+
+        sessions[0] = SessionFile(path=tmp_path / "new.jsonl", mtime=300.0, provider="omp")
+
+        cmd_harvest(self._args())
+
+        out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert out["queued"] == 1
+        assert out["duplicates"] == 1
+        keys = {r["key"] for r in in_memory_db.execute("SELECT key FROM job_queue")}
+        assert keys == {
+            f"{tmp_path / 'new.jsonl'}@200.0",
+            f"{tmp_path / 'new.jsonl'}@300.0",
+            f"{tmp_path / 'old.jsonl'}@100.0",
+        }
+
+    def test_human_output_lists_new_transcripts_and_a_total(
+            self, tmp_path, monkeypatch, in_memory_db, capsys):
+        from neurostack.cli.sessions import cmd_harvest
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions, in_memory_db)
+
+        cmd_harvest(self._args(json=False))
+
+        out = capsys.readouterr().out
+        assert str(tmp_path / "new.jsonl") in out
+        assert str(tmp_path / "old.jsonl") in out
+        assert "2 queued" in out
+
+    def test_one_bad_transcript_does_not_abort_the_rest(
+            self, tmp_path, monkeypatch, in_memory_db, capsys):
+        from neurostack.cli.sessions import cmd_harvest
+        from neurostack.queue import add as real_add
+        sessions = self._sessions(tmp_path)
+        self._wire(tmp_path, monkeypatch, sessions, in_memory_db)
+
+        def flaky_add(conn, queue, key, payload=None, limits=None):
+            if "old.jsonl" in key:
+                raise RuntimeError("disk full")
+            return real_add(conn, queue, key, payload, limits)
+
+        monkeypatch.setattr("neurostack.queue.add", flaky_add)
+
+        cmd_harvest(self._args())
+
+        out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert out["queued"] == 1
+        assert out["errors"] == 1
+        assert in_memory_db.execute(
+            "SELECT COUNT(*) FROM job_queue").fetchone()[0] == 1
+
+    def test_enqueue_without_pending_is_rejected(self, capsys):
+        from neurostack.cli.sessions import cmd_harvest
+        with pytest.raises(SystemExit) as exc:
+            cmd_harvest(self._args(pending=False))
+        assert exc.value.code != 0
+        assert "--pending" in capsys.readouterr().out
+
+    def test_enqueue_with_session_is_rejected(self, capsys):
+        from neurostack.cli.sessions import cmd_harvest
+        with pytest.raises(SystemExit) as exc:
+            cmd_harvest(self._args(session="/tmp/some.jsonl"))
+        assert exc.value.code != 0
+        assert "--session" in capsys.readouterr().out

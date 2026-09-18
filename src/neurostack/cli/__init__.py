@@ -923,6 +923,11 @@ def main():
         help="List transcripts not harvested yet and exit (queue schedulers)",
     )
     p.add_argument(
+        "--enqueue", action="store_true",
+        help="With --pending, queue each pending transcript into the harvest"
+             " job queue instead of listing it",
+    )
+    p.add_argument(
         "--session", type=str, default=None, metavar="PATH",
         help="Harvest exactly this transcript file",
     )

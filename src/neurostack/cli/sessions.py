@@ -165,10 +165,23 @@ def cmd_harvest(args):
             print(f"  {name}")
         return
 
-    if getattr(args, "pending", False):
+    enqueue = getattr(args, "enqueue", False)
+    pending = getattr(args, "pending", False)
+    if enqueue and not pending:
+        print("  --enqueue requires --pending (use --pending --enqueue)")
+        sys.exit(1)
+    if enqueue and getattr(args, "session", None):
+        print("  --enqueue cannot be combined with --session"
+              " (use --pending --enqueue)")
+        sys.exit(1)
+
+    if pending:
         # A scan window of 1 is the harvest default; listing wants the backlog.
         scan = args.sessions if args.sessions > 1 else 50
         rows = pending_sessions(scan, provider=getattr(args, "provider", None))
+        if enqueue:
+            _enqueue_pending(rows, args.json)
+            return
         if args.json:
             print(json.dumps(rows, indent=2, default=str))
             return
@@ -223,6 +236,61 @@ def cmd_harvest(args):
     n_skip = len(result["skipped"])
     total = n_saved + n_skip
     print(f"\n  Total: {n_saved} saved, {n_skip} skipped ({total} found)")
+
+
+def _enqueue_pending(rows, as_json):
+    """Queue every pending transcript into the harvest job queue (issue #207).
+
+    Reuses ``queue.add`` — the same store call ``neurostack queue add`` makes —
+    so dedupe, the daily cap and the schema stay in one place. Keyed on
+    ``path@mtime`` so an unchanged transcript stays a no-op duplicate while
+    one with new messages (new mtime) queues again. One bad row is recorded
+    and skipped rather than aborting the run.
+    """
+    from ..queue import QueueLimits
+    from ..queue import add as queue_add
+    from ..schema import DB_PATH, get_db
+
+    conn = get_db(DB_PATH)
+    jobs = []
+    queued = 0
+    duplicates = 0
+    errors = 0
+
+    for row in rows:
+        key = f"{row['path']}@{row['mtime']}"
+        try:
+            result = queue_add(
+                conn, "harvest", key,
+                {"path": row["path"], "provider": row["provider"], "mtime": row["mtime"]},
+                QueueLimits(),
+            )
+        except Exception as e:
+            errors += 1
+            jobs.append({"key": key, "error": str(e)})
+            continue
+        if result.get("duplicate"):
+            duplicates += 1
+        else:
+            queued += 1
+        jobs.append({"key": key, "job_id": result.get("job_id"),
+                     "duplicate": result.get("duplicate", False)})
+
+    summary = {"queued": queued, "duplicates": duplicates, "total": len(rows), "jobs": jobs}
+    if errors:
+        summary["errors"] = errors
+
+    if as_json:
+        print(json.dumps(summary))
+        return
+
+    for row, job in zip(rows, jobs):
+        if "error" in job:
+            print(f"  \033[31mERROR\033[0m {row['path']}: {job['error']}")
+        elif not job["duplicate"]:
+            print(f"  + {row['path']}")
+    print(f"\n  Total: {queued} queued, {duplicates} duplicate(s),"
+          f" {errors} error(s) ({len(rows)} pending)")
 
 
 _DECAY_TIMER = {
