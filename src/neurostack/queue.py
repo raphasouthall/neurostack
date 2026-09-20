@@ -121,8 +121,8 @@ def reap(conn: sqlite3.Connection, queue: str,
 
 
 def claim(conn: sqlite3.Connection, queue: str,
-          limits: QueueLimits | None = None) -> dict | None:
-    """Take the oldest queued job, or return None with the reason it waits.
+          limits: QueueLimits | None = None) -> dict:
+    """Take the oldest queued job, or say why the queue waits.
 
     Reaps first, so one crashed runner cannot wedge the queue until a human
     notices.
