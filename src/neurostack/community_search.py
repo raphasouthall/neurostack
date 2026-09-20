@@ -98,7 +98,7 @@ def search_communities(
         log.warning(f"Query embedding failed: {e}")
         return []
 
-    embeddings = [blob_to_embedding(row["summary_embedding"]) for row in rows]
+    embeddings = np.stack([blob_to_embedding(row["summary_embedding"]) for row in rows])
     scores = cosine_similarity_batch(query_vec, embeddings)
 
     ranked = sorted(zip(scores, rows), key=lambda x: x[0], reverse=True)[:top_k]
@@ -126,7 +126,7 @@ def global_query(
     embed_url: str | None = None,
     summarize_url: str | None = None,
     model: str | None = None,
-    workspace: str = None,
+    workspace: str | None = None,
 ) -> dict:
     """Answer a global query using community summaries (GraphRAG global search).
 

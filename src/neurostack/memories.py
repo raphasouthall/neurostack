@@ -199,6 +199,10 @@ def save_memory(
     conn.commit()
 
     memory_id = cursor.lastrowid
+    if memory_id is None:
+        # sqlite3 sets lastrowid on every successful single-row INSERT, so this
+        # only fires if the driver ever stops doing that.
+        raise RuntimeError("INSERT into memories returned no row id")
     created_at = conn.execute(
         "SELECT created_at FROM memories WHERE memory_id = ?",
         (memory_id,),

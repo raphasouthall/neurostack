@@ -281,8 +281,10 @@ def _run_tune(args, queries, db_path, cache):
         return
 
     n = len(queries)
-    split_note = "full set (in-sample only)" if args.no_holdout else \
-        f"{len(train)} train / {len(holdout)} test"
+    if holdout is None:
+        split_note = "full set (in-sample only)"
+    else:
+        split_note = f"{len(train)} train / {len(holdout)} test"
     print(f"\n  weight tuning · {n} queries ({split_note}) · db={db_path} · k={args.top_k}\n")
     print(tn.format_tune_report(
         result, holdout=holdout, db_path=db_path, k=args.top_k,

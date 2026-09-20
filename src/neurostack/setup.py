@@ -8,6 +8,7 @@ import platform
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Client config definitions
@@ -62,7 +63,8 @@ def _claude_desktop_config_path() -> Path:
     return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
 
 
-CLIENT_CONFIGS = {
+# Values mix strings with a path factory, so the value type is deliberately Any.
+CLIENT_CONFIGS: dict[str, dict[str, Any]] = {
     "cursor": {
         "name": "Cursor",
         "path": lambda: Path.home() / ".cursor" / "mcp.json",

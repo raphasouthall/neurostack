@@ -19,7 +19,7 @@ log = logging.getLogger("neurostack")
 def find_related(
     note_path: str,
     top_k: int = 10,
-    workspace: str = None,
+    workspace: str | None = None,
 ) -> list[dict]:
     """Find semantically related notes using embedding similarity.
 
@@ -124,7 +124,7 @@ def find_related(
     # Returning related notes is surfacing, not use (issues #95/#103/#109):
     # log the returned paths as 'primed' and, with feedback enabled, search-log
     # the surfacing so a later deliberate read attributes back as 'used'.
-    surfaced = [r["path"] for r in results]
+    surfaced = [path for path, _ in top]
     _record_note_usage(conn, surfaced, tier="primed", source="related")
     if surfaced:
         from .config import get_config

@@ -21,7 +21,7 @@ EXTERNAL_MEMORY_DB = Path(os.environ.get(
 def get_recent_vault_changes(
     conn: sqlite3.Connection,
     limit: int = 10,
-    workspace: str = None,
+    workspace: str | None = None,
 ) -> list[dict]:
     """Get recently modified notes with summaries."""
     if workspace:
@@ -90,7 +90,9 @@ def get_external_memories(limit: int = 5) -> list[dict]:
         return []
 
 
-def get_top_notes(conn: sqlite3.Connection, limit: int = 5, workspace: str = None) -> list[dict]:
+def get_top_notes(
+    conn: sqlite3.Connection, limit: int = 5, workspace: str | None = None
+) -> list[dict]:
     """Get top notes by PageRank."""
     if workspace:
         rows = conn.execute(
@@ -118,7 +120,7 @@ def get_top_notes(conn: sqlite3.Connection, limit: int = 5, workspace: str = Non
     return [dict(r) for r in rows]
 
 
-def generate_brief(vault_root: Path = None, workspace: str = None) -> str:
+def generate_brief(vault_root: Path | None = None, workspace: str | None = None) -> str:
     """Generate a compact session brief.
 
     Args:

@@ -186,12 +186,11 @@ def cached_query_embeddings(cache: dict[str, list[float]]):
     silently falling back to FTS-only (which would quietly change the metrics).
     """
     import numpy as np
+    from unittest.mock import patch
 
     from . import search as search_mod
 
-    original = search_mod.get_embedding
-
-    def _fake(text, base_url=None, model=None):
+    def _fake(text: str, base_url: str | None = None, model: str | None = None) -> np.ndarray:
         if text in cache:
             return np.array(cache[text], dtype=np.float32)
         raise KeyError(
@@ -199,11 +198,8 @@ def cached_query_embeddings(cache: dict[str, list[float]]):
             f"`neurostack eval --refresh-embeddings` against a live embedder."
         )
 
-    search_mod.get_embedding = _fake
-    try:
+    with patch.object(search_mod, "get_embedding", _fake):
         yield
-    finally:
-        search_mod.get_embedding = original
 
 
 # ── evaluation ────────────────────────────────────────────────────────────

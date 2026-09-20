@@ -21,7 +21,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from .redact import redact_secrets
 
@@ -1075,7 +1075,7 @@ def _harvest_messages(
     """
     from .memories import save_memory
 
-    candidates = []
+    candidates: list[dict[str, Any]] = []
 
     # The keyword prefilter gates only the regex paths. With an LLM available
     # every qualified message is a candidate: measured on a real 167-message

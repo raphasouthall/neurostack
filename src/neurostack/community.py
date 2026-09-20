@@ -143,14 +143,13 @@ def maybe_rebuild_communities(
         return {"rebuilt": False, "reason": status["reason"], "status": status}
 
     n_coarse, n_fine = detect_communities(conn=conn)
-    # summarize_all_communities defaults its URLs to module constants — only
-    # forward overrides, never a None that would clobber the default.
-    summ_kwargs = {}
-    if summarize_url is not None:
-        summ_kwargs["summarize_url"] = summarize_url
-    if embed_url is not None:
-        summ_kwargs["embed_url"] = embed_url
-    summarize_all_communities(conn=conn, **summ_kwargs)
+    # summarize_all_communities defaults its URLs to module constants, so
+    # resolve overrides here rather than passing a None that would clobber them.
+    summarize_all_communities(
+        conn=conn,
+        summarize_url=summarize_url or SUMMARIZE_URL,
+        embed_url=embed_url or EMBED_URL,
+    )
     return {
         "rebuilt": True,
         "coarse": n_coarse,
