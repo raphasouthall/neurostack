@@ -60,7 +60,9 @@ def _community_level_stats(conn) -> list[dict]:
     ]
 
 
-def _search_memories_for_results(query: str, workspace: str = None, limit: int = 3) -> list[dict]:
+def _search_memories_for_results(
+    query: str, workspace: str | None = None, limit: int = 3
+) -> list[dict]:
     """Search memories and return compact results for inclusion in vault_search."""
     try:
         from ..memories import search_memories
@@ -93,9 +95,9 @@ def vault_search(
     top_k: int = 5,
     mode: str = "hybrid",
     depth: str = "auto",
-    context: str = None,
-    workspace: str = None,
-    max_tokens: int = None,
+    context: str | None = None,
+    workspace: str | None = None,
+    max_tokens: int | None = None,
     reference_only: bool = False,
 ) -> dict:
     """Search the vault. One query, results ranked best first.
@@ -300,7 +302,7 @@ def vault_summary(path_or_query: str) -> dict:
 
 
 @registry.tool(tags=["search", "graph"], annotations=_READ_ONLY)
-def vault_graph(note: str, depth: int = 1, workspace: str = None) -> dict:
+def vault_graph(note: str, depth: int = 1, workspace: str | None = None) -> dict:
     """Get wiki-link neighborhood for a note with summaries and PageRank.
 
     One call replaces manually following links across files.
@@ -370,7 +372,7 @@ def vault_graph_analysis(top_k: int = 10, min_shared: int = 2) -> dict:
 
 
 @registry.tool(tags=["search", "semantic"], annotations=_READ_ONLY)
-def vault_related(note: str, top_k: int = 10, workspace: str = None) -> dict:
+def vault_related(note: str, top_k: int = 10, workspace: str | None = None) -> dict:
     """Find semantically related notes using embedding similarity.
 
     Unlike vault_graph (which follows explicit wiki-links), this discovers
@@ -389,7 +391,9 @@ def vault_related(note: str, top_k: int = 10, workspace: str = None) -> dict:
 
 
 @registry.tool(tags=["search", "retrieval"], annotations=_READ_ONLY)
-def vault_triples(query: str, top_k: int = 10, mode: str = "hybrid", workspace: str = None) -> dict:
+def vault_triples(
+    query: str, top_k: int = 10, mode: str = "hybrid", workspace: str | None = None
+) -> dict:
     """Search knowledge graph triples for structured facts.
 
     Returns compact Subject-Predicate-Object facts (~10-20 tokens each).
@@ -431,7 +435,7 @@ def vault_communities(
     top_k: int = 6,
     level: int = 0,
     map_reduce: bool = True,
-    workspace: str = None,
+    workspace: str | None = None,
 ) -> dict:
     """Answer global queries using GraphRAG community summaries.
 
@@ -467,7 +471,7 @@ def vault_communities(
 
 
 @registry.tool(tags=["search", "diff"], annotations=_READ_ONLY)
-def vault_diff(since: str = None, baseline: str = "default") -> dict:
+def vault_diff(since: str | None = None, baseline: str = "default") -> dict:
     """Show what changed in the vault: additions, modifications, deletions.
 
     Two modes:
@@ -636,11 +640,11 @@ def vault_record_usage(
 
 @registry.tool(tags=["search", "quality"], annotations=_READ_ONLY)
 def vault_prediction_errors(
-    error_type: str = None,
+    error_type: str | None = None,
     limit: int = 20,
-    resolve: list[str] = None,
-    workspace: str = None,
-    memory_id: int = None,
+    resolve: list[str] | None = None,
+    workspace: str | None = None,
+    memory_id: int | None = None,
 ) -> dict:
     """Return prediction errors — note or memory signals that surprised at retrieval.
 

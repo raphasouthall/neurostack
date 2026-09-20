@@ -33,8 +33,8 @@ def _cache_clear() -> None:
 
 @registry.tool(tags=["session"], annotations=_WRITE_ADDITIVE)
 def vault_session_start(
-    source_agent: str = None,
-    workspace: str = None,
+    source_agent: str | None = None,
+    workspace: str | None = None,
 ) -> dict:
     """Start a new memory session to group related memories.
 

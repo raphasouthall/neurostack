@@ -22,12 +22,12 @@ def _embed_url():
 @registry.tool(tags=["memory", "write"], annotations=_WRITE_ADDITIVE)
 def vault_remember(
     content: str,
-    tags: list[str] = None,
+    tags: list[str] | None = None,
     entity_type: str = "observation",
-    source_agent: str = None,
-    workspace: str = None,
-    ttl_hours: float = None,
-    session_id: int = None,
+    source_agent: str | None = None,
+    workspace: str | None = None,
+    ttl_hours: float | None = None,
+    session_id: int | None = None,
 ) -> dict:
     """Save a memory - persist an observation, decision, or learning for future retrieval.
 
@@ -96,13 +96,13 @@ def vault_forget(memory_id: int) -> dict:
 @registry.tool(tags=["memory", "write"], annotations=_WRITE_IDEMPOTENT)
 def vault_update_memory(
     memory_id: int,
-    content: str = None,
-    tags: list[str] = None,
-    add_tags: list[str] = None,
-    remove_tags: list[str] = None,
-    entity_type: str = None,
-    workspace: str = None,
-    ttl_hours: float = None,
+    content: str | None = None,
+    tags: list[str] | None = None,
+    add_tags: list[str] | None = None,
+    remove_tags: list[str] | None = None,
+    entity_type: str | None = None,
+    workspace: str | None = None,
+    ttl_hours: float | None = None,
 ) -> dict:
     """Update an existing memory. Only provided fields are changed.
 
@@ -213,9 +213,9 @@ def vault_merge(
 
 @registry.tool(tags=["memory", "read"], annotations=_READ_ONLY)
 def vault_memories(
-    query: str = None,
-    entity_type: str = None,
-    workspace: str = None,
+    query: str | None = None,
+    entity_type: str | None = None,
+    workspace: str | None = None,
     limit: int = 20,
 ) -> dict:
     """Search or list agent-written memories.
@@ -270,7 +270,7 @@ def vault_memories(
 
 @registry.tool(tags=["memory", "read"], annotations=_READ_ONLY)
 def vault_promotion_queue(
-    workspace: str = None,
+    workspace: str | None = None,
     handoff_age_days: int = 14,
     uncovered_sim_floor: float = 0.55,
     uncovered_limit: int = 200,
@@ -307,9 +307,9 @@ def vault_promotion_queue(
 def vault_triggers(
     event: str,
     value: str,
-    workspace: str = None,
+    workspace: str | None = None,
     limit: int = 10,
-    session_hint: str = None,
+    session_hint: str | None = None,
 ) -> dict:
     """Memories whose trigger tag matches the current moment (issue #131).
 
@@ -341,8 +341,8 @@ def vault_triggers(
 def vault_trigger_outcome(
     memory_id: int,
     followed: bool,
-    note: str = None,
-    session_hint: str = None,
+    note: str | None = None,
+    session_hint: str | None = None,
 ) -> dict:
     """Report whether a fired trigger memory was followed (issue #136).
 

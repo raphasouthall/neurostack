@@ -17,7 +17,7 @@ def _cfg():
 
 
 @registry.tool(tags=["context", "retrieval"], annotations=_READ_ONLY)
-def session_brief(workspace: str = None) -> dict:
+def session_brief(workspace: str | None = None) -> dict:
     """Get a compact ~500 token session brief.
 
     Includes: recent vault changes with summaries, git commits,
@@ -44,10 +44,10 @@ def session_brief(workspace: str = None) -> dict:
 def vault_context(
     task: str,
     token_budget: int = 2000,
-    workspace: str = None,
+    workspace: str | None = None,
     include_memories: bool = True,
     include_triples: bool = True,
-    context: str = None,
+    context: str | None = None,
 ) -> dict:
     """Assemble task-scoped context for session recovery after /clear or new conversation.
 
