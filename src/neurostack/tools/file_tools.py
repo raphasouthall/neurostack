@@ -406,7 +406,7 @@ def vault_list_files(
 def vault_write_file(
     path: str,
     content: str,
-    commit_message: str = None,
+    commit_message: str | None = None,
 ) -> dict:
     """Create or overwrite a markdown file in the vault. Commits + pushes to origin/main.
 
@@ -481,7 +481,7 @@ def vault_write_file(
 @registry.tool(tags=["vault-files", "write"], annotations=_WRITE_DESTRUCTIVE)
 def vault_delete_file(
     path: str,
-    commit_message: str = None,
+    commit_message: str | None = None,
 ) -> dict:
     """Delete a markdown file from the vault. Commits + pushes to origin/main.
 
