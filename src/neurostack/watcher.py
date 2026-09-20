@@ -7,7 +7,7 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock, Timer
 
@@ -141,8 +141,8 @@ def index_single_note(
     path: Path,
     vault_root: Path,
     conn,
-    embed_url: str = None,
-    summarize_url: str = None,
+    embed_url: str | None = None,
+    summarize_url: str | None = None,
     skip_summary: bool = False,
     skip_triples: bool = False,
 ):
@@ -288,7 +288,8 @@ def _index_triples_for_note(
         embeddings = [None] * len(triples)
 
     for i, t in enumerate(triples):
-        emb_blob = embedding_to_blob(embeddings[i]) if embeddings[i] is not None else None
+        emb = embeddings[i]
+        emb_blob = embedding_to_blob(emb) if emb is not None else None
         conn.execute(
             "INSERT INTO triples"
             " (note_path, subject, predicate, object,"
@@ -402,6 +403,20 @@ def _prepare_note(
     }
 
 
+def _date_added(fm: dict, now: str) -> str | None:
+    """Frontmatter date as an ISO string for sqlite.
+
+    YAML parses a bare ``date: 2026-09-20`` into a ``datetime.date``. Handing that
+    object to sqlite3 relied on the default date adapter, which is deprecated as of
+    Python 3.12. Every other timestamp in the index is stored as an ISO string, so
+    convert here instead of registering an adapter.
+    """
+    value = fm.get("date", now[:10])
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return None if value is None else str(value)
+
+
 def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
     """Write prepared note results to the database (main thread only)."""
     parsed = result["parsed"]
@@ -440,7 +455,7 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
             fm.get("status", "active"),
             json.dumps(fm.get("tags", [])),
             fm.get("type", "permanent"),
-            fm.get("date", now[:10]),
+            _date_added(fm, now),
         ),
     )
 
@@ -568,8 +583,8 @@ def reconcile_deletions(
 
 def full_index(
     vault_root: Path | None = None,
-    embed_url: str = None,
-    summarize_url: str = None,
+    embed_url: str | None = None,
+    summarize_url: str | None = None,
     skip_summary: bool = False,
     skip_triples: bool = False,
     exclude_dirs: list[str] | None = None,
@@ -714,8 +729,8 @@ def incremental_index(
     changed: list[Path],
     deleted: list[str] | None = None,
     vault_root: Path | None = None,
-    embed_url: str = None,
-    summarize_url: str = None,
+    embed_url: str | None = None,
+    summarize_url: str | None = None,
     skip_summary: bool = False,
     skip_triples: bool = False,
     conn=None,
@@ -776,7 +791,7 @@ def incremental_index(
 
 def backfill_summaries(
     vault_root: Path | None = None,
-    summarize_url: str = None,
+    summarize_url: str | None = None,
 ):
     """Generate summaries for all notes that don't have one yet."""
     vault_root = vault_root or _vault_root()
@@ -837,7 +852,7 @@ def backfill_summaries(
 
 def backfill_stale_summaries(
     vault_root: Path | None = None,
-    summarize_url: str = None,
+    summarize_url: str | None = None,
 ):
     """Regenerate summaries where content has changed since last summary."""
     vault_root = vault_root or _vault_root()
@@ -895,8 +910,8 @@ def backfill_stale_summaries(
 
 def backfill_triples(
     vault_root: Path | None = None,
-    embed_url: str = None,
-    summarize_url: str = None,
+    embed_url: str | None = None,
+    summarize_url: str | None = None,
 ):
     """Generate triples for all notes that don't have any yet."""
     vault_root = vault_root or _vault_root()
@@ -961,7 +976,7 @@ def backfill_triples(
 
 
 def reembed_all_chunks(
-    embed_url: str = None,
+    embed_url: str | None = None,
     batch_size: int = 50,
 ):
     embed_url = embed_url or get_config().embed_url
@@ -1037,8 +1052,8 @@ def reembed_all_chunks(
 
 def run_watcher(
     vault_root: Path | None = None,
-    embed_url: str = None,
-    summarize_url: str = None,
+    embed_url: str | None = None,
+    summarize_url: str | None = None,
     exclude_dirs: list[str] | None = None,
 ):
     """Run the watchdog file watcher."""
