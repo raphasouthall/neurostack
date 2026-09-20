@@ -372,7 +372,7 @@ def semantic_search(
 def _get_context_notes(
     conn: sqlite3.Connection,
     context: str,
-    embed_url: str = None,
+    embed_url: str | None = None,
 ) -> tuple[set[str], set[str]]:
     """Get direct context matches and their 1-hop neighbors.
 
@@ -855,9 +855,9 @@ def hybrid_search(
     query: str,
     top_k: int = 5,
     mode: str = "hybrid",
-    embed_url: str = None,
+    embed_url: str | None = None,
     db_path=None,
-    context: str = None,
+    context: str | None = None,
     workspace: str | None = None,
     explain: bool = False,
     ablate: set[str] | None = None,
@@ -1184,18 +1184,17 @@ def hybrid_search(
                 deduped_embeddings.append(None)
 
         for i in range(1, len(deduped)):
-            if deduped_embeddings[i] is None:
+            emb_i = deduped_embeddings[i]
+            if emb_i is None:
                 continue
+            norm_i = np.linalg.norm(emb_i)
             max_sim = 0.0
             for j in range(i):
-                if deduped_embeddings[j] is None:
+                emb_j = deduped_embeddings[j]
+                if emb_j is None:
                     continue
-                dot = np.dot(deduped_embeddings[i], deduped_embeddings[j])
-                norm = (
-                    np.linalg.norm(deduped_embeddings[i])
-                    * np.linalg.norm(deduped_embeddings[j])
-                    + 1e-10
-                )
+                dot = np.dot(emb_i, emb_j)
+                norm = norm_i * np.linalg.norm(emb_j) + 1e-10
                 sim = float(dot / norm)
                 if sim > max_sim:
                     max_sim = sim
@@ -1458,7 +1457,7 @@ def _boost_triples_by_context(
     conn: sqlite3.Connection,
     results: list[dict],
     context: str | None,
-    embed_url: str = None,
+    embed_url: str | None = None,
 ) -> None:
     """Apply the vault_search context boost to scored triple dicts (issue #94).
 
@@ -1482,7 +1481,7 @@ def search_triples(
     query: str,
     top_k: int = 10,
     mode: str = "hybrid",
-    embed_url: str = None,
+    embed_url: str | None = None,
     db_path=None,
     workspace: str | None = None,
     context: str | None = None,
@@ -1646,9 +1645,9 @@ def tiered_search(
     top_k: int = 5,
     depth: str = "auto",
     mode: str = "hybrid",
-    embed_url: str = None,
+    embed_url: str | None = None,
     db_path=None,
-    context: str = None,
+    context: str | None = None,
     workspace: str | None = None,
 ) -> dict:
     """Tiered search returning results at the appropriate compression level.
