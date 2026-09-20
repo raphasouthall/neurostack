@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import inspect
 import logging
+import types
 from dataclasses import dataclass
-from typing import Any, Callable, get_type_hints
+from typing import Any, Callable, Protocol, TypeVar, cast, get_type_hints
 
 log = logging.getLogger("neurostack.tools")
 
@@ -70,7 +71,20 @@ class ToolDef:
         return self.fn(**kwargs)
 
 
-def _extract_params(fn: Callable) -> list[ToolParam]:
+class ToolFunction(Protocol):
+    """A tool function after the registry has stamped it with its ``ToolDef``."""
+
+    __name__: str
+    __doc__: str | None
+    _tool_def: ToolDef
+
+    def __call__(self, **kwargs: Any) -> dict: ...
+
+
+F = TypeVar("F", bound=types.FunctionType)
+
+
+def _extract_params(fn: types.FunctionType) -> list[ToolParam]:
     """Extract parameter metadata from a function signature + type hints."""
     sig = inspect.signature(fn)
     try:
@@ -86,7 +100,6 @@ def _extract_params(fn: Callable) -> list[ToolParam]:
         # Strip Optional wrapper for display
         origin = getattr(ptype, "__origin__", None)
         if origin is not None:
-            import types
             if origin is types.UnionType or str(origin) == "typing.Union":
                 args = [a for a in ptype.__args__ if a is not type(None)]
                 if len(args) == 1:
@@ -105,7 +118,7 @@ def _extract_params(fn: Callable) -> list[ToolParam]:
     return params
 
 
-def _extract_description(fn: Callable) -> str:
+def _extract_description(fn: types.FunctionType) -> str:
     """Extract the first paragraph of a function's docstring."""
     doc = inspect.getdoc(fn)
     if not doc:
@@ -137,7 +150,7 @@ class ToolRegistry:
         name: str | None = None,
         tags: list[str] | None = None,
         annotations: ToolAnnotationHints | None = None,
-    ) -> Callable:
+    ) -> Callable[[F], F]:
         """Decorator to register a tool function.
 
         The decorated function must return a dict (not a JSON string).
@@ -147,7 +160,7 @@ class ToolRegistry:
             tags: Categorisation tags like ["search", "retrieval"]
             annotations: MCP annotation hints (readOnly, destructive, etc.)
         """
-        def decorator(fn: Callable) -> Callable:
+        def decorator(fn: F) -> F:
             tool_name = name or fn.__name__
             if tool_name in self._tools:
                 log.warning("Tool %r registered twice — overwriting", tool_name)
@@ -161,8 +174,9 @@ class ToolRegistry:
                 annotations=annotations,
             )
             self._tools[tool_name] = tool_def
-            # Preserve the original function for direct imports
-            fn._tool_def = tool_def
+            # Preserve the original function for direct imports. The cast names
+            # the shape the stamp gives it; the attribute is set at runtime.
+            cast(ToolFunction, fn)._tool_def = tool_def
             return fn
 
         return decorator

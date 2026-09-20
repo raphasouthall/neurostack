@@ -14,6 +14,7 @@ import asyncio
 import functools
 import inspect
 import logging
+from typing import Any, Protocol, cast
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
@@ -21,6 +22,16 @@ from mcp.types import ToolAnnotations
 from . import ensure_registered
 
 log = logging.getLogger("neurostack.tools.mcp_adapter")
+
+
+class _StampedTool(Protocol):
+    """An async wrapper carrying the signature MCP introspects it with."""
+
+    __name__: str
+    __doc__: str | None
+    __signature__: inspect.Signature
+
+    async def __call__(self, **kwargs: Any) -> Any: ...
 
 
 def create_mcp_server(name: str = "neurostack", **server_kwargs) -> MCPServer:
@@ -47,9 +58,12 @@ def create_mcp_server(name: str = "neurostack", **server_kwargs) -> MCPServer:
             continue
 
         @functools.wraps(tool_def.fn)
-        async def wrapper(_td=tool_def, **kwargs):
+        async def _wrapper(_td=tool_def, **kwargs):
             return await asyncio.to_thread(_td.call, **kwargs)
 
+        # functools.wraps returns an opaque wrapper; the runtime object is a
+        # plain coroutine function that inspect reads __signature__ off.
+        wrapper = cast(_StampedTool, _wrapper)
         wrapper.__signature__ = inspect.signature(tool_def.fn)
         wrapper.__doc__ = tool_def.fn.__doc__
 
