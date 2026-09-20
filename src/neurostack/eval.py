@@ -185,8 +185,9 @@ def cached_query_embeddings(cache: dict[str, list[float]]):
     raises a clear error pointing at ``--refresh-embeddings`` rather than
     silently falling back to FTS-only (which would quietly change the metrics).
     """
-    import numpy as np
     from unittest.mock import patch
+
+    import numpy as np
 
     from . import search as search_mod
 
