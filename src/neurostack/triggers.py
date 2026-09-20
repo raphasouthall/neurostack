@@ -322,7 +322,11 @@ def record_outcome(
         )
     conn.commit()
     count = ignored_count(conn, memory_id)
-    out = {"memory_id": memory_id, "followed": followed, "ignored_count": count}
+    out: dict[str, int | bool | str] = {
+        "memory_id": memory_id,
+        "followed": followed,
+        "ignored_count": count,
+    }
     if count >= RETIRE_AFTER_IGNORES:
         out["suggest"] = "retire"
     return out
@@ -361,18 +365,23 @@ def trigger_stats(conn: sqlite3.Connection, days: int = 30) -> dict:
     memories = []
     for row in rows:
         tags = _trigger_tags(row["tags"])
+        # COUNT/SUM come back as ints for every grouped row, but a LEFT JOIN
+        # row with no match would give NULL, so fall through to zero.
+        counts = {
+            "fired": int(row["fired"] or 0),
+            "followed": int(row["followed"] or 0),
+            "ignored": int(row["ignored"] or 0),
+            "pending": int(row["pending"] or 0),
+        }
         entry = {
             "memory_id": row["memory_id"],
             "trigger": tags[0] if tags else None,
             "content": (row["content"] or "")[:PREVIEW_CHARS],
-            "fired": row["fired"],
-            "followed": row["followed"],
-            "ignored": row["ignored"],
-            "pending": row["pending"],
-            "followed_rate": _followed_rate(row["followed"], row["ignored"]),
+            **counts,
+            "followed_rate": _followed_rate(counts["followed"], counts["ignored"]),
         }
-        for key in totals:
-            totals[key] += entry[key]
+        for key, value in counts.items():
+            totals[key] += value
         memories.append(entry)
     return {
         "days": days,

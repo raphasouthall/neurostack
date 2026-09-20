@@ -20,8 +20,18 @@ which note authored it.
 from __future__ import annotations
 
 import collections
+import dataclasses
 import math
 import sqlite3
+
+
+@dataclasses.dataclass(slots=True)
+class _PairScore:
+    """Running Adamic-Adar accumulator for one unlinked note pair."""
+
+    count: int = 0
+    score: float = 0.0
+    commons: list[str] = dataclasses.field(default_factory=list)
 
 
 def _undirected_adjacency(conn: sqlite3.Connection) -> dict[str, set[str]]:
@@ -52,7 +62,7 @@ def find_structural_gaps(
     first. Accumulated per hub's neighbour pairs — O(sum of degree^2), far
     cheaper than scoring all note pairs on a sparse graph.
     """
-    shared: dict[tuple[str, str], list] = {}
+    shared: dict[tuple[str, str], _PairScore] = {}
     for _hub, nbrs in adj.items():
         deg = len(nbrs)
         if deg < 2:
@@ -65,19 +75,19 @@ def find_structural_gaps(
                 b = ordered[j]
                 rec = shared.get((a, b))
                 if rec is None:
-                    rec = [0, 0.0, []]
+                    rec = _PairScore()
                     shared[(a, b)] = rec
-                rec[0] += 1
-                rec[1] += weight
-                rec[2].append(_hub)
+                rec.count += 1
+                rec.score += weight
+                rec.commons.append(_hub)
 
     gaps: list[tuple[str, str, int, float, list[str]]] = []
-    for (a, b), (count, score, commons) in shared.items():
-        if count < min_shared:
+    for (a, b), rec in shared.items():
+        if rec.count < min_shared:
             continue
         if b in adj.get(a, ()):  # already linked — not a gap
             continue
-        gaps.append((a, b, count, score, commons))
+        gaps.append((a, b, rec.count, rec.score, rec.commons))
 
     gaps.sort(key=lambda g: (g[3], g[2]), reverse=True)
     return gaps[:top_k]
