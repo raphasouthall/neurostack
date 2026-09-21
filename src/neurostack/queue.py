@@ -122,10 +122,13 @@ def reap(conn: sqlite3.Connection, queue: str,
 
 def claim(conn: sqlite3.Connection, queue: str,
           limits: QueueLimits | None = None) -> dict:
-    """Take the oldest queued job, or say why the queue waits.
+    """Take the newest queued job, or say why the queue waits.
 
-    Reaps first, so one crashed runner cannot wedge the queue until a human
-    notices.
+    Newest first, not FIFO: a stale queued transcript is worth less than a
+    fresh one, and a backlog of stale ones (issue #209) otherwise starves
+    every fresh job behind it for as long as the backlog outlasts the daily
+    cap. Reaps first, so one crashed runner cannot wedge the queue until a
+    human notices.
     """
     limits = limits or QueueLimits()
     reaped = reap(conn, queue, limits)
@@ -150,7 +153,7 @@ def claim(conn: sqlite3.Connection, queue: str,
     cur = conn.execute(
         "UPDATE job_queue SET status = 'running', started_at = ?"
         " WHERE job_id = (SELECT job_id FROM job_queue WHERE queue = ?"
-        "   AND status = 'queued' ORDER BY job_id LIMIT 1)",
+        "   AND status = 'queued' ORDER BY job_id DESC LIMIT 1)",
         (started, queue),
     )
     conn.commit()
