@@ -69,18 +69,29 @@ def _state_mtime(seen) -> float | None:
     return None
 
 
+def _watermark_messages(seen) -> int | None:
+    """The message count recorded in a state value, or None if unknown.
+
+    Unknown covers both a bare-mtime state (written before issue #201) and
+    no state at all. Callers must treat unknown as "we don't know", never
+    as zero — that distinction is what lets a bare-mtime transcript keep
+    falling back to the mtime check instead of going silently unpending.
+    """
+    if isinstance(seen, dict):
+        count = seen.get("messages")
+        if isinstance(count, int) and not isinstance(count, bool):
+            return count
+    return None
+
+
 def _harvested_messages(state, path: Path) -> int:
     """How many messages of this file are already classified.
 
     Zero for a state written before the watermark existed, which reads that
     file once more in full and then records its count.
     """
-    seen = state.get(str(path))
-    if isinstance(seen, dict):
-        count = seen.get("messages")
-        if isinstance(count, int) and not isinstance(count, bool) and count > 0:
-            return count
-    return 0
+    watermark = _watermark_messages(state.get(str(path)))
+    return watermark if watermark and watermark > 0 else 0
 
 
 def _save_harvest_state(state: dict[str, float | str | dict]) -> None:
@@ -1245,25 +1256,40 @@ def harvest_sessions(
 
 
 def _unharvested(sessions: list[SessionFile]) -> list[SessionFile]:
-    """Sessions whose current mtime has not been harvested yet.
+    """Sessions holding more messages than the watermark recorded (#209).
 
-    ``mcp:`` keys hold a transcript hash, never an mtime, so only values
-    carrying one count as a previous harvest of this file.
+    A moved mtime is not proof of new content: a bulk touch bumps every
+    file's mtime without adding a message, and two writes inside the same
+    mtime tick can grow a file without moving its mtime at all. Once a
+    message watermark exists (issue #201) it settles this on its own:
+    pending means strictly more messages now than were harvested, and the
+    timestamp is not consulted. Only state written before the watermark
+    existed — a bare mtime, or no entry at all — falls back to the mtime
+    comparison, so an unwatermarked transcript never silently stops
+    looking pending.
+
+    ``mcp:`` keys hold a transcript hash, never an mtime or a count.
     """
     state = _load_harvest_state()
     fresh = []
     for s in sessions:
-        if _state_mtime(state.get(str(s.path))) == s.mtime:
+        seen = state.get(str(s.path))
+        watermark = _watermark_messages(seen)
+        if watermark is not None:
+            if len(extract_messages(s)) > watermark:
+                fresh.append(s)
             continue
-        fresh.append(s)
+        if _state_mtime(seen) != s.mtime:
+            fresh.append(s)
     return fresh
 
 
 def pending_sessions(n_sessions: int = 50, provider: str | None = None) -> list[dict]:
     """Transcripts waiting to be harvested, newest first (issue #180).
 
-    A queue scheduler enqueues these; nothing is read or written here beyond
-    the state file, so calling it is cheap and repeatable.
+    A queue scheduler enqueues these. Sessions with a message watermark are
+    read in full to get a current count (issue #209); everything else is a
+    cheap state-file comparison.
     """
     return [
         {

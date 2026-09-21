@@ -529,21 +529,48 @@ class TestMessageWatermark:
         _save_harvest_state({"/s.jsonl": 12.0})
         assert _harvested_messages(_load_harvest_state(), Path("/s.jsonl")) == 0
 
-    def test_an_unchanged_file_is_still_skipped_either_shape(self):
+    def test_an_unchanged_file_is_still_skipped_either_shape(self, monkeypatch):
+        import neurostack.harvest as harvest_mod
         from neurostack.harvest import SessionFile, _unharvested
 
         session = SessionFile(path=Path("/s.jsonl"), mtime=12.0, provider="claude")
         _save_harvest_state({"/s.jsonl": 12.0})
         assert _unharvested([session]) == []
+
         _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [object()] * 40)
         assert _unharvested([session]) == []
 
-    def test_a_grown_file_comes_back_as_pending(self):
+    def test_a_grown_file_comes_back_as_pending(self, monkeypatch):
+        import neurostack.harvest as harvest_mod
         from neurostack.harvest import SessionFile, _unharvested
 
         session = SessionFile(path=Path("/s.jsonl"), mtime=99.0, provider="claude")
         _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [object()] * 41)
         assert _unharvested([session]) == [session]
+
+    def test_a_grown_file_is_pending_even_at_the_same_mtime(self, monkeypatch):
+        """Writes inside one mtime tick can grow a file without moving its
+        mtime; the message count must catch it anyway (issue #209)."""
+        import neurostack.harvest as harvest_mod
+        from neurostack.harvest import SessionFile, _unharvested
+
+        session = SessionFile(path=Path("/s.jsonl"), mtime=12.0, provider="claude")
+        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 27}})
+        monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [object()] * 126)
+        assert _unharvested([session]) == [session]
+
+    def test_a_touched_file_with_no_new_messages_stays_harvested(self, monkeypatch):
+        """A bulk mtime touch alone must never requeue an already-harvested
+        transcript (issue #209)."""
+        import neurostack.harvest as harvest_mod
+        from neurostack.harvest import SessionFile, _unharvested
+
+        session = SessionFile(path=Path("/s.jsonl"), mtime=500.0, provider="claude")
+        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [object()] * 40)
+        assert _unharvested([session]) == []
 
     def test_a_transcript_hash_is_not_read_as_an_mtime(self):
         """``mcp:`` keys hold a hash; it must never satisfy the skip check."""
@@ -1447,6 +1474,39 @@ class TestHarvestQueueEntryPoints:
 
         harvest_session_file(str(tmp_path / "new.jsonl"), dry_run=True)
         assert str(tmp_path / "new.jsonl") in [r["path"] for r in pending_sessions()]
+
+    def test_pending_follows_the_message_count_not_the_touch(
+            self, tmp_path, monkeypatch):
+        """issue #209: a transcript harvested mid-write (27 of 126 messages,
+        mtime recorded at that moment) must come back pending once it grows,
+        and a merely-touched transcript with no new messages must not."""
+        import neurostack.harvest as harvest_mod
+        from neurostack.harvest import (
+            SessionFile,
+            _save_harvest_state,
+            pending_sessions,
+        )
+        grown = tmp_path / "grown.jsonl"
+        touched = tmp_path / "touched.jsonl"
+        sessions = [
+            SessionFile(path=grown, mtime=1789929540.1764207, provider="omp"),
+            SessionFile(path=touched, mtime=555.0, provider="omp"),
+        ]
+        self._wire(tmp_path, monkeypatch, sessions)
+        _save_harvest_state({
+            str(grown): {"mtime": 1789929540.1764207, "messages": 27},
+            str(touched): {"mtime": 12.0, "messages": 40},
+        })
+
+        def fake_extract(session):
+            counts = {str(grown): 126, str(touched): 40}
+            return [object()] * counts[str(session.path)]
+
+        monkeypatch.setattr(harvest_mod, "extract_messages", fake_extract)
+
+        pending = [r["path"] for r in pending_sessions()]
+        assert str(grown) in pending
+        assert str(touched) not in pending
 
 
 # ---------------------------------------------------------------------------
