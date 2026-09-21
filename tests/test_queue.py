@@ -77,11 +77,24 @@ class TestAdd:
 
 
 class TestClaim:
-    def test_oldest_queued_job_is_claimed_first(self, in_memory_db):
+    def test_newest_queued_job_is_claimed_first(self, in_memory_db):
         add(in_memory_db, "checkpoint", "first")
         add(in_memory_db, "checkpoint", "second")
 
-        assert claim(in_memory_db, "checkpoint")["job"]["key"] == "first"
+        assert claim(in_memory_db, "checkpoint")["job"]["key"] == "second"
+
+    def test_a_stale_backlog_drains_newest_to_oldest(self, in_memory_db):
+        add(in_memory_db, "checkpoint", "old")
+        add(in_memory_db, "checkpoint", "middle")
+        add(in_memory_db, "checkpoint", "new")
+
+        order = []
+        for _ in range(3):
+            job = claim(in_memory_db, "checkpoint")["job"]
+            order.append(job["key"])
+            finish(in_memory_db, job["job_id"], ok=True)
+
+        assert order == ["new", "middle", "old"]
 
     def test_a_job_is_claimed_only_once(self, in_memory_db):
         add(in_memory_db, "checkpoint", "only")
