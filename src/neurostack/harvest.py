@@ -931,6 +931,62 @@ def _context_line(c: dict) -> str:
     return "; ".join(parts)
 
 
+# Rubrics for the judgement model. Written to be mutually exclusive: an early
+# version described `context` as "background, status, or handoff information",
+# which swallowed 47 of 70 decisions and 48 of 70 observations. Naming it the
+# last resort and asking for the dominant intent is what fixed that.
+_TYPE_CRITERIA = {
+    "bug": "A defect or failure: something broke, its root cause, or an error "
+           "and what caused it.",
+    "decision": "A choice that was made between options, or a course of action "
+                "settled on.",
+    "convention": "A standing rule to follow from now on. Phrased as "
+                  "always/never/must.",
+    "learning": "A transferable insight: how something works, or a lesson that "
+                "applies beyond this one case.",
+    "observation": "A plain measured fact about the system: a value, a count, a "
+                   "configuration as it stands.",
+    "context": "Only if none of the above fit: background or handoff state "
+               "about work in progress.",
+}
+
+_TYPE_QUESTION = {
+    "entity_type": {
+        "type": "choice",
+        "instructions": "What kind of knowledge does this memory mainly record? "
+                        "Pick the single dominant intent. Prefer a specific "
+                        "category over context.",
+        "criteria": _TYPE_CRITERIA,
+    }
+}
+
+
+def _judge_types(kept: list[dict]) -> None:
+    """Overwrite each kept candidate's `entity_type` with the judge's choice.
+
+    Mutates in place. A candidate the judge could not answer keeps whatever the
+    index LLM decided, so an outage costs type accuracy and nothing else.
+
+    The index LLM answers in free text, so `_parse_classify_reply` has to guess
+    what it meant; a decisions call cannot answer off-menu. On 191 held-out
+    agent-written memories the judge agreed with the stored type 55.5% of the
+    time against gemma's 47.6% (+7.9pp, paired permutation p=0.039, macro-F1
+    0.514 against 0.424), and ran 13x faster.
+    """
+    if not kept:
+        return
+
+    from .judge import decide_many
+
+    states = [f"{c.get('summary', '')}\n\n{c['text'][:1200]}" for c in kept]
+    for c, answer in zip(kept, decide_many(states, _TYPE_QUESTION)):
+        if not answer:
+            continue
+        choice = answer.get("entity_type", {}).get("choice")
+        if choice in _VALID_TYPES:
+            c["entity_type"] = choice
+
+
 def _classify_batch(
     batch: list[dict], index_llm_url: str, index_llm_model: str
 ) -> dict[int, dict]:
@@ -1044,6 +1100,14 @@ def _llm_classify(
                 "LLM classify answered %d of %d candidates - %d dropped unclassified",
                 len(verdicts), len(batch), dropped,
             )
+
+    # One judgement pass over everything kept, after the index LLM has written
+    # the summaries it alone can write. Batched here rather than per-classify-
+    # batch so the concurrency is the judge's, not the batch loop's.
+    from .config import get_config
+
+    if get_config().harvest_judge_types:
+        _judge_types(results)
 
     return results
 

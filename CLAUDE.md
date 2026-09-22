@@ -214,20 +214,24 @@ When enabled, searches are logged and a subsequent deliberate use of a surfaced 
 
 Inspect accumulated feedback with `neurostack feedback`. The module is `src/neurostack/feedback.py`; data lives in the `search_log` and `search_feedback` tables (added in schema v18).
 
-### Search reranking (opt-in, per call)
+### Judgement model (`judge.py`)
 
-`vault_search(rerank=True)` scores each whole-note result against the query with a judgement model and returns the judge's order. Off by default: issue #142 keeps the retrieval path free of LLM calls, and this is the one exception a caller has to ask for by name. Any failure logs a warning and returns the original ordering, so an outage costs ranking quality rather than the search.
-
-It needs whole notes to judge, so it works with `depth="full"` and `reference_only=True`. Passing it with `depth="auto"`, `"summaries"`, or `"triples"` raises instead of silently doing nothing.
+One client for every typed judgement: pick a label, score an option, answer yes/no. It never generates text, so summaries, triples and community labels stay on the index LLM. `decide(state, questions)` raises `JudgeError`; `decide_many(states, questions)` runs them concurrently and returns `None` in the slot of any that failed. Each caller picks its own fallback.
 
 | Key | Default | Env Override |
 | --- | --- | --- |
-| `rerank_url` | `https://openrouter.ai/api` | `NEUROSTACK_RERANK_URL` |
-| `rerank_model` | `~typesafe/jev-latest` | `NEUROSTACK_RERANK_MODEL` |
-| `rerank_api_key` | (none) | `NEUROSTACK_RERANK_API_KEY` |
-| `rerank_concurrency` | `8` | `NEUROSTACK_RERANK_CONCURRENCY` |
+| `judge_url` | `https://openrouter.ai/api` | `NEUROSTACK_JUDGE_URL` |
+| `judge_model` | `~typesafe/jev-latest` | `NEUROSTACK_JUDGE_MODEL` |
+| `judge_api_key` | (none) | `NEUROSTACK_JUDGE_API_KEY` |
+| `judge_concurrency` | `8` | `NEUROSTACK_JUDGE_CONCURRENCY` |
+| `judge_timeout_s` | `30.0` | `NEUROSTACK_JUDGE_TIMEOUT_S` |
+| `harvest_judge_types` | `true` | `NEUROSTACK_HARVEST_JUDGE_TYPES` |
 
-Measured on 76 real `search_feedback` clicks: MRR 0.503 to 0.652, top-1 34.2% to 48.7%, top-3 56.6% to 75.0%, paired permutation p=0.004. Roughly $0.0004 per search. The module is `src/neurostack/rerank.py`.
+Two callers today.
+
+**Harvest classification** (`harvest._judge_types`, on by default). The index LLM still decides KEEP/DROP and writes the summary and trigger, because only it can generate text. The judge then overwrites `entity_type`. On 191 held-out agent-written memories it agreed with the stored type 55.5% of the time against gemma's 47.6%, a +7.9pp gap (95% CI [+1.0, +14.7], paired permutation p=0.039), with macro-F1 0.514 against 0.424, and ran 13x faster. Both were scored against the same noisy key, so the gap is the result and the absolute numbers are not. A candidate the judge cannot answer keeps the index LLM's type.
+
+**Search reranking** (`vault_search(rerank=True)`, off by default). Scores each whole-note result against the query and returns the judge's order. Issue #142 keeps the retrieval path free of LLM calls, and this is the one exception a caller has to ask for by name. It needs whole notes, so it works with `depth="full"` and `reference_only=True` and raises on `depth="auto"`, `"summaries"`, or `"triples"`. Measured on 76 real `search_feedback` clicks: MRR 0.503 to 0.652, top-1 34.2% to 48.7%, top-3 56.6% to 75.0%, paired permutation p=0.004, roughly $0.0004 per search. Blending the judge score with the hybrid rank scored worse than the judge's own order, so there is no blend weight. Any failure returns the original ordering.
 
 ## Architecture
 
