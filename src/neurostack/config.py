@@ -72,6 +72,14 @@ class Config:
     # HTTP endpoint, optionally over an SSH hop to the host holding the login.
     index_llm_command: str = ""
     index_llm_command_timeout_s: float = 300.0
+    # Opt-in search reranking (`vault_search(rerank=True)`). This is the one
+    # judgement model allowed near retrieval, and only when a caller asks for it
+    # by name: #142 keeps the default path LLM-free, and rerank.py fails open so
+    # an outage costs ordering quality, never the search itself.
+    rerank_url: str = "https://openrouter.ai/api"
+    rerank_model: str = "~typesafe/jev-latest"
+    rerank_api_key: str = ""
+    rerank_concurrency: int = 8
     embed_api_key: str = ""
     session_dir: Path = field(default_factory=lambda: Path.home() / ".claude" / "projects")
     api_host: str = "127.0.0.1"
@@ -201,11 +209,14 @@ def load_config() -> Config:
                 setattr(cfg, key, Path(os.path.expanduser(data[key])))
         for key in ("embed_url", "embed_model", "index_llm_url", "index_llm_model",
                     "index_llm_api_key", "index_llm_command", "embed_api_key",
+                    "rerank_url", "rerank_model", "rerank_api_key",
                     "api_host", "api_key"):
             if key in data:
                 setattr(cfg, key, data[key])
         if "index_llm_command_timeout_s" in data:
             cfg.index_llm_command_timeout_s = float(data["index_llm_command_timeout_s"])
+        if "rerank_concurrency" in data:
+            cfg.rerank_concurrency = int(data["rerank_concurrency"])
         for old, new in _LEGACY_LLM_KEYS.items():
             if old not in data:
                 continue
@@ -268,6 +279,10 @@ def load_config() -> Config:
         "NEUROSTACK_INDEX_LLM_MODEL": ("index_llm_model", str),
         "NEUROSTACK_INDEX_LLM_API_KEY": ("index_llm_api_key", str),
         "NEUROSTACK_EMBED_API_KEY": ("embed_api_key", str),
+        "NEUROSTACK_RERANK_URL": ("rerank_url", str),
+        "NEUROSTACK_RERANK_MODEL": ("rerank_model", str),
+        "NEUROSTACK_RERANK_API_KEY": ("rerank_api_key", str),
+        "NEUROSTACK_RERANK_CONCURRENCY": ("rerank_concurrency", int),
         "NEUROSTACK_SESSION_DIR": ("session_dir", Path),
         "NEUROSTACK_API_HOST": ("api_host", str),
         "NEUROSTACK_API_PORT": ("api_port", int),
