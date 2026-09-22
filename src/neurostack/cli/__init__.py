@@ -928,8 +928,9 @@ def main():
              " job queue instead of listing it",
     )
     p.add_argument(
-        "--session", type=str, default=None, metavar="PATH",
-        help="Harvest exactly this transcript file",
+        "--session", type=str, default=None, metavar="PATH_OR_ID",
+        help="Harvest exactly this transcript: its file path, or the"
+             " session_id shown by --pending",
     )
     p.add_argument(
         "--dry-run", "-n", action="store_true",
