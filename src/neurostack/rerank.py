@@ -53,60 +53,30 @@ def _state(query: str, result) -> str:
     )
 
 
-def _score_one(client, url: str, model: str, headers: dict, query: str, result) -> float:
-    resp = client.post(
-        url,
-        headers=headers,
-        json={"model": model, "state": _state(query, result), "questions": _QUESTION},
-        timeout=30.0,
-    )
-    resp.raise_for_status()
-    return float(resp.json()["answers"]["relevance"]["score"])
-
-
 def rerank_results(query: str, results: list, cfg=None) -> list:
     """Reorder `results` best-first by judged relevance to `query`.
 
-    Fails open. Any transport error, HTTP status, or malformed answer returns
-    the input list in its original order, because a search that silently
-    degrades beats a search that raises. The OpenRouter free allowance running
-    out mid-evaluation returned 402 on every call, which is exactly the shape
-    of failure this has to absorb.
+    Fails open. Any item the judge could not answer keeps its hybrid position,
+    and a wholesale failure returns the input list untouched, because a search
+    that silently degrades beats a search that raises. The OpenRouter free
+    allowance running out mid-evaluation returned 402 on every call, which is
+    exactly the shape of failure this has to absorb.
     """
     if len(results) < 2:
         return results
 
-    if cfg is None:
-        from .config import get_config
+    from .judge import decide_many
 
-        cfg = get_config()
+    answers = decide_many([_state(query, r) for r in results], _QUESTION, cfg)
 
-    if not cfg.rerank_model:
-        log.warning("rerank requested but rerank_model is unset - returning original order")
-        return results
-
-    import concurrent.futures
-
-    import httpx
-
-    headers = {"Content-Type": "application/json"}
-    if cfg.rerank_api_key:
-        headers["Authorization"] = f"Bearer {cfg.rerank_api_key}"
-
-    url = f"{cfg.rerank_url.rstrip('/')}/alpha/decisions"
-
-    try:
-        with httpx.Client() as client, concurrent.futures.ThreadPoolExecutor(
-            max_workers=cfg.rerank_concurrency
-        ) as pool:
-            scores = list(
-                pool.map(
-                    lambda r: _score_one(client, url, cfg.rerank_model, headers, query, r),
-                    results,
-                )
-            )
-    except Exception as exc:
-        log.warning("rerank failed (%s) - returning original order", exc)
+    # An unanswered item scores below every answered one rather than above, so
+    # a partial outage demotes the unknown instead of promoting it.
+    scores = [
+        float(a["relevance"]["score"]) if a else -1.0
+        for a in answers
+    ]
+    if all(s < 0 for s in scores):
+        log.warning("rerank got no answers - returning original order")
         return results
 
     # Stable sort: equal scores keep the incoming hybrid order.

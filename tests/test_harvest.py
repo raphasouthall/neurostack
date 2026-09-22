@@ -608,7 +608,7 @@ class TestLlmClassify:
                 return {"choices": [{"message": {"content": content}}]}
 
         monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
-        cfg = SimpleNamespace(index_llm_api_key=None)
+        cfg = SimpleNamespace(index_llm_api_key=None, harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
 
@@ -662,7 +662,7 @@ class TestLlmClassify:
             return _Resp()
 
         monkeypatch.setattr(httpx, "post", _post)
-        cfg = SimpleNamespace(index_llm_api_key=None)
+        cfg = SimpleNamespace(index_llm_api_key=None, harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
         return sent
@@ -778,7 +778,7 @@ class TestLlmClassify:
             raise httpx.ConnectError("down")
 
         monkeypatch.setattr(httpx, "post", _boom)
-        cfg = SimpleNamespace(index_llm_api_key=None)
+        cfg = SimpleNamespace(index_llm_api_key=None, harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
         candidates = [
@@ -789,6 +789,58 @@ class TestLlmClassify:
         ]
         out = _llm_classify(candidates, "http://llm.test", "model")
         assert [c["entity_type"] for c in out] == ["bug"]
+
+
+class TestJudgeTypes:
+    """The judgement model owns entity_type; the index LLM keeps the summary."""
+
+    def test_judge_choice_overrides_index_llm_type(self, monkeypatch):
+        from neurostack.harvest import _judge_types
+
+        monkeypatch.setattr(
+            "neurostack.judge.decide_many",
+            lambda states, questions, cfg=None: [
+                {"entity_type": {"choice": "convention", "confidence": 0.9}},
+                {"entity_type": {"choice": "bug", "confidence": 0.8}},
+            ],
+        )
+        kept = [
+            {"summary": "Never force-push to main", "text": "...",
+             "entity_type": "observation"},
+            {"summary": "Query raised a dimension error", "text": "...",
+             "entity_type": "context"},
+        ]
+        _judge_types(kept)
+        assert [c["entity_type"] for c in kept] == ["convention", "bug"]
+
+    def test_unanswered_candidate_keeps_index_llm_type(self, monkeypatch):
+        # decide_many returns None per failed item rather than raising, so one
+        # judge outage must cost type accuracy and nothing else.
+        from neurostack.harvest import _judge_types
+
+        monkeypatch.setattr(
+            "neurostack.judge.decide_many",
+            lambda states, questions, cfg=None: [None, {"entity_type": {"choice": "bug"}}],
+        )
+        kept = [
+            {"summary": "a", "text": "...", "entity_type": "decision"},
+            {"summary": "b", "text": "...", "entity_type": "context"},
+        ]
+        _judge_types(kept)
+        assert [c["entity_type"] for c in kept] == ["decision", "bug"]
+
+    def test_off_menu_choice_is_ignored(self, monkeypatch):
+        # A choice outside _VALID_TYPES would violate the memories CHECK
+        # constraint, so it must never reach the row.
+        from neurostack.harvest import _judge_types
+
+        monkeypatch.setattr(
+            "neurostack.judge.decide_many",
+            lambda states, questions, cfg=None: [{"entity_type": {"choice": "insight"}}],
+        )
+        kept = [{"summary": "a", "text": "...", "entity_type": "learning"}]
+        _judge_types(kept)
+        assert kept[0]["entity_type"] == "learning"
 
 
 class TestPrefilterRecall:
@@ -847,7 +899,8 @@ class TestHarvestTtl:
                             lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
-                              index_llm_api_key=None, writeback_enabled=False)
+                              index_llm_api_key=None, writeback_enabled=False,
+                              harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr(embedder_mod, "get_embedding",
                             lambda *a, **k: np.ones(768, dtype=np.float32))
@@ -1011,7 +1064,8 @@ class TestOmpSubagentTranscripts:
         monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
-                              index_llm_api_key=None, writeback_enabled=False)
+                              index_llm_api_key=None, writeback_enabled=False,
+                              harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
     def test_pending_lists_all_three_transcripts_with_distinct_ids(
@@ -1101,7 +1155,8 @@ class TestHarvestTranscript:
         monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
-                              index_llm_api_key=None, writeback_enabled=False)
+                              index_llm_api_key=None, writeback_enabled=False,
+                              harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
         def embed(content, *a, **k):
@@ -1563,7 +1618,8 @@ class TestHarvestQueueEntryPoints:
         monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
-                              index_llm_api_key=None, writeback_enabled=False)
+                              index_llm_api_key=None, writeback_enabled=False,
+                              harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
         out = harvest_session_file(str(tmp_path / "new.jsonl"))
@@ -1584,7 +1640,8 @@ class TestHarvestQueueEntryPoints:
         monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
-                              index_llm_api_key=None, writeback_enabled=False)
+                              index_llm_api_key=None, writeback_enabled=False,
+                              harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
         harvest_session_file(str(tmp_path / "new.jsonl"), dry_run=True)
