@@ -96,6 +96,49 @@ class TestClaim:
 
         assert order == ["new", "middle", "old"]
 
+    def test_payload_mtime_governs_order_not_job_id(self, in_memory_db):
+        """issue #211: --enqueue lists transcripts newest-first and inserts
+        them in that order, so the newest transcript gets the lowest job_id.
+        claim() must follow the payload's own mtime, not insertion order."""
+        add(in_memory_db, "harvest", "old", {"path": "old", "mtime": 100})
+        add(in_memory_db, "harvest", "newest", {"path": "newest", "mtime": 300})
+        add(in_memory_db, "harvest", "middle", {"path": "middle", "mtime": 200})
+
+        order = []
+        for _ in range(3):
+            job = claim(in_memory_db, "harvest")["job"]
+            order.append(job["key"])
+            finish(in_memory_db, job["job_id"], ok=True)
+
+        assert order == ["newest", "middle", "old"]
+
+    def test_job_without_mtime_never_blocks_one_with_mtime(self, in_memory_db):
+        add(in_memory_db, "harvest", "no-mtime")
+        add(in_memory_db, "harvest", "has-mtime", {"path": "x", "mtime": 1})
+
+        assert claim(in_memory_db, "harvest")["job"]["key"] == "has-mtime"
+
+    def test_jobs_without_mtime_fall_back_to_job_id_order(self, in_memory_db):
+        """The checkpoint queue carries no mtime; among mtime-less jobs the
+        order stays newest-job_id-first, same as before issue #211."""
+        add(in_memory_db, "checkpoint", "old")
+        add(in_memory_db, "checkpoint", "new")
+
+        assert claim(in_memory_db, "checkpoint")["job"]["key"] == "new"
+
+    def test_payload_is_stored_as_real_json_not_a_python_repr(self, in_memory_db):
+        """claim() reads mtime via SQLite's json_extract, which raises on a
+        Python repr (single-quoted) string. add() must keep writing real
+        JSON so every existing row stays claimable."""
+        add(in_memory_db, "harvest", "a", {"path": "a", "mtime": 5.5})
+        raw = in_memory_db.execute(
+            "SELECT payload FROM job_queue WHERE key = 'a'"
+        ).fetchone()[0]
+
+        assert in_memory_db.execute(
+            "SELECT json_extract(?, '$.mtime')", (raw,)
+        ).fetchone()[0] == 5.5
+
     def test_a_job_is_claimed_only_once(self, in_memory_db):
         add(in_memory_db, "checkpoint", "only")
         add(in_memory_db, "checkpoint", "next")

@@ -122,13 +122,18 @@ def reap(conn: sqlite3.Connection, queue: str,
 
 def claim(conn: sqlite3.Connection, queue: str,
           limits: QueueLimits | None = None) -> dict:
-    """Take the newest queued job, or say why the queue waits.
+    """Take the freshest queued job, or say why the queue waits.
 
-    Newest first, not FIFO: a stale queued transcript is worth less than a
+    Freshest first, not FIFO: a stale queued transcript is worth less than a
     fresh one, and a backlog of stale ones (issue #209) otherwise starves
     every fresh job behind it for as long as the backlog outlasts the daily
-    cap. Reaps first, so one crashed runner cannot wedge the queue until a
-    human notices.
+    cap. "Fresh" is the job's own ``mtime`` (issue #211) — ``--enqueue``
+    lists transcripts newest-first and inserts them in that order, so the
+    newest transcript gets the *lowest* job_id; ordering by job_id instead
+    of mtime claimed the oldest transcript first, exactly backwards. A
+    payload with no mtime (e.g. the checkpoint queue) falls back to job_id
+    without ever losing priority to an mtime-bearing row. Reaps first, so
+    one crashed runner cannot wedge the queue until a human notices.
     """
     limits = limits or QueueLimits()
     reaped = reap(conn, queue, limits)
@@ -149,11 +154,16 @@ def claim(conn: sqlite3.Connection, queue: str,
                     "reaped": reaped}
 
     # One statement, so two workers racing cannot both win the same row.
+    # Rows carrying a payload mtime sort by that, newest first; rows without
+    # one (never mixed ahead of a fresher one) sort by job_id, newest first.
     started = _iso(_now())
     cur = conn.execute(
         "UPDATE job_queue SET status = 'running', started_at = ?"
         " WHERE job_id = (SELECT job_id FROM job_queue WHERE queue = ?"
-        "   AND status = 'queued' ORDER BY job_id DESC LIMIT 1)",
+        "   AND status = 'queued'"
+        "   ORDER BY (json_extract(payload, '$.mtime') IS NULL) ASC,"
+        "            json_extract(payload, '$.mtime') DESC,"
+        "            job_id DESC LIMIT 1)",
         (started, queue),
     )
     conn.commit()
