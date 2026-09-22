@@ -125,7 +125,7 @@ Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurost
 ## MCP Tools (27 tools)
 
 ### Search & Retrieval
-- `vault_search(query, top_k, mode, depth, context, workspace, max_tokens, reference_only)` - Hybrid search with tiered depth; `max_tokens` caps full-depth/reference output, `reference_only` returns lean {path, score, snippet} + fetch hint (issue #62)
+- `vault_search(query, top_k, mode, depth, context, workspace, max_tokens, reference_only, rerank)` - Hybrid search with tiered depth; `max_tokens` caps full-depth/reference output, `reference_only` returns lean {path, score, snippet} + fetch hint (issue #62), `rerank=True` reorders whole-note results with a judgement model (opt-in, ~0.4s, fails open)
 - `vault_summary(path_or_query)` - Pre-computed note summaries
 - `vault_graph(note, depth, workspace)` - Wiki-link neighborhood with PageRank
 - `vault_graph_analysis(top_k, min_shared)` - Structural gaps (unlinked but related pairs) + bridge notes (betweenness/articulation points) over the link graph (issue #12)
@@ -213,6 +213,21 @@ When enabled, searches are logged and a subsequent deliberate use of a surfaced 
 | `feedback_log_retention` | `5000` | `NEUROSTACK_FEEDBACK_LOG_RETENTION` |
 
 Inspect accumulated feedback with `neurostack feedback`. The module is `src/neurostack/feedback.py`; data lives in the `search_log` and `search_feedback` tables (added in schema v18).
+
+### Search reranking (opt-in, per call)
+
+`vault_search(rerank=True)` scores each whole-note result against the query with a judgement model and returns the judge's order. Off by default: issue #142 keeps the retrieval path free of LLM calls, and this is the one exception a caller has to ask for by name. Any failure logs a warning and returns the original ordering, so an outage costs ranking quality rather than the search.
+
+It needs whole notes to judge, so it works with `depth="full"` and `reference_only=True`. Passing it with `depth="auto"`, `"summaries"`, or `"triples"` raises instead of silently doing nothing.
+
+| Key | Default | Env Override |
+| --- | --- | --- |
+| `rerank_url` | `https://openrouter.ai/api` | `NEUROSTACK_RERANK_URL` |
+| `rerank_model` | `~typesafe/jev-latest` | `NEUROSTACK_RERANK_MODEL` |
+| `rerank_api_key` | (none) | `NEUROSTACK_RERANK_API_KEY` |
+| `rerank_concurrency` | `8` | `NEUROSTACK_RERANK_CONCURRENCY` |
+
+Measured on 76 real `search_feedback` clicks: MRR 0.503 to 0.652, top-1 34.2% to 48.7%, top-3 56.6% to 75.0%, paired permutation p=0.004. Roughly $0.0004 per search. The module is `src/neurostack/rerank.py`.
 
 ## Architecture
 
