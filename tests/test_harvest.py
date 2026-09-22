@@ -26,7 +26,9 @@ from neurostack.harvest import (
     _save_harvest_state,
     _trigger_tag,
     get_provider_names,
+    harvest_session_file,
     harvest_transcript,
+    pending_sessions,
 )
 
 # ---------------------------------------------------------------------------
@@ -944,9 +946,122 @@ class TestOmpProvider:
         found = OmpProvider().find_sessions(5)
         assert [s.path for s in found] == [f]
         assert found[0].provider == "omp"
+        # No nested subagent directory here: unchanged top-level behavior (#213).
+        assert found[0].session_id is None
 
     def test_registered(self):
         assert "omp" in get_provider_names()
+
+
+# ---------------------------------------------------------------------------
+# OmpProvider — nested subagent transcripts (issue #213)
+# ---------------------------------------------------------------------------
+
+def _omp_message_line(text="hi"):
+    return json.dumps({"type": "message",
+                        "message": {"role": "user", "content": text}}) + "\n"
+
+
+class TestOmpSubagentTranscripts:
+    """omp writes each subagent's own transcript into
+    ``<project>/<session-stem>/<AgentName>.jsonl`` — one level deeper than the
+    top-level ``<project>/<session-stem>.jsonl`` a bare ``*/*.jsonl`` glob
+    finds. Those subagent transcripts were never harvested."""
+
+    def _build_tree(self, tmp_path):
+        proj = tmp_path / ".omp" / "agent" / "sessions" / "-proj"
+        proj.mkdir(parents=True)
+        parent = proj / "2026-01-01T00-00-00Z_abc.jsonl"
+        parent.write_text(_omp_message_line())
+        subdir = proj / "2026-01-01T00-00-00Z_abc"
+        subdir.mkdir()
+        scout = subdir / "Scout.jsonl"
+        builder = subdir / "Builder.jsonl"
+        scout.write_text(_omp_message_line())
+        builder.write_text(_omp_message_line())
+        # A subagent's tool-call log sits alongside its transcript; only the
+        # .jsonl is a transcript.
+        (subdir / "3.bash.log").write_text("tool output noise")
+        return parent, scout, builder
+
+    def test_find_sessions_includes_nested_subagent_transcripts(
+            self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        parent, scout, builder = self._build_tree(tmp_path)
+        found = OmpProvider().find_sessions(10)
+        assert {s.path for s in found} == {parent, scout, builder}
+
+    def test_nested_session_ids_are_distinct_from_the_parent(
+            self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        parent, scout, builder = self._build_tree(tmp_path)
+        by_path = {s.path: s for s in OmpProvider().find_sessions(10)}
+        parent_id = by_path[parent].session_id or by_path[parent].path.stem
+        scout_id = by_path[scout].session_id
+        builder_id = by_path[builder].session_id
+        assert len({parent_id, scout_id, builder_id}) == 3
+        assert scout_id == "2026-01-01T00-00-00Z_abc/Scout"
+        assert builder_id == "2026-01-01T00-00-00Z_abc/Builder"
+
+    def _wire_harvest(self, tmp_path, monkeypatch, in_memory_db):
+        import neurostack.harvest as harvest_mod
+        monkeypatch.setattr(harvest_mod, "_harvest_state_path",
+                            lambda: tmp_path / "state.json")
+        monkeypatch.setattr(harvest_mod, "_harvest_messages", lambda *a, **k: None)
+        monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
+        cfg = SimpleNamespace(embed_url="http://embed.test",
+                              index_llm_url="http://llm.test", index_llm_model="m",
+                              index_llm_api_key=None, writeback_enabled=False)
+        monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+
+    def test_pending_lists_all_three_transcripts_with_distinct_ids(
+            self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        parent, scout, builder = self._build_tree(tmp_path)
+        monkeypatch.setattr("neurostack.harvest._harvest_state_path",
+                            lambda: tmp_path / "state.json")
+        rows = pending_sessions(50, provider="omp")
+        assert {r["path"] for r in rows} == {str(parent), str(scout), str(builder)}
+        assert len({r["session_id"] for r in rows}) == 3
+
+    def test_each_session_id_resolves_to_its_own_file(
+            self, tmp_path, monkeypatch, in_memory_db):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        parent, scout, builder = self._build_tree(tmp_path)
+        self._wire_harvest(tmp_path, monkeypatch, in_memory_db)
+
+        rows = {r["path"]: r["session_id"] for r in pending_sessions(50, provider="omp")}
+        for expected in (parent, scout, builder):
+            out = harvest_session_file(rows[str(expected)], dry_run=True)
+            assert out["path"] == str(expected)
+
+    def test_harvesting_a_subagent_transcript_leaves_its_parent_pending(
+            self, tmp_path, monkeypatch, in_memory_db):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        parent, scout, builder = self._build_tree(tmp_path)
+        self._wire_harvest(tmp_path, monkeypatch, in_memory_db)
+
+        rows = {r["path"]: r["session_id"] for r in pending_sessions(50, provider="omp")}
+        harvest_session_file(rows[str(scout)])
+
+        remaining = {r["path"] for r in pending_sessions(50, provider="omp")}
+        assert str(scout) not in remaining
+        assert str(parent) in remaining
+        assert str(builder) in remaining
+
+    def test_harvesting_the_parent_leaves_subagent_transcripts_pending(
+            self, tmp_path, monkeypatch, in_memory_db):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        parent, scout, builder = self._build_tree(tmp_path)
+        self._wire_harvest(tmp_path, monkeypatch, in_memory_db)
+
+        rows = {r["path"]: r["session_id"] for r in pending_sessions(50, provider="omp")}
+        harvest_session_file(rows[str(parent)])
+
+        remaining = {r["path"] for r in pending_sessions(50, provider="omp")}
+        assert str(parent) not in remaining
+        assert str(scout) in remaining
+        assert str(builder) in remaining
 
 
 # ---------------------------------------------------------------------------
