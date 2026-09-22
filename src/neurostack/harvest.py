@@ -121,10 +121,18 @@ def _save_harvest_state(state: dict[str, float | str | dict]) -> None:
 
 @dataclass
 class SessionFile:
-    """A discovered session file with its provider metadata."""
+    """A discovered session file with its provider metadata.
+
+    ``session_id`` is ``None`` for a provider's ordinary top-level session
+    file, whose id is just ``path.stem``. A provider sets it explicitly when
+    the file's own stem is not a safe identifier on its own — e.g. an omp
+    subagent transcript, whose stem is just the agent name and would collide
+    across sessions (issue #213).
+    """
     path: Path
     mtime: float
     provider: str
+    session_id: str | None = None
 
 
 @dataclass
@@ -514,12 +522,21 @@ def _extract_gemini_content(content) -> str | None:
 
 
 class OmpProvider:
-    """Oh My Pi — ~/.omp/agent/sessions/*/*.jsonl
+    """Oh My Pi — ~/.omp/agent/sessions/*/*.jsonl, plus subagent transcripts
+    nested one level deeper: ~/.omp/agent/sessions/*/<session-stem>/*.jsonl.
 
-    One JSONL per session, under a per-project subdirectory. Message lines are
-    {"type": "message", "message": {"role": ..., "content": [part, ...]}}.
-    Roles also include "toolResult", whose text parts are raw tool output —
-    excluded, or the pre-filter drowns in it.
+    One JSONL per session, under a per-project subdirectory. omp also writes
+    each subagent's own transcript into a directory named after the parent
+    session's stem, alongside that subagent's tool-call logs (issue #213). A
+    bare glob for ``*/*.jsonl`` never descends into that directory, so those
+    transcripts were never harvested. Their file stem is just the agent name
+    (e.g. "Scout"), which repeats across sessions, so it gets a composite
+    session id — ``"<parent-stem>/<agent-stem>"`` — that can never collide
+    with a top-level session's id (a bare stem, no "/").
+
+    Message lines are {"type": "message", "message": {"role": ...,
+    "content": [part, ...]}}. Roles also include "toolResult", whose text
+    parts are raw tool output — excluded, or the pre-filter drowns in it.
     """
 
     name = "omp"
@@ -535,6 +552,16 @@ class OmpProvider:
                 sessions.append(SessionFile(path=f, mtime=st.st_mtime, provider=self.name))
             except OSError:
                 continue
+        for f in sessions_dir.glob("*/*/*.jsonl"):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            session_id = f"{f.parent.name}/{f.stem}"
+            sessions.append(
+                SessionFile(path=f, mtime=st.st_mtime, provider=self.name,
+                            session_id=session_id)
+            )
         sessions.sort(key=lambda s: s.mtime, reverse=True)
         return sessions[:n]
 
@@ -1296,7 +1323,7 @@ def pending_sessions(n_sessions: int = 50, provider: str | None = None) -> list[
             "path": str(s.path),
             "provider": s.provider,
             "mtime": s.mtime,
-            "session_id": s.path.stem,
+            "session_id": s.session_id or s.path.stem,
         }
         for s in _unharvested(find_recent_sessions(n_sessions, provider=provider))
     ]
@@ -1309,18 +1336,24 @@ def harvest_session_file(
     use_llm: bool = True,
     scan: int = 200,
 ) -> dict:
-    """Harvest exactly one transcript, addressed by path (issue #180).
+    """Harvest exactly one transcript, addressed by path or session id (#180, #213).
 
-    The provider registry owns format detection, so the path must be one the
-    registry already discovers; an unknown path is an error rather than a
-    guess at its shape.
+    The provider registry owns format detection, so the target must be one
+    the registry already discovers; anything else is an error rather than a
+    guess at its shape. ``path`` may be the literal file path, or the
+    ``session_id`` a provider assigned it (e.g. an omp subagent transcript,
+    whose own file stem is not unique enough to address it by).
     """
     from .config import get_config
     from .schema import DB_PATH, get_db
 
     target = Path(path).expanduser()
     match = next(
-        (s for s in find_recent_sessions(scan) if s.path == target), None,
+        (
+            s for s in find_recent_sessions(scan)
+            if s.path == target or (s.session_id or s.path.stem) == path
+        ),
+        None,
     )
     if match is None:
         return {"error": f"No provider owns transcript {target}",
