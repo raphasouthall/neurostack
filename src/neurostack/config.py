@@ -86,6 +86,11 @@ class Config:
     # LLM. Measured +7.9pp agreement on 191 held-out memories (p=0.039) and
     # 13x faster; falls back to the index LLM's own answer on any failure.
     harvest_judge_types: bool = True
+    # Notes in flight at once during `backfill triples`. Only the network side
+    # (LLM extraction + embedding) runs in parallel; every database write stays
+    # on one thread. 1 is the old serial loop. 8 took a 741-note backfill from
+    # ~18 hours to ~2.5 on an OpenRouter-hosted index LLM.
+    triple_backfill_workers: int = 1
     embed_api_key: str = ""
     session_dir: Path = field(default_factory=lambda: Path.home() / ".claude" / "projects")
     api_host: str = "127.0.0.1"
@@ -227,6 +232,8 @@ def load_config() -> Config:
             cfg.judge_timeout_s = float(data["judge_timeout_s"])
         if "harvest_judge_types" in data:
             cfg.harvest_judge_types = bool(data["harvest_judge_types"])
+        if "triple_backfill_workers" in data:
+            cfg.triple_backfill_workers = int(data["triple_backfill_workers"])
         for old, new in _LEGACY_LLM_KEYS.items():
             if old not in data:
                 continue
@@ -295,6 +302,7 @@ def load_config() -> Config:
         "NEUROSTACK_JUDGE_CONCURRENCY": ("judge_concurrency", int),
         "NEUROSTACK_JUDGE_TIMEOUT_S": ("judge_timeout_s", float),
         "NEUROSTACK_HARVEST_JUDGE_TYPES": ("harvest_judge_types", bool),
+        "NEUROSTACK_TRIPLE_BACKFILL_WORKERS": ("triple_backfill_workers", int),
         "NEUROSTACK_SESSION_DIR": ("session_dir", Path),
         "NEUROSTACK_API_HOST": ("api_host", str),
         "NEUROSTACK_API_PORT": ("api_port", int),

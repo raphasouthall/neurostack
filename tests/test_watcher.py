@@ -128,7 +128,19 @@ class TestTripleRetryQueue:
             "INSERT INTO notes (path, title, content_hash, updated_at) VALUES (?,?,?,?)",
             (path, "A", content_hash, "2026-01-01"),
         )
+        conn.execute(
+            "INSERT INTO chunks (note_path, heading_path, content, content_hash, position)"
+            " VALUES (?,?,?,?,?)",
+            (path, "", "content", "c1", 0),
+        )
         conn.commit()
+
+    def _backfill(self, conn, monkeypatch, workers=1):
+        # Drive the real production loop against the in-memory db.
+        import neurostack.watcher as watcher_mod
+        monkeypatch.setattr(watcher_mod, "get_db", lambda _p: conn)
+        monkeypatch.setattr(watcher_mod, "HAS_NUMPY", False)
+        watcher_mod.backfill_triples(workers=workers)
 
     def test_record_then_clear(self, in_memory_db):
         from neurostack.watcher import _clear_triple_failure, _record_triple_failure
@@ -158,15 +170,12 @@ class TestTripleRetryQueue:
         ).fetchone()
         assert row["attempts"] == 2
 
-    def test_index_records_failure_on_parse_error(self, in_memory_db, monkeypatch):
+    def test_backfill_records_failure_on_parse_error(self, in_memory_db, monkeypatch):
         import neurostack.watcher as watcher_mod
         conn = in_memory_db
         self._note(conn)
         monkeypatch.setattr(watcher_mod, "extract_triples", _raise_triple_error)
-        watcher_mod._index_triples_for_note(
-            "notes/a.md", "A", "content", "h1", "2026-01-01",
-            conn, "http://e", "http://l",
-        )
+        self._backfill(conn, monkeypatch)
         row = conn.execute(
             "SELECT attempts FROM triple_extraction_failed WHERE note_path=?",
             ("notes/a.md",),
@@ -177,21 +186,22 @@ class TestTripleRetryQueue:
             "SELECT COUNT(*) c FROM triples WHERE note_path=?", ("notes/a.md",)
         ).fetchone()["c"] == 0
 
-    def test_index_clears_failure_on_success(self, in_memory_db, monkeypatch):
+    def test_backfill_clears_failure_on_success(self, in_memory_db, monkeypatch):
         import neurostack.watcher as watcher_mod
         from neurostack.watcher import _record_triple_failure
         conn = in_memory_db
         self._note(conn)
         _record_triple_failure(conn, "notes/a.md", "h1", "old failure")
+        # Back-date the retry so the backoff window does not hide the note.
+        conn.execute(
+            "UPDATE triple_extraction_failed SET next_retry_at='2000-01-01' WHERE note_path=?",
+            ("notes/a.md",),
+        )
         monkeypatch.setattr(
             watcher_mod, "extract_triples",
             lambda *a, **k: [{"s": "A", "p": "b", "o": "C"}],
         )
-        monkeypatch.setattr(watcher_mod, "HAS_NUMPY", False)
-        watcher_mod._index_triples_for_note(
-            "notes/a.md", "A", "content", "h1", "2026-01-01",
-            conn, "http://e", "http://l",
-        )
+        self._backfill(conn, monkeypatch)
         assert conn.execute(
             "SELECT COUNT(*) c FROM triple_extraction_failed WHERE note_path=?",
             ("notes/a.md",),
@@ -199,6 +209,47 @@ class TestTripleRetryQueue:
         assert conn.execute(
             "SELECT COUNT(*) c FROM triples WHERE note_path=?", ("notes/a.md",)
         ).fetchone()["c"] == 1
+
+    def test_backfill_workers_extract_concurrently_and_store_in_order(
+        self, in_memory_db, monkeypatch,
+    ):
+        # The pool must overlap network calls but never touch the connection
+        # from a worker thread; storing on the calling thread in submit order
+        # is the contract that keeps sqlite safe.
+        import threading
+        import time
+
+        import neurostack.watcher as watcher_mod
+        conn = in_memory_db
+        for i in range(6):
+            self._note(conn, path=f"notes/{i}.md", content_hash=f"h{i}")
+
+        main = threading.current_thread().name
+        lock = threading.Lock()
+        active, peak, store_threads = [0], [0], []
+
+        def slow_extract(title, content, base_url=None, model=None):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return [{"s": title, "p": "is", "o": "x"}]
+
+        real_store = watcher_mod._store_triples_for_note
+
+        def spy_store(*a, **k):
+            store_threads.append(threading.current_thread().name)
+            return real_store(*a, **k)
+
+        monkeypatch.setattr(watcher_mod, "extract_triples", slow_extract)
+        monkeypatch.setattr(watcher_mod, "_store_triples_for_note", spy_store)
+        self._backfill(conn, monkeypatch, workers=4)
+
+        assert peak[0] > 1, "workers never overlapped"
+        assert store_threads and all(t == main for t in store_threads)
+        assert conn.execute("SELECT COUNT(*) c FROM triples").fetchone()["c"] == 6
 
 
 class TestReindexPreservesNoteMetadata:
