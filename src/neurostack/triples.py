@@ -38,7 +38,7 @@ TRIPLE_PROMPT = """Extract knowledge graph triples from this note. \
 Each triple is a (subject, predicate, object) fact.
 
 Rules:
-- Extract 3-15 triples depending on note length and density
+- Extract 3-15 triples depending on note length and density, never more than 40
 - Subject and object should be specific named entities, \
 concepts, or tools (not pronouns)
 - Predicate should be a short verb phrase \
@@ -72,10 +72,11 @@ def _call_triple_llm(prompt: str, base_url: str, model: str, json_mode: bool) ->
         "stream": False,
         "reasoning_effort": "none",
         "temperature": 0.2,
-        # 2048 truncated mid-string on dense notes once the extractor started
-        # returning ~40 triples instead of ~12, and a cut-off JSON object fails
-        # both parse attempts and queues the note for an hour of backoff.
-        "max_tokens": 4096,
+        # A cut-off JSON object fails both parse attempts and queues the note
+        # for an hour of backoff. 2048 truncated at ~12 triples; 4096 still
+        # truncated at ~45 on dense notes (failures at char 9k-12k). 8192 plus
+        # the 40-triple cap in the prompt gives headroom either way.
+        "max_tokens": 8192,
     }
     if json_mode:
         # Ask the endpoint to constrain output to a JSON object. Supported by
