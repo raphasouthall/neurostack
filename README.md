@@ -277,6 +277,30 @@ sudo loginctl enable-linger <user>
 
 `neurostack doctor` shows when each job last ran.
 
+### Checkpoints with a laptop and a server
+
+`/save` on the laptop uploads the session transcript to the server's queue. The server's `checkpoint-worker` job turns it into memories within a minute, and `harvest-worker` does the same for transcripts `harvest-scan` uploads every 30 minutes. Each host reads its own file.
+
+On the laptop, `~/.config/neurostack/client.toml` names the server. Its `checkpoint_command` turns on `harvest-scan` and serves any `hook checkpoint --run` you start by hand:
+
+```toml
+url = "http://my-server:8001/mcp"
+checkpoint_command = "claude -p --model haiku"
+```
+
+On the server, `~/.config/neurostack/config.toml` holds the command the workers pipe each checkpoint prompt through. Any command that reads the prompt on stdin and prints the model's reply works, so it can call an OpenAI-compatible endpoint or a local proxy:
+
+```toml
+checkpoint_command = '''jq -Rs '{model: "qwen/qwen3-30b-a3b", messages: [{role: "user", content: .}]}' \
+  | curl -s https://openrouter.ai/api/v1/chat/completions \
+      -H "Authorization: Bearer $OPENROUTER_API_KEY" -H "Content-Type: application/json" -d @- \
+  | jq -r '.choices[0].message.content' '''
+checkpoint_timeout_s = 300     # per checkpoint
+checkpoint_max_messages = 40   # largest window one checkpoint summarizes, 0 for no cap
+```
+
+`NEUROSTACK_CHECKPOINT_COMMAND`, `NEUROSTACK_CHECKPOINT_TIMEOUT_S` and `NEUROSTACK_CHECKPOINT_MAX_MESSAGES` override them. With no `checkpoint_command` in config.toml, `neurostack jobs` shows both workers off and says why.
+
 ---
 
 ## What changes day-to-day
@@ -473,8 +497,8 @@ MCP tool, gzip-compressed. A transcript over 10 MB goes up as its newest records
 queue takes 50 checkpoints a day, and the server's `checkpoint-worker` job in
 `neurostack run-due` runs each one within a minute against the uploaded text. `enqueue`
 prints one line back (queued, already queued, the daily cap reached, or unreachable) and
-exits 0 on a landed request, 1 otherwise. The server still reads `checkpoint_command` from
-its own `client.toml`. `harvest --pending --enqueue` and the client's `harvest-scan` job
+exits 0 on a landed request, 1 otherwise. The server runs it with the `checkpoint_command`
+from its own `config.toml`. `harvest --pending --enqueue` and the client's `harvest-scan` job
 upload pending transcripts to the harvest queue the same way.
 
 </details>
