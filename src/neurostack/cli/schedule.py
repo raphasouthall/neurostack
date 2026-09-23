@@ -138,6 +138,30 @@ _BACKENDS = {
 }
 
 
+def _seed() -> None:
+    """Seed job_runs so the first tick does not run every daily job at once."""
+    from ..config import get_config
+    from ..jobs import seed_runs
+    from ..schema import get_db
+
+    cfg = get_config()
+    # Calendar jobs all need the index, so a host without one has nothing to seed.
+    if cfg.db_path.exists():
+        seed_runs(cfg, get_db(cfg.db_path))
+
+
+def install_timer() -> tuple[str, Path | str, str | None]:
+    """Install this OS's timer and seed job_runs. Returns (backend, path, error)."""
+    system = platform.system()
+    if system not in _BACKENDS:
+        return system, "", f"no scheduler backend for {system}"
+    backend, install, _, _ = _BACKENDS[system]
+    path, err = install(_binary())
+    if err is None:
+        _seed()
+    return backend, path, err
+
+
 def cmd_schedule(args):
     """Install, remove, or report the timer that runs `neurostack run-due`."""
     subcmd = getattr(args, "schedule_command", None)
@@ -150,7 +174,7 @@ def cmd_schedule(args):
     if system not in _BACKENDS:
         print(f"  \033[31m\u2717\033[0m No scheduler backend for {system}")
         sys.exit(1)
-    backend, install, remove, active = _BACKENDS[system]
+    backend, _, remove, active = _BACKENDS[system]
 
     if subcmd == "status":
         on = active()
@@ -160,7 +184,10 @@ def cmd_schedule(args):
             print(f"  run-due timer ({backend}): {_mark(on, 'active', 'inactive')}")
         return
 
-    path, err = install(_binary()) if subcmd == "install" else remove()
+    if subcmd == "install":
+        backend, path, err = install_timer()
+    else:
+        path, err = remove()
     done = "installed" if subcmd == "install" else "removed"
     if as_json:
         out = {done: err is None, "backend": backend, "path": str(path)}

@@ -160,7 +160,7 @@ def install_claude_adapter() -> tuple[str, Path]:
     the transcript poster this supersedes cannot double-fire.
     """
     path = _claude_settings_path()
-    if not (Path.home() / ".claude").is_dir():
+    if not harness_detected("claude"):
         return "not-detected", path
     binary = _resolve_neurostack_binary()
     if binary is None:
@@ -212,7 +212,7 @@ def render_omp_extension(binary: str) -> str:
 def install_omp_adapter() -> tuple[str, Path]:
     """Write the omp extension. Returns (status, extension path)."""
     path = omp_extension_path()
-    if not (Path.home() / ".omp").is_dir():
+    if not harness_detected("omp"):
         return "not-detected", path
     binary = _resolve_neurostack_binary()
     if binary is None:
@@ -229,6 +229,11 @@ def remove_omp_adapter() -> bool:
         return False
     path.unlink()
     return True
+
+
+def harness_detected(harness: str) -> bool:
+    """True when the harness keeps its config directory in this home."""
+    return (Path.home() / (".claude" if harness == "claude" else ".omp")).is_dir()
 
 
 def install_adapter(harness: str) -> tuple[str, Path]:
