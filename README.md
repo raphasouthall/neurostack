@@ -440,8 +440,8 @@ neurostack triggers stats --days 7
 
 # Checkpoint: manual only — a harness never fires one on its own (issue #176).
 # `/save` (both harnesses) queues a request instead of running one directly:
-neurostack hook enqueue --harness claude    # or: omp — queue_url if set, else the local queue
-neurostack hook checkpoint --run --session <id>  # what the checkpoint-worker runs
+neurostack hook enqueue --harness claude    # or: omp — uploads the transcript to the server's queue
+neurostack hook checkpoint --run --session <id>  # run one checkpoint by hand on this host
 neurostack hook checkpoint --save               # a model's JSON reply on stdin
 ```
 
@@ -467,15 +467,15 @@ before it acknowledges the write. Avoiding that remote duplicate requires server
 idempotency, which the current `vault_remember` contract does not provide.
 
 No harness fires a checkpoint on its own: `/save` is the only trigger, and it hands the
-request to a queue instead of running one directly. With `queue_url` set in `client.toml`,
-`neurostack hook enqueue --harness <claude|omp>` POSTs the request there. Without it the
-request lands in the local job queue, capped at 50 a day, and the `checkpoint-worker` job
-in `neurostack run-due` runs it within a minute. Either way it prints one line back
-(queued, already queued, the daily cap reached, or unreachable) and exits 0 on a landed
-request, 1 otherwise. `neurostack status` shows the configured `queue_url` under LEARN.
-Whatever runs the actual checkpoint passes `--format omp` or `--format claude-code` to
-`checkpoint --run` so it knows which transcript root to search when nothing is piped in on
-stdin.
+request to the server's queue instead of running one directly. `neurostack hook enqueue
+--harness <claude|omp>` reads the session's transcript and uploads it with the `queue_add`
+MCP tool, gzip-compressed. A transcript over 10 MB goes up as its newest records only. The
+queue takes 50 checkpoints a day, and the server's `checkpoint-worker` job in
+`neurostack run-due` runs each one within a minute against the uploaded text. `enqueue`
+prints one line back (queued, already queued, the daily cap reached, or unreachable) and
+exits 0 on a landed request, 1 otherwise. The server still reads `checkpoint_command` from
+its own `client.toml`. `harvest --pending --enqueue` and the client's `harvest-scan` job
+upload pending transcripts to the harvest queue the same way.
 
 </details>
 
