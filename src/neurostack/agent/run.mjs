@@ -7,7 +7,6 @@
 // custom tools that call the NeuroStack CLI directly, so a run needs neither
 // the MCP server nor a harness login. Built-in file tools work in the vault.
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 
 import { getModel } from "@earendil-works/pi-ai/compat";
 import {
@@ -84,6 +83,18 @@ const customTools = [
 		Type.Object({ memory_id: Type.Integer() }),
 		(p) => ["memories", "forget", String(p.memory_id)],
 	),
+	tool(
+		"graph_analysis",
+		"Structural gaps (related but unlinked note pairs) and bridge notes in the wiki-link graph, as JSON.",
+		Type.Object({ top_k: Type.Optional(Type.Integer()) }),
+		(p) => ["--json", "graph-analysis", "--top-k", String(p.top_k ?? 15)],
+	),
+	tool(
+		"note_summary",
+		"The stored summary of a note, by vault-relative path.",
+		Type.Object({ path: Type.String() }),
+		(p) => ["--json", "summary", p.path],
+	),
 ];
 
 const modelRuntime = await ModelRuntime.create({
@@ -144,7 +155,7 @@ const timer = setTimeout(() => {
 
 let code = 0;
 try {
-	await session.prompt(readFileSync(job.prompt_file, "utf8"));
+	await session.prompt(job.prompt);
 	await session.waitForIdle();
 	const last = session.getLastAssistantText() || "";
 	console.log(`[${stamp()}] done\n${last}`);
