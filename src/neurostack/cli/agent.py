@@ -20,6 +20,9 @@ AGENT_DIR = Path(__file__).resolve().parent.parent / "agent"
 JOBS = {
     "promotion": {"timeout_s": 2700, "thinking": "medium"},
 }
+# A prompt file you supply runs with these limits; the job name only picks a
+# bundled prompt, so personal jobs stay out of the package.
+CUSTOM = {"timeout_s": 1800, "thinking": "medium"}
 MIN_NODE = (22, 19)
 
 
@@ -69,10 +72,21 @@ def cmd_agent(args):
     state = _state_dir()
     _install(state)
     cwd = str(Path(args.cwd or cfg.vault_root).expanduser())
-    spec = JOBS[args.job]
+    if bool(args.job) == bool(args.prompt_file):
+        sys.exit("neurostack agent: give a bundled job or --prompt-file, not both or neither")
+    if args.job:
+        spec = JOBS[args.job]
+        prompt = (AGENT_DIR / "jobs" / f"{args.job}.md").read_text(encoding="utf-8")
+    else:
+        spec = CUSTOM
+        src = sys.stdin if args.prompt_file == "-" else open(args.prompt_file, encoding="utf-8")
+        with src:
+            prompt = src.read()
+    if args.mode:
+        prompt += f"\n\n## RUN MODE\nMODE={args.mode}\n"
     job = {
         "cwd": cwd,
-        "prompt_file": str(AGENT_DIR / "jobs" / f"{args.job}.md"),
+        "prompt": prompt,
         "state_dir": str(state),
         "provider": cfg.agent_provider,
         "model": args.model or cfg.agent_model,
