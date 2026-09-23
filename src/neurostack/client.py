@@ -74,11 +74,13 @@ class ClientConfig:
         """
         if not path:
             return None
-        if not path.startswith("/"):
+        # isabs catches drive paths such as C:\ that do not start with a slash.
+        if not (path.startswith("/") or os.path.isabs(path)):
             return path
+        path = Path(path).as_posix()
         best: tuple[int, str] | None = None
         for prefix, workspace in self.workspace_map.items():
-            expanded = os.path.expanduser(prefix).rstrip("/")
+            expanded = Path(os.path.expanduser(prefix)).as_posix().rstrip("/")
             if not expanded:
                 continue
             if path == expanded or path.startswith(expanded + "/"):

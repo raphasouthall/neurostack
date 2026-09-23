@@ -377,7 +377,7 @@ def vault_list_files(
         stat = fp.stat()
         modified = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
         files.append({
-            "path": str(rel),
+            "path": rel.as_posix(),
             "size_bytes": stat.st_size,
             "modified_iso": modified.isoformat(),
         })
@@ -439,7 +439,7 @@ def vault_write_file(
     if created:
         index_hint = (
             f"- [[{abs_path.stem}]] — <one-line description> "
-            f"(add to {rel_parent / 'index.md'})"
+            f"(add to {(rel_parent / 'index.md').as_posix()})"
         )
 
     return {
@@ -500,6 +500,6 @@ def vault_delete_file(
         "git_error": git_result.get("error"),
         "index_update_needed": True,
         "index_hint": (
-            f"remove the [[{abs_path.stem}]] entry from {rel_parent / 'index.md'}"
+            f"remove the [[{abs_path.stem}]] entry from {(rel_parent / 'index.md').as_posix()}"
         ),
     }
