@@ -76,6 +76,7 @@ def cmd_agent(args):
         "state_dir": str(state),
         "provider": cfg.agent_provider,
         "model": args.model or cfg.agent_model,
+        "base_url": cfg.agent_base_url,
         "api_key": key,
         "thinking": spec["thinking"],
         "timeout_s": args.timeout or spec["timeout_s"],
