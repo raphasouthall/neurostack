@@ -728,10 +728,8 @@ def main():
     )
     p.add_argument("--handoff-age-days", type=int, default=14,
                    help="Grace window before a handoff memory counts as dead")
-    p.add_argument("--sim-floor", type=float, default=0.55,
-                   help="Nearest-chunk similarity below this = uncovered")
     p.add_argument("--limit", type=int, default=200,
-                   help="Max durable memories scanned for coverage")
+                   help="Newest durable memories checked for coverage")
     p.add_argument(
         "--workspace", "-w", default=None,
         help="Restrict to vault subdirectory. Also reads NEUROSTACK_WORKSPACE",

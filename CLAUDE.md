@@ -92,7 +92,7 @@ Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurost
 | `neurostack record-usage "path1" "path2"` | Record note usage for hotness scoring |
 | `neurostack decay` | Report note excitability and dormancy |
 | `neurostack prediction-errors` | Show notes flagged as poor retrieval fit |
-| `neurostack promote` | Promotion queue: memories that should become vault notes (#92). `--workspace`, `--sim-floor`, `--handoff-age-days` |
+| `neurostack promote` | Promotion queue: memories that should become vault notes (#92). The uncovered bucket is judged, not thresholded (#215). `--workspace`, `--limit`, `--handoff-age-days` |
 | `neurostack feedback` | Show accumulated implicit-feedback stats — searches, uses, ranks (issue #66) |
 | `neurostack migrate write-back` | Export qualifying memories to markdown files (issue #20). `--dry-run` to preview |
 | `neurostack sync` | Reconcile write-back files against the DB (DB wins on conflict) |
@@ -149,7 +149,7 @@ Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurost
 - `vault_forget(memory_id)` - Delete memory (archived to `memories_archive`, restorable via CLI, issue #90)
 - `vault_memories(query, entity_type, workspace, limit)` - List/search memories
 - `vault_harvest(sessions, dry_run)` - Extract session insights
-- `vault_promotion_queue(workspace, handoff_age_days, uncovered_sim_floor, uncovered_limit)` - Deterministic worklist of memories to promote into notes (#92): debt / drift / dead_handoffs / uncovered
+- `vault_promotion_queue(workspace, handoff_age_days, uncovered_limit)` - Worklist of memories to promote into notes (#92): debt / drift / dead_handoffs / uncovered. Uncovered is decided by the judgement model and cached per memory (#215); `uncovered_pending` counts memories it did not answer
 
 ### Sessions
 - `vault_session_start(source_agent, workspace)` - Begin memory session
@@ -227,11 +227,13 @@ One client for every typed judgement: pick a label, score an option, answer yes/
 | `judge_timeout_s` | `30.0` | `NEUROSTACK_JUDGE_TIMEOUT_S` |
 | `harvest_judge_types` | `true` | `NEUROSTACK_HARVEST_JUDGE_TYPES` |
 
-Two callers today.
+Three callers today.
 
 **Harvest classification** (`harvest._judge_types`, on by default). The index LLM still decides KEEP/DROP and writes the summary and trigger, because only it can generate text. The judge then overwrites `entity_type`. On 191 held-out agent-written memories it agreed with the stored type 55.5% of the time against gemma's 47.6%, a +7.9pp gap (95% CI [+1.0, +14.7], paired permutation p=0.039), with macro-F1 0.514 against 0.424, and ran 13x faster. Both were scored against the same noisy key, so the gap is the result and the absolute numbers are not. A candidate the judge cannot answer keeps the index LLM's type.
 
 **Search reranking** (`vault_search(rerank=True)`, off by default). Scores each whole-note result against the query and returns the judge's order. Issue #142 keeps the retrieval path free of LLM calls, and this is the one exception a caller has to ask for by name. It needs whole notes, so it works with `depth="full"` and `reference_only=True` and raises on `depth="auto"`, `"summaries"`, or `"triples"`. Measured on 76 real `search_feedback` clicks: MRR 0.503 to 0.652, top-1 34.2% to 48.7%, top-3 56.6% to 75.0%, paired permutation p=0.004, roughly $0.0004 per search. Blending the judge score with the hybrid rank scored worse than the judge's own order, so there is no blend weight. Any failure returns the original ordering.
+
+**Promotion coverage** (`promotion._uncovered_bucket`, issue #215). Decides which durable memories no note records yet. Embedding similarity picks the evidence, the three nearest notes, and the judge scores coverage 0-3 against them; below 1.5 is uncovered. It replaced a 0.55 similarity floor that the qwen3-embedding-8b switch left with nothing below it. On 578 live memories the judge called 38% uncovered, and similarity separated them only loosely (AUC 0.76): the best fixed floor, 0.82, was right 57% of the time and would move again at the next embedder change. Each verdict is cached in `memory_coverage` under a hash of the memory text, the evidence notes' content hashes and the question, so a memory is judged again only when one of those changes. An unanswered memory is left out and counted in `uncovered_pending`, never guessed.
 
 ## Architecture
 
