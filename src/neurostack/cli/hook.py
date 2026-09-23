@@ -11,16 +11,16 @@ The `checkpoint` event (issue #143) is the one that hands work back. `--run`
 is how it runs now (#147, #155): it builds the prompt, pipes it through
 `checkpoint_command` from client.toml (for example `claude -p --model sonnet`)
 and saves the reply. `--format` names which transcript root to search when
-nothing else does. The queue's checkpoint-worker (`neurostack run-due`, issue
-#229) calls `run_checkpoint` with only a session, a harness and a format to go
-on. `checkpoint --save` still reads a model's JSON reply on
-stdin, for herdr and for hand use.
+nothing else does. The server's checkpoint-worker (`neurostack run-due`,
+issues #229 and #232) calls `run_checkpoint` with the uploaded transcript
+written to a temp file as `transcript_path`. `checkpoint --save` still reads a
+model's JSON reply on stdin, for herdr and for hand use.
 
 Checkpoints are otherwise manual now: `enqueue` (issue #176) is the only
-thing an adapter's `/save` runs. It hands the request to the queue named by
-`queue_url` in client.toml, or to the local queue when that is unset, and
-relays the one line the queue answers with — queued, already queued, cap
-reached, or unreachable — never running a checkpoint itself.
+thing an adapter's `/save` runs. It uploads the session transcript to the
+server's checkpoint queue with the `queue_add` MCP tool and relays the one
+line the queue answers with — queued, already queued, cap reached, or
+unreachable — never running a checkpoint itself.
 
 Fail open, always: an unreachable server, a malformed payload, or an
 unexpected exception prints one line to stderr and exits 0.
@@ -794,7 +794,12 @@ def _transcript_messages(payload: dict, session: str, source: str) -> list[dict]
     except OSError as exc:
         print(f"neurostack hook checkpoint: {path} unreadable: {exc}", file=sys.stderr)
         return []
-    records: list[dict] = []
+    return parse_transcript(text, source)
+
+
+def parse_transcript(text: str, source: str) -> list[dict[str, object]]:
+    """A transcript's JSONL text as `{role, text, tools, outputs}` messages."""
+    records: list[dict[str, object]] = []
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -887,8 +892,12 @@ def _checkpoint_window(payload: dict, state: SessionState) -> tuple[int, list[di
         return start, normalized[skip:]
     source = _first_str(payload, "format", "source_agent") or "claude-code"
     messages = _transcript_messages(payload, state.session, source)
-    start = min(state.since_index, len(messages))
-    return start, messages[start:]
+    # An uploaded transcript trimmed to its newest records (issue #232) says how
+    # many messages it dropped, so the saved index still lines up.
+    offset = payload.get("transcript_offset")
+    offset = offset if isinstance(offset, int) and offset > 0 else 0
+    start = min(max(state.since_index - offset, 0), len(messages))
+    return offset + start, messages[start:]
 
 
 def _checkpoint_skip(window: list[dict]) -> bool:
@@ -1328,16 +1337,20 @@ def _latest_session() -> str | None:
 
 def run_enqueue(payload: dict, harness: str = "cli",
                 cfg: ClientConfig | None = None) -> tuple[int, str]:
-    """`hook enqueue`: hand a checkpoint request to the checkpoint queue.
+    """`hook enqueue`: upload this session's transcript to the server's checkpoint queue.
 
-    No OS lock, no McpClient, no session state to load: the request either
-    lands on the queue or it does not, and this only relays which (#176).
+    No OS lock and no session state to load: the request either lands on the
+    queue or it does not, and this only relays which (#176, #232).
     """
     cfg = cfg or load_client_config()
     payload = _with_session(payload)
     session = _session_id(payload)
     workspace = _workspace(cfg, payload) or cfg.workspace_for(os.getcwd())
-    return queue_enqueue(cfg, session, harness, workspace)
+    source = _first_str(payload, "format") or ("claude-code" if harness == "claude" else "omp")
+    path = _resolve_transcript(payload, session, source)
+    if path is None:
+        return 1, f"neurostack: no transcript found for session {session}"
+    return queue_enqueue(cfg, session, harness, workspace, path, source)
 
 
 def sessions_behind() -> int:

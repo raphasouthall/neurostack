@@ -4,6 +4,7 @@
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from .utils import _get_workspace
@@ -238,17 +239,18 @@ def cmd_harvest(args):
     print(f"\n  Total: {n_saved} saved, {n_skip} skipped ({total} found)")
 
 
-def enqueue_pending(conn, rows) -> dict[str, Any]:
-    """Queue every pending transcript into the harvest job queue (issue #207).
+def enqueue_pending(client, rows) -> dict[str, Any]:
+    """Upload every pending transcript to the server's harvest queue (#207, #232).
 
-    Reuses ``queue.add`` — the same store call ``neurostack queue add`` makes —
-    so dedupe, the daily cap and the schema stay in one place. Keyed on
-    ``path@mtime`` so an unchanged transcript stays a no-op duplicate while
-    one with new messages (new mtime) queues again. One bad row is recorded
-    and skipped rather than aborting the run.
+    Goes through the `queue_add` MCP tool, so dedupe and the schema stay in
+    `queue.py` on the server. Keyed on ``path@mtime`` so a transcript already
+    queued is a no-op duplicate. A transcript's watermark moves only once the
+    server holds it, so a failed upload shows as pending on the next scan. One
+    bad row is recorded and skipped; a server that does not answer ends the
+    scan, since every later upload would wait out the same timeout.
     """
-    from ..queue import QueueLimits
-    from ..queue import add as queue_add
+    from ..harvest import record_watermark
+    from .queue import upload
 
     jobs = []
     queued = 0
@@ -257,16 +259,22 @@ def enqueue_pending(conn, rows) -> dict[str, Any]:
 
     for row in rows:
         key = f"{row['path']}@{row['mtime']}"
+        payload = {"path": row["path"], "provider": row["provider"], "mtime": row["mtime"]}
         try:
-            result = queue_add(
-                conn, "harvest", key,
-                {"path": row["path"], "provider": row["provider"], "mtime": row["mtime"]},
-                QueueLimits(),
-            )
+            result = upload(client, "harvest", key, payload, Path(row["path"]), row["provider"])
         except Exception as e:
             errors += 1
             jobs.append({"key": key, "error": str(e)})
             continue
+        if result is None:
+            errors += 1
+            jobs.append({"key": key, "error": client.errors[-1] if client.errors else "no reply"})
+            break
+        if result.get("ok") is not True:
+            errors += 1
+            jobs.append({"key": key, "error": result.get("reason") or "refused"})
+            continue
+        record_watermark(row["path"], row["mtime"], row["messages"])
         if result.get("duplicate"):
             duplicates += 1
         else:
@@ -281,9 +289,13 @@ def enqueue_pending(conn, rows) -> dict[str, Any]:
 
 
 def _enqueue_pending(rows, as_json):
-    from ..schema import DB_PATH, get_db
+    from ..client import McpClient, load_client_config
 
-    summary = enqueue_pending(get_db(DB_PATH), rows)
+    client = McpClient(load_client_config())
+    try:
+        summary = enqueue_pending(client, rows)
+    finally:
+        client.close()
     if as_json:
         print(json.dumps(summary))
         return

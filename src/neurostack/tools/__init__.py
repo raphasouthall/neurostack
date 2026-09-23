@@ -22,6 +22,7 @@ def ensure_registered() -> ToolRegistry:
             file_tools,  # noqa: F401
             insight_tools,  # noqa: F401
             memory_tools,  # noqa: F401
+            queue_tools,  # noqa: F401
             search_tools,  # noqa: F401
             session_tools,  # noqa: F401
         )
