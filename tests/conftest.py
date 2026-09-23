@@ -1,6 +1,7 @@
 """Shared fixtures for NeuroStack tests."""
 
 import json
+import os
 import sqlite3
 import textwrap
 import threading
@@ -8,6 +9,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+
+# No test may reach a real Ollama. Port 0 refuses at once on every OS, while a
+# refused localhost:11434 costs seconds per call on Windows.
+os.environ["NEUROSTACK_EMBED_URL"] = "http://127.0.0.1:0"
 
 
 @pytest.fixture
@@ -253,6 +258,7 @@ def isolated_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Path.home() on Windows
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.delenv("NEUROSTACK_URL", raising=False)
     return home
