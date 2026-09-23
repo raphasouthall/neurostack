@@ -13,7 +13,6 @@ import pytest
 
 import neurostack.consolidate as consolidate_mod
 from neurostack.consolidate import (
-    EXTEND_SIM_FLOOR,
     _extended_content,
     _new_note_content,
     _slugify,
@@ -72,13 +71,20 @@ def _add_community(conn, note_paths, level=0):
 
 
 @pytest.fixture
-def vault_db(in_memory_db):
+def vault_db(in_memory_db, monkeypatch):
     """Two notes: covered.md (basin c1), lonely.md (no community).
 
     Memory A: promotion-debt, embedding identical to covered.md's chunk
     (sim 1.0 -> extend). Memory B: durable, cosine 0.5 to lonely.md and 0 to
-    covered.md -> uncovered, no basin -> workspace-keyed create cluster.
+    covered.md, and the judge calls it uncovered -> no basin ->
+    workspace-keyed create cluster.
     """
+    import neurostack.judge as judge_mod
+
+    monkeypatch.setattr(
+        judge_mod, "decide_many",
+        lambda states, questions, cfg=None: [{"coverage": {"score": 0.0}}] * len(states),
+    )
     conn = in_memory_db
     _add_note(conn, "covered.md", emb=_emb(1.0))
     _add_note(conn, "lonely.md", emb=_emb(0.0, 1.0))
@@ -155,9 +161,6 @@ class TestClustering:
 
     def test_no_candidates_no_clusters(self, in_memory_db):
         assert cluster_candidates(in_memory_db) == []
-
-    def test_extend_floor_matches_promotion_floor(self):
-        assert EXTEND_SIM_FLOOR == 0.55
 
 
 class TestDryRun:

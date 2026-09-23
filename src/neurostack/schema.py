@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 28
 
 # One row per queued job. The orchestrator (n8n, cron, anything) only calls
 # `neurostack queue`; dedupe, the daily cap, claiming and stale reaping live
@@ -55,6 +55,20 @@ CREATE INDEX IF NOT EXISTS idx_job_queue_finished ON job_queue(queue, finished_a
 -- Dedupe is a constraint, not a scan: one live job per key per queue.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_job_queue_live
     ON job_queue(queue, key) WHERE status IN ('queued', 'running');
+"""
+
+# The judgement model's verdict on whether a durable memory is already written
+# into the vault (issue #215). `fingerprint` hashes the memory text, the evidence
+# notes' content hashes and the question, so a verdict is reused until one of
+# those changes and never re-bought for the same inputs.
+COVERAGE_SQL = """
+CREATE TABLE IF NOT EXISTS memory_coverage (
+    memory_id INTEGER PRIMARY KEY
+        REFERENCES memories(memory_id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    score REAL NOT NULL,
+    judged_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 SCHEMA_SQL = """
@@ -442,6 +456,7 @@ CREATE INDEX IF NOT EXISTS idx_triple_failed_retry
 """
 
 SCHEMA_SQL += JOB_QUEUE_SQL
+SCHEMA_SQL += COVERAGE_SQL
 
 # Migration from v1 to v2: add triples tables
 MIGRATION_V2 = """
@@ -1275,6 +1290,16 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (27)")
         conn.commit()
         log.info("Migration to v27 complete.")
+
+    if current < 28:
+        log.info(
+            "Migrating schema v27 -> v28: memory_coverage — cached judge "
+            "verdicts for the promotion queue's uncovered bucket (issue #215)..."
+        )
+        conn.executescript(COVERAGE_SQL)
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (28)")
+        conn.commit()
+        log.info("Migration to v28 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:

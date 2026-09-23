@@ -291,7 +291,6 @@ def cmd_promote(args):
         conn,
         workspace=_get_workspace(args),
         handoff_age_days=args.handoff_age_days,
-        uncovered_sim_floor=args.sim_floor,
         uncovered_limit=args.limit,
     )
     if args.json:
@@ -304,6 +303,9 @@ def cmd_promote(args):
           f"(debt {counts['debt']}, drift {counts['drift']}, "
           f"dead handoffs {counts['dead_handoffs']}, "
           f"uncovered {counts['uncovered']})")
+    if queue["uncovered_pending"]:
+        print(f"  {queue['uncovered_pending']} memories not judged yet;"
+              " the next run asks again")
     for bucket, label in [
         ("debt", "PROMOTION-DEBT"),
         ("drift", "DRIFTED"),
@@ -318,8 +320,8 @@ def cmd_promote(args):
             if bucket == "drift":
                 extra = f" [drifted from {e['drifted_from']}]"
             elif bucket == "uncovered":
-                extra = (f" [nearest {e['nearest_note']}"
-                         f" sim {e['nearest_similarity']}]")
+                extra = (f" [coverage {e['coverage']}/3,"
+                         f" nearest {e['nearest_note']}]")
             print(f"    #{e['memory_id']:<4} [{e['entity_type']}]"
                   f" {e['created_at']}{extra}")
             print(f"          {e['preview'][:100]}")

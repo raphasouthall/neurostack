@@ -34,8 +34,7 @@ log = logging.getLogger("neurostack")
 
 DEFAULT_CAP = 5
 # At or above this similarity the cluster extends its nearest note; below it
-# the knowledge has no home and a new note is created. Matches the promotion
-# queue's uncovered floor so the two mechanisms agree on what "covered" means.
+# the knowledge has no home and a new note is created.
 EXTEND_SIM_FLOOR = 0.55
 _MEMORY_CHARS = 1500          # per-memory content budget in the synthesis prompt
 _COARSE_LEVEL = 0             # attractor level 0 = broad basins
