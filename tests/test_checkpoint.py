@@ -750,14 +750,10 @@ def test_ordinary_hook_write_preserves_checkpoint_progress(server):
 
 
 def test_same_session_busy_while_other_session_runs(isolated_home):
-    import fcntl
-
     from neurostack.cli.hook import _lock_path
-    lock = _lock_path("held")
-    lock.parent.mkdir(parents=True, exist_ok=True)
+    from neurostack.locks import file_lock
     cfg = ClientConfig(url="http://127.0.0.1:1/mcp", checkpoint_command="exit 9")
-    with lock.open("a+") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    with file_lock(_lock_path("held")):
         busy = run_checkpoint({"session": "held"}, cfg=cfg)
         other = run_checkpoint({"session": "other"}, cfg=cfg)
     assert "already running" in busy.text

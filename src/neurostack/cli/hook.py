@@ -28,18 +28,18 @@ unexpected exception prints one line to stderr and exits 0.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
 import re
 import sys
 import time
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..client import ClientConfig, McpClient, load_client_config
+from ..locks import file_lock
 from ..memories import VALID_ENTITY_TYPES
 from ..redact import redact_secrets
 from ..triggers import is_broad_trigger, normalise_tool, parse_trigger
@@ -123,7 +123,7 @@ class SessionState:
     def save(self, *, checkpoint: bool = False, locked: bool = False) -> None:
         """Merge one state domain under a short lock before replacing the file."""
         try:
-            manager = nullcontext(True) if locked else _file_lock(
+            manager = nullcontext(True) if locked else file_lock(
                 _lock_path(self.session, "state"))
             with manager:
                 current = load_state(self.session)
@@ -190,26 +190,6 @@ def _window_path(session: str) -> Path:
 def _lock_path(session: str, kind: str = "checkpoint") -> Path:
     suffix = _LOCK_SUFFIX if kind == "checkpoint" else _STATE_LOCK_SUFFIX
     return sessions_dir() / f"{_slug(session)}{suffix}"
-
-
-@contextmanager
-def _file_lock(path: Path, *, blocking: bool = True):
-    """Hold an OS lock; stale lock filenames are harmless after process exit."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = path.open("a+")
-    try:
-        flags = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
-        try:
-            fcntl.flock(handle.fileno(), flags)
-        except BlockingIOError:
-            yield False
-            return
-        yield True
-    finally:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            handle.close()
 
 
 def _window_id(start: int, messages: list) -> str:
@@ -1134,7 +1114,7 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
                         _locked: bool = False) -> Verdict:
     """Save one frozen reply, recording each acknowledged item before retry."""
     if not _locked:
-        with _file_lock(_lock_path(session), blocking=False) as acquired:
+        with file_lock(_lock_path(session), blocking=False) as acquired:
             if not acquired:
                 cfg = cfg or load_client_config()
                 record_busy(session, harness)
@@ -1241,7 +1221,7 @@ def run_checkpoint(payload: dict, harness: str = "cli",
         return _run_failed(session, harness,
                            "outdated omp adapter in this window; restart omp", cfg)
     try:
-        lock = _file_lock(_lock_path(session), blocking=False)
+        lock = file_lock(_lock_path(session), blocking=False)
         with lock as acquired:
             if not acquired:
                 record_busy(session, harness)
@@ -1400,7 +1380,7 @@ def run_event(event: str, payload: dict, cfg: ClientConfig | None = None,
         return Verdict(json.dumps({"since_index": load_state(session).since_index}))
     if event == "checkpoint" and not _checkpoint_locked:
         try:
-            with _file_lock(_lock_path(session), blocking=False) as acquired:
+            with file_lock(_lock_path(session), blocking=False) as acquired:
                 if not acquired:
                     cfg = cfg or load_client_config()
                     record_busy(session, "hook")
