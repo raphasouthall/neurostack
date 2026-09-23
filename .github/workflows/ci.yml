@@ -55,3 +55,52 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --extra dev --extra full
       - run: uv run pytest tests/ -v --tb=short --cov=neurostack --cov-report=term-missing
+
+  # A clean machine installing the npm package (issue #238): the path a new
+  # user takes. The source tarball is this commit, not main.
+  install:
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pack the npm package and this commit's source
+        run: |
+          git archive --format=tar.gz --prefix=neurostack/ -o "$RUNNER_TEMP/source.tar.gz" HEAD
+          npm pack ./npm --pack-destination "$RUNNER_TEMP"
+      - name: npm install -g
+        env:
+          NEUROSTACK_SOURCE_TARBALL: ${{ runner.temp }}/source.tar.gz
+        run: npm install -g "$RUNNER_TEMP"/neurostack-*.tgz
+      # No user systemd bus on Linux runners and no GUI session for launchctl on
+      # macOS, so init skips the timer; the Windows step below installs one.
+      - name: neurostack init
+        run: neurostack init "$RUNNER_TEMP/vault" --yes --mode lite --no-hooks --no-schedule
+      - name: neurostack doctor
+        run: neurostack doctor
+      - name: run-due records one ok decay run
+        run: |
+          neurostack run-due --job decay --force --json > "$RUNNER_TEMP/run.json"
+          cat "$RUNNER_TEMP/run.json"
+          node -e '
+            const runs = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            if (runs.length !== 1 || runs[0].job !== "decay" || runs[0].status !== "ok") {
+              console.error("expected one ok decay run"); process.exit(1);
+            }' "$RUNNER_TEMP/run.json"
+      - name: Task Scheduler install and remove
+        if: runner.os == 'Windows'
+        run: |
+          neurostack schedule install --json
+          neurostack schedule status --json | tee "$RUNNER_TEMP/status.json"
+          grep -q '"active": true' "$RUNNER_TEMP/status.json"
+          neurostack schedule remove --json

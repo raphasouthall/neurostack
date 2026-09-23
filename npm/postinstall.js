@@ -14,7 +14,10 @@ const PATH_SEP = IS_WIN ? ";" : ":";
 const INSTALL_DIR = IS_WIN
   ? path.join(os.homedir(), "AppData", "Local", "neurostack", "repo")
   : path.join(os.homedir(), ".local", "share", "neurostack", "repo");
-const TARBALL_URL = "https://github.com/raphasouthall/neurostack/archive/refs/heads/main.tar.gz";
+// NEUROSTACK_SOURCE_TARBALL points at a local .tar.gz (one top-level directory,
+// like GitHub's) so CI can install the commit under test instead of main.
+const TARBALL_URL = process.env.NEUROSTACK_SOURCE_TARBALL ||
+  "https://github.com/raphasouthall/neurostack/archive/refs/heads/main.tar.gz";
 const UV_INSTALL_URL = "https://astral.sh/uv/install.sh";
 const UV_BIN_DIR = IS_WIN
   ? path.join(os.homedir(), "AppData", "Local", "neurostack", "bin")
@@ -203,12 +206,16 @@ async function main() {
     info("Downloading NeuroStack...");
     const tarFile = path.join(os.tmpdir(), `neurostack-${Date.now()}.tar.gz`);
     try {
-      await download(TARBALL_URL, tarFile);
+      if (/^https?:/.test(TARBALL_URL)) await download(TARBALL_URL, tarFile);
+      else fs.copyFileSync(TARBALL_URL, tarFile);
       fs.mkdirSync(INSTALL_DIR, { recursive: true });
       // GitHub tarballs extract to neurostack-main/ — strip that prefix
       if (IS_WIN) {
-        // Windows 10+ has tar; use it with forward-slash paths
-        run(`tar xzf "${tarFile}" --strip-components=1 -C "${INSTALL_DIR.replace(/\\/g, "/")}"`);
+        // Windows 10+ has tar. The archive is named relative to its own folder,
+        // because Git for Windows' GNU tar, often first on PATH, reads the "C:"
+        // of an absolute archive path as a remote host.
+        run(`tar xzf "${path.basename(tarFile)}" --strip-components=1 -C "${INSTALL_DIR.replace(/\\/g, "/")}"`,
+          { cwd: path.dirname(tarFile) });
       } else {
         run(`tar xzf "${tarFile}" --strip-components=1 -C "${INSTALL_DIR}"`);
       }

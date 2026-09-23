@@ -10,11 +10,18 @@
 
 NeuroStack indexes a folder of `.md` files (Obsidian, Logseq, Notion exports, plain Markdown) into SQLite with FTS5, embeddings and a wiki-link graph, and exposes it to any MCP client as search, graph queries and agent memories. Retrieval returns ranked evidence and your AI does the reasoning — no model runs while you wait on a query. NeuroStack then keeps the base accurate: it flags notes that have gone stale, harvests decisions and root causes from AI sessions into memories, synthesises recurring memories into learnings, and queues proven ones for promotion into notes. Indexing never modifies your files. Optional MCP write tools let a client author or edit notes through your git history.
 
+Works with Claude, Cursor, Windsurf, Gemini CLI, VS Code, Codex and any other client that supports MCP.
+
+## 60-second start
+
 ```bash
-npm install -g neurostack && neurostack init
+npm install -g neurostack          # install
+neurostack init                    # pick your notes folder, press Enter for the rest
+/save                              # in omp or Claude Code, keep what this session learned
+neurostack doctor                  # check that everything works
 ```
 
-Works with Claude, Cursor, Windsurf, Gemini CLI, VS Code, Codex and any other client that supports MCP.
+The steps below explain each part and how to connect other AI clients.
 
 ---
 
@@ -61,7 +68,7 @@ npm install -g neurostack
 neurostack init
 ```
 
-The setup wizard asks which vault folder to index, which mode to run (Lite or Full), and which profession pack to apply. Then it finishes the install for you. It adds the NeuroStack hook to omp or Claude Code if you have them, so `/save` keeps what a session learned. It sets up the AI that turns saved sessions into memories, using the same model as your summaries. It also installs one background timer that keeps the index tidy. Press Enter at each question to take the default. At the end it runs `neurostack doctor` and shows what to try first.
+The setup wizard asks which vault folder to index, which mode to run (Lite or Full), and which profession pack to apply. Then it finishes the install for you. It adds the NeuroStack hook to omp or Claude Code if you have them, so `/save` keeps what a session learned. It sets up the AI that turns saved sessions into memories, using the same model as your summaries. If no model answers yet, it leaves that off and tells you so. It also installs one background timer that keeps the index tidy, and a failed background job shows up as a desktop notification. Press Enter at each question to take the default. At the end it runs `neurostack doctor` and shows what to try first.
 
 **Step 3. Connect to your AI**
 
