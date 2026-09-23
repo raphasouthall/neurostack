@@ -24,6 +24,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 LIVE = ("queued", "running")
+# The checkpoint queue's daily cap: /save requests shared with the model quota.
+# The n8n webhook passed this to `queue add`; the local enqueue and the
+# checkpoint-worker use it now.
+CHECKPOINT_CAP_PER_DAY = 50
 
 
 @dataclass
