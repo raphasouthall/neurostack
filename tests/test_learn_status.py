@@ -30,7 +30,7 @@ from neurostack.cli.learn_status import (
     learn_status_path,
     load_learn_status,
 )
-from neurostack.client import ClientConfig
+from neurostack.client import ClientConfig, client_config_path
 
 TWO_ITEMS = json.dumps([
     {"content": "the checkpoint writes learn-status.json after every attempt"},
@@ -220,7 +220,7 @@ def test_a_success_just_inside_the_window_is_still_ok():
 
 def test_session_start_prints_the_line_with_both_urls_dead(server, isolated_home):
     _save_two(server)
-    config = isolated_home / ".config" / "neurostack"
+    config = client_config_path().parent
     config.mkdir(parents=True)
     # Top level, not inside a table: a key written after a [section] header
     # would be read as part of that section.

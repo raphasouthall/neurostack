@@ -25,7 +25,7 @@ from neurostack.adapters import (
     omp_extension_path,
 )
 from neurostack.cli.hook import _state_path, run_event
-from neurostack.client import ClientConfig, McpClient, load_client_config
+from neurostack.client import ClientConfig, McpClient, client_config_path, load_client_config
 
 TRIGGER_HIT = {
     "memory_id": 2164,
@@ -271,7 +271,7 @@ def test_fallback_url_answers_when_primary_is_down(server):
 
 
 def test_both_urls_down_exits_zero_with_one_stderr_line(isolated_home):
-    config = isolated_home / ".config" / "neurostack"
+    config = client_config_path().parent
     config.mkdir(parents=True)
     (config / "client.toml").write_text(
         f'url = "http://127.0.0.1:{_dead_port()}/mcp"\n'

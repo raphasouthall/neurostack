@@ -521,14 +521,14 @@ class TestMessageWatermark:
     def test_the_count_survives_a_round_trip(self):
         from neurostack.harvest import _harvested_messages
 
-        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        _save_harvest_state({str(Path("/s.jsonl")): {"mtime": 12.0, "messages": 40}})
         assert _harvested_messages(_load_harvest_state(), Path("/s.jsonl")) == 40
 
     def test_state_written_before_the_watermark_reads_in_full(self):
         """A bare mtime from an older version means no count is known yet."""
         from neurostack.harvest import _harvested_messages
 
-        _save_harvest_state({"/s.jsonl": 12.0})
+        _save_harvest_state({str(Path("/s.jsonl")): 12.0})
         assert _harvested_messages(_load_harvest_state(), Path("/s.jsonl")) == 0
 
     def test_an_unchanged_file_is_still_skipped_either_shape(self, monkeypatch):
@@ -536,10 +536,10 @@ class TestMessageWatermark:
         from neurostack.harvest import SessionFile, _unharvested
 
         session = SessionFile(path=Path("/s.jsonl"), mtime=12.0, provider="claude")
-        _save_harvest_state({"/s.jsonl": 12.0})
+        _save_harvest_state({str(Path("/s.jsonl")): 12.0})
         assert _unharvested([session]) == []
 
-        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        _save_harvest_state({str(Path("/s.jsonl")): {"mtime": 12.0, "messages": 40}})
         monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [object()] * 40)
         assert _unharvested([session]) == []
 
@@ -548,7 +548,7 @@ class TestMessageWatermark:
         from neurostack.harvest import SessionFile, _unharvested
 
         session = SessionFile(path=Path("/s.jsonl"), mtime=99.0, provider="claude")
-        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        _save_harvest_state({str(Path("/s.jsonl")): {"mtime": 12.0, "messages": 40}})
         monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [object()] * 41)
         assert _unharvested([session]) == [session]
 
@@ -559,7 +559,7 @@ class TestMessageWatermark:
         from neurostack.harvest import SessionFile, _unharvested
 
         session = SessionFile(path=Path("/s.jsonl"), mtime=12.0, provider="claude")
-        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 27}})
+        _save_harvest_state({str(Path("/s.jsonl")): {"mtime": 12.0, "messages": 27}})
         monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [object()] * 126)
         assert _unharvested([session]) == [session]
 
@@ -570,7 +570,7 @@ class TestMessageWatermark:
         from neurostack.harvest import SessionFile, _unharvested
 
         session = SessionFile(path=Path("/s.jsonl"), mtime=500.0, provider="claude")
-        _save_harvest_state({"/s.jsonl": {"mtime": 12.0, "messages": 40}})
+        _save_harvest_state({str(Path("/s.jsonl")): {"mtime": 12.0, "messages": 40}})
         monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [object()] * 40)
         assert _unharvested([session]) == []
 
@@ -992,6 +992,7 @@ class TestOmpProvider:
 
     def test_find_sessions(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         proj = tmp_path / ".omp" / "agent" / "sessions" / "-tools-neurostack"
         proj.mkdir(parents=True)
         f = proj / "2026-01-01T00-00-00Z_abc.jsonl"
@@ -1040,6 +1041,7 @@ class TestOmpSubagentTranscripts:
     def test_find_sessions_includes_nested_subagent_transcripts(
             self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         parent, scout, builder = self._build_tree(tmp_path)
         found = OmpProvider().find_sessions(10)
         assert {s.path for s in found} == {parent, scout, builder}
@@ -1047,6 +1049,7 @@ class TestOmpSubagentTranscripts:
     def test_nested_session_ids_are_distinct_from_the_parent(
             self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         parent, scout, builder = self._build_tree(tmp_path)
         by_path = {s.path: s for s in OmpProvider().find_sessions(10)}
         parent_id = by_path[parent].session_id or by_path[parent].path.stem
@@ -1071,6 +1074,7 @@ class TestOmpSubagentTranscripts:
     def test_pending_lists_all_three_transcripts_with_distinct_ids(
             self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         parent, scout, builder = self._build_tree(tmp_path)
         monkeypatch.setattr("neurostack.harvest._harvest_state_path",
                             lambda: tmp_path / "state.json")
@@ -1081,6 +1085,7 @@ class TestOmpSubagentTranscripts:
     def test_each_session_id_resolves_to_its_own_file(
             self, tmp_path, monkeypatch, in_memory_db):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         parent, scout, builder = self._build_tree(tmp_path)
         self._wire_harvest(tmp_path, monkeypatch, in_memory_db)
 
@@ -1092,6 +1097,7 @@ class TestOmpSubagentTranscripts:
     def test_harvesting_a_subagent_transcript_leaves_its_parent_pending(
             self, tmp_path, monkeypatch, in_memory_db):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         parent, scout, builder = self._build_tree(tmp_path)
         self._wire_harvest(tmp_path, monkeypatch, in_memory_db)
 
@@ -1106,6 +1112,7 @@ class TestOmpSubagentTranscripts:
     def test_harvesting_the_parent_leaves_subagent_transcripts_pending(
             self, tmp_path, monkeypatch, in_memory_db):
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         parent, scout, builder = self._build_tree(tmp_path)
         self._wire_harvest(tmp_path, monkeypatch, in_memory_db)
 

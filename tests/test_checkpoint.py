@@ -36,7 +36,7 @@ from neurostack.cli.hook import (
     sessions_dir,
 )
 from neurostack.cli.learn_status import load_learn_status, record_ok
-from neurostack.client import ClientConfig
+from neurostack.client import ClientConfig, client_config_path
 
 LONG_OUTPUT = "x" * 2000
 
@@ -589,9 +589,11 @@ def test_cli_checkpoints_legacy_window_once(server, isolated_home, tmp_path):
     server.replies["vault_remember"] = {"saved": True, "memory_id": 7}
     reply = tmp_path / "reply.json"
     reply.write_text(json.dumps([{"content": "a fact worth keeping"}]))
-    config = isolated_home / ".config" / "neurostack" / "client.toml"
+    config = client_config_path()
     config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(f'checkpoint_command = "cat {reply}"\n')
+    # Python instead of cat for Windows; json.dumps escapes the path for TOML.
+    command = f'{sys.executable} -c "import sys; print(open(sys.argv[1]).read())" {reply}'
+    config.write_text(f"checkpoint_command = {json.dumps(command)}\n")
     window = _write_window("omp-cli", _messages(20))
     result = _run_cli(["checkpoint", "--run", "--harness", "omp", "--session", "omp-cli"],
                       "", server.url, isolated_home)
@@ -607,10 +609,12 @@ def test_cli_checkpoints_legacy_window_once(server, isolated_home, tmp_path):
 def test_run_executes_the_command_from_home_not_the_project(server):
     """A project's own agent instructions must not shape the extraction."""
     seen = Path.home() / "cwd.txt"
-    command = f"pwd > {seen}; echo '[]'"
+    # Python reports the cwd natively; Git's pwd.exe prints /c/Users/... on Windows.
+    command = (f"{sys.executable} -c \"import os, pathlib;"
+               f" pathlib.Path(r'{seen}').write_text(os.getcwd()); print('[]')\"")
     run_checkpoint(_payload(_messages(20)), "cli",
                    cfg=_cfg(server, checkpoint_command=command))
-    assert seen.read_text().strip() == str(Path.home())
+    assert Path(seen.read_text().strip()).samefile(Path.home())
 
 
 def test_assistant_text_goes_in_whole(server):
@@ -797,6 +801,7 @@ def test_frozen_payload_survives_abandoned_runner(server):
     assert load_state("frozen").since_index == 40
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no POSIX permission bits")
 def test_checkpoint_state_with_transcript_is_owner_only(server):
     run_event("checkpoint", _payload(_messages(20), session="private"), cfg=_cfg(server))
     assert _state_path("private").stat().st_mode & 0o777 == 0o600

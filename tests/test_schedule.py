@@ -3,7 +3,6 @@
 """`neurostack schedule` (issue #222): what each backend writes and runs."""
 
 import json
-import os
 import plistlib
 import subprocess
 from types import SimpleNamespace
@@ -27,6 +26,9 @@ def host(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(cmd, 1 if err else 0, "", err or "")
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() on Windows
+    # Windows has no os.getuid, and the launchd test runs on every OS.
+    monkeypatch.setattr(schedule.os, "getuid", lambda: 501, raising=False)
     monkeypatch.setattr(schedule.shutil, "which", lambda name: BINARY)
     monkeypatch.setattr(schedule.platform, "system", lambda: state.system)
     monkeypatch.setattr(schedule.subprocess, "run", run)
@@ -93,7 +95,7 @@ def test_launchd_install_writes_a_60s_agent_and_reloads_it(host, tmp_path, capsy
     plist = plistlib.loads(plist_path.read_bytes())
     assert plist["ProgramArguments"] == [BINARY, "run-due"]
     assert plist["StartInterval"] == 60
-    domain = f"gui/{os.getuid()}"
+    domain = "gui/501"
     # bootout first so a re-install replaces a loaded copy instead of failing
     assert host.calls == [
         ["launchctl", "bootout", f"{domain}/io.neurostack.run-due"],

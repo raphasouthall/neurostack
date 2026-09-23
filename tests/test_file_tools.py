@@ -83,7 +83,7 @@ class TestPathSafety:
 
     def test_absolute_rejected(self, tmp_vault_repo):
         with pytest.raises(PathSafetyError, match="relative"):
-            _safe_path("/etc/passwd", tmp_vault_repo)
+            _safe_path(str(Path(tmp_vault_repo.anchor, "etc", "passwd")), tmp_vault_repo)
 
     def test_dot_segment_rejected(self, tmp_vault_repo):
         with pytest.raises(PathSafetyError, match="hidden"):
@@ -128,7 +128,7 @@ class TestReadFile:
     def test_read_existing(self, tmp_vault_repo):
         target = tmp_vault_repo / "home" / "note.md"
         target.parent.mkdir(parents=True)
-        target.write_text("hello\n")
+        target.write_bytes(b"hello\n")  # write_text would write CRLF on Windows
         result = vault_read_file(path="home/note.md")
         assert result["exists"] is True
         assert result["content"] == "hello\n"

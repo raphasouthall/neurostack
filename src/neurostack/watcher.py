@@ -124,7 +124,7 @@ class DebouncedHandler(FileSystemEventHandler):
         conn = self._get_conn()
 
         if event_type == "deleted" or not path.exists():
-            rel_path = str(path.relative_to(self.vault_root))
+            rel_path = path.relative_to(self.vault_root).as_posix()
             log.info(f"Removing: {rel_path}")
             conn.execute("DELETE FROM notes WHERE path = ?", (rel_path,))
             conn.commit()
@@ -166,7 +166,7 @@ def index_single_note(
     embed_url = embed_url or get_config().embed_url
     summarize_url = summarize_url or get_config().index_llm_url
 
-    rel_path = str(path.relative_to(vault_root))
+    rel_path = path.relative_to(vault_root).as_posix()
 
     # Reads only — no transaction is opened by these.
     row = conn.execute(
@@ -579,7 +579,7 @@ def reconcile_deletions(
     skip_parts = _base_skip_parts()
     skip_parts.update(exclude_dirs or [])
     disk_paths = {
-        str(f.relative_to(vault_root))
+        f.relative_to(vault_root).as_posix()
         for f in vault_root.rglob("*.md")
         if not skip_parts.intersection(f.parts)
     }
