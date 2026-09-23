@@ -84,13 +84,16 @@ def cmd_backfill(args):
             vault_root=Path(args.vault),
             summarize_url=args.summarize_url,
         )
+    triples_written = 0
     if args.target in ("triples", "all"):
-        backfill_triples(
+        triples_written = backfill_triples(
             vault_root=Path(args.vault),
             embed_url=args.embed_url,
             summarize_url=args.summarize_url,
         )
-    if args.target in ("cooccurrence", "all"):
+    # backfill_triples rebuilds co-occurrence itself when it wrote anything, so
+    # `all` only runs the standalone rebuild when the triples step was a no-op.
+    if args.target == "cooccurrence" or (args.target == "all" and not triples_written):
         from ..cooccurrence import persist_cooccurrence
         from ..schema import DB_PATH, get_db
         conn = get_db(DB_PATH)
