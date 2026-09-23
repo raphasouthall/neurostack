@@ -3,13 +3,12 @@
 """Vault file CRUD tools — read/list/write/delete .md files in the brain vault.
 
 Designed for MCP clients (e.g. Microsoft Copilot Studio) that need to author
-vault notes without ssh access. Writes commit + push to origin/main under an
-flock, with rebase-on-conflict and rollback on push failure.
+vault notes without ssh access. Writes commit + push to origin/main under a
+file lock, with rebase-on-conflict and rollback on push failure.
 """
 
 from __future__ import annotations
 
-import fcntl
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -17,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from ..locks import file_lock
 from .registry import ToolAnnotationHints as Hints
 from .registry import registry
 
@@ -256,24 +256,6 @@ def _commit_and_push(
     }
 
 
-# --------------------------- locking -----------------------------------------
-
-
-def _acquire_vault_lock(vault_root: Path):
-    """Acquire an exclusive flock on the vault write lock. Returns file handle."""
-    lock_path = vault_root / LOCK_FILENAME
-    fh = open(lock_path, "a+")
-    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-    return fh
-
-
-def _release_vault_lock(fh) -> None:
-    try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-    finally:
-        fh.close()
-
-
 # --------------------------- tools -------------------------------------------
 
 
@@ -445,15 +427,12 @@ def vault_write_file(
         }
 
     msg = commit_message or f"vault_write_file: {path} (via MCP)"
-    fh = _acquire_vault_lock(vault_root)
-    try:
+    with file_lock(vault_root / LOCK_FILENAME):
         created = not abs_path.exists()
         abs_path.parent.mkdir(parents=True, exist_ok=True)
         encoded = content.encode("utf-8")
         abs_path.write_bytes(encoded)
         git_result = _commit_and_push(vault_root, path, msg)
-    finally:
-        _release_vault_lock(fh)
 
     rel_parent = abs_path.parent.relative_to(vault_root)
     index_hint = None
@@ -506,12 +485,9 @@ def vault_delete_file(
         }
 
     msg = commit_message or f"vault_delete_file: {path} (via MCP)"
-    fh = _acquire_vault_lock(vault_root)
-    try:
+    with file_lock(vault_root / LOCK_FILENAME):
         abs_path.unlink()
         git_result = _commit_and_push(vault_root, path, msg)
-    finally:
-        _release_vault_lock(fh)
 
     rel_parent = abs_path.parent.relative_to(vault_root)
     return {
