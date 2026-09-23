@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Raphael Southall
+"""`neurostack agent <job>`: run a bundled Pi agent job (issue #217).
+
+Jobs that need tools and reasoning, promotion first, run on the Pi SDK instead
+of a harness CLI. The runner and its package.json ship as package data; the
+Node dependencies install once into the state directory and are reused until
+package.json changes.
+"""
+
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+AGENT_DIR = Path(__file__).resolve().parent.parent / "agent"
+JOBS = {
+    "promotion": {"timeout_s": 2700, "thinking": "medium"},
+}
+MIN_NODE = (22, 19)
+
+
+def _state_dir() -> Path:
+    return Path.home() / ".cache" / "neurostack" / "agent"
+
+
+def _check_node() -> str:
+    node = shutil.which("node")
+    if not node:
+        sys.exit("neurostack agent: node not found; install Node.js "
+                 f"{MIN_NODE[0]}.{MIN_NODE[1]} or newer")
+    raw = subprocess.run([node, "--version"], capture_output=True, text=True).stdout
+    version = tuple(int(x) for x in raw.strip().lstrip("v").split(".")[:2])
+    if version < MIN_NODE:
+        sys.exit(f"neurostack agent: node {raw.strip()} is too old; need "
+                 f"{MIN_NODE[0]}.{MIN_NODE[1]} or newer")
+    return node
+
+
+def _install(state: Path) -> None:
+    """Copy the runner in and install its dependencies when package.json changed."""
+    manifest = (AGENT_DIR / "package.json").read_bytes()
+    stamp = state / ".installed"
+    digest = hashlib.sha256(manifest).hexdigest()
+    state.mkdir(parents=True, exist_ok=True)
+    if not stamp.exists() or stamp.read_text() != digest:
+        (state / "package.json").write_bytes(manifest)
+        npm = shutil.which("npm")
+        if not npm:
+            sys.exit("neurostack agent: npm not found")
+        subprocess.run([npm, "install", "--no-audit", "--no-fund", "--omit=dev"],
+                       cwd=state, check=True)
+        stamp.write_text(digest)
+    shutil.copyfile(AGENT_DIR / "run.mjs", state / "run.mjs")
+
+
+def cmd_agent(args):
+    from ..config import get_config
+
+    cfg = get_config()
+    node = _check_node()
+    key = cfg.agent_api_key or cfg.judge_api_key
+    if not key:
+        sys.exit("neurostack agent: set agent_api_key (or judge_api_key) in config.toml")
+
+    state = _state_dir()
+    _install(state)
+    cwd = str(Path(args.cwd or cfg.vault_root).expanduser())
+    spec = JOBS[args.job]
+    job = {
+        "cwd": cwd,
+        "prompt_file": str(AGENT_DIR / "jobs" / f"{args.job}.md"),
+        "state_dir": str(state),
+        "provider": cfg.agent_provider,
+        "model": args.model or cfg.agent_model,
+        "api_key": key,
+        "thinking": spec["thinking"],
+        "timeout_s": args.timeout or spec["timeout_s"],
+    }
+    env = {
+        **os.environ,
+        "NEUROSTACK_AGENT_JOB": json.dumps(job),
+        "NEUROSTACK_AGENT_CLI": json.dumps([sys.executable, "-m", "neurostack"]),
+    }
+    proc = subprocess.run([node, str(state / "run.mjs")], cwd=cwd, env=env)
+    sys.exit(proc.returncode)
