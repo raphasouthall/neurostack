@@ -4,7 +4,6 @@
 
 import json
 import sys
-from pathlib import Path
 
 from .utils import _get_workspace
 
@@ -293,71 +292,8 @@ def _enqueue_pending(rows, as_json):
           f" {errors} error(s) ({len(rows)} pending)")
 
 
-_DECAY_TIMER = {
-    "unit": "neurostack-decay",
-    "service_desc": "NeuroStack excitability decay - sync note hotness status",
-    "exec": "%h/.local/bin/neurostack decay --demote",
-    "timer_desc": "Run neurostack excitability decay daily",
-    "on_calendar": "*-*-* 03:00:00",
-}
-
-
-def _install_user_timer(spec):
-    """Write and enable a systemd --user timer/service pair; return the timer path."""
-    import subprocess
-
-    timer_dir = Path.home() / ".config" / "systemd" / "user"
-    timer_dir.mkdir(parents=True, exist_ok=True)
-    (timer_dir / f"{spec['unit']}.service").write_text(
-        f"""[Unit]
-Description={spec['service_desc']}
-
-[Service]
-Type=oneshot
-ExecStart={spec['exec']}
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
-"""
-    )
-    (timer_dir / f"{spec['unit']}.timer").write_text(
-        f"""[Unit]
-Description={spec['timer_desc']}
-
-[Timer]
-OnCalendar={spec['on_calendar']}
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-"""
-    )
-    subprocess.run(
-        ["systemctl", "--user", "daemon-reload"],
-        check=False, capture_output=True,
-    )
-    subprocess.run(
-        ["systemctl", "--user", "enable", "--now", f"{spec['unit']}.timer"],
-        check=False, capture_output=True,
-    )
-    return timer_dir / f"{spec['unit']}.timer"
-
-
-def _remove_user_timer(unit):
-    """Disable and delete a systemd --user timer/service pair."""
-    import subprocess
-
-    subprocess.run(
-        ["systemctl", "--user", "disable", "--now", f"{unit}.timer"],
-        check=False, capture_output=True,
-    )
-    timer_dir = Path.home() / ".config" / "systemd" / "user"
-    for fname in (f"{unit}.service", f"{unit}.timer"):
-        p = timer_dir / fname
-        if p.exists():
-            p.unlink()
-    subprocess.run(
-        ["systemctl", "--user", "daemon-reload"],
-        check=False, capture_output=True,
-    )
+def _mark(flag, yes="installed", no="absent"):
+    return f"\033[32m{yes}\033[0m" if flag else f"\033[31m{no}\033[0m"
 
 
 def _install_harness_adapter(args, harness):
@@ -402,42 +338,20 @@ def cmd_hooks(args):
         if harness:
             _install_harness_adapter(args, harness)
             return
-        hook_type = args.type or "decay-timer"
-
-        if hook_type == "decay-timer":
-            timer_path = _install_user_timer(_DECAY_TIMER)
-            if args.json:
-                print(json.dumps({"installed": True, "type": hook_type}))
-            else:
-                print(f"  \033[32m✓\033[0m Installed {hook_type}")
-                print(f"    Timer: {timer_path}")
-                print("    Check: systemctl --user status neurostack-decay.timer")
-        else:
-            print(f"  Unknown hook type: {hook_type}")
+        print("  Scheduled jobs now run from one timer. Install it with"
+              " 'neurostack schedule install'.")
 
     elif subcmd == "status":
-        import subprocess
-
         from ..adapters import claude_adapter_installed, omp_extension_path
 
-        decay = subprocess.run(
-            ["systemctl", "--user", "is-active", "neurostack-decay.timer"],
-            capture_output=True, text=True,
-        )
-        decay_active = decay.stdout.strip() == "active"
         claude_adapter = claude_adapter_installed()
         omp_adapter = omp_extension_path().exists()
         if args.json:
             print(json.dumps({
-                "decay_timer": "active" if decay_active else "inactive",
                 "claude_adapter": "installed" if claude_adapter else "absent",
                 "omp_adapter": "installed" if omp_adapter else "absent",
             }))
         else:
-            def _mark(flag, yes="installed", no="absent"):
-                return f"\033[32m{yes}\033[0m" if flag else f"\033[31m{no}\033[0m"
-
-            print(f"  decay-timer: {_mark(decay_active, 'active', 'inactive')}")
             print(f"  claude-adapter: {_mark(claude_adapter)}")
             print(f"  omp-adapter: {_mark(omp_adapter)}")
 
@@ -445,16 +359,8 @@ def cmd_hooks(args):
         if harness:
             _remove_harness_adapter(args, harness)
             return
-        hook_type = getattr(args, "type", None) or "decay-timer"
-        if hook_type == "decay-timer":
-            _remove_user_timer("neurostack-decay")
-        else:
-            print(f"  Unknown hook type: {hook_type}")
-            return
-        if args.json:
-            print(json.dumps({"removed": True, "type": hook_type}))
-        else:
-            print(f"  \033[32m\u2713\033[0m Removed {hook_type}")
+        print("  Pass --harness {claude,omp}. Remove the run-due timer with"
+              " 'neurostack schedule remove'.")
 
     else:
         print("Usage: neurostack hooks {install,status,remove}")

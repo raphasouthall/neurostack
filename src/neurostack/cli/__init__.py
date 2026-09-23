@@ -17,6 +17,7 @@ from .hook import cmd_hook
 from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
 from .jobqueue import cmd_queue
 from .memories import cmd_consolidate, cmd_memories, cmd_promote, cmd_synthesize
+from .schedule import cmd_schedule
 from .search import (
     cmd_ask,
     cmd_brief,
@@ -821,22 +822,30 @@ def main():
     p.set_defaults(func=cmd_record_usage)
 
     # hooks
-    p = sub.add_parser("hooks", help="Manage automation hooks (harness adapters + timers)")
+    p = sub.add_parser("hooks", help="Manage harness adapters")
     hooks_sub = p.add_subparsers(dest="hooks_command")
-    hp = hooks_sub.add_parser("install", help="Install automation hooks")
+    hp = hooks_sub.add_parser("install", help="Install a harness adapter")
     hp.add_argument("--harness", default=None, choices=list(ADAPTER_HARNESSES),
                     help="Install the harness adapter that invokes 'neurostack hook'")
-    hp.add_argument("--type", default="decay-timer",
-                    choices=["decay-timer"],
-                    help="Timer to install when --harness is absent (default: decay-timer)")
     hooks_sub.add_parser("status", help="Show hook status")
-    rp = hooks_sub.add_parser("remove", help="Remove automation hooks")
+    rp = hooks_sub.add_parser("remove", help="Remove a harness adapter")
     rp.add_argument("--harness", default=None, choices=list(ADAPTER_HARNESSES),
                     help="Remove the harness adapter")
-    rp.add_argument("--type", default="decay-timer",
-                    choices=["decay-timer"],
-                    help="Timer to remove when --harness is absent (default: decay-timer)")
     p.set_defaults(func=cmd_hooks)
+
+    # schedule (issue #222): one OS timer that runs 'neurostack run-due' every minute
+    p = sub.add_parser("schedule", help="Install the timer that runs due jobs every minute")
+    sched_sub = p.add_subparsers(dest="schedule_command")
+    for name, text in (
+        ("install", "Install or overwrite the timer (systemd, launchd, or Task Scheduler)"),
+        ("remove", "Remove the timer"),
+        ("status", "Show whether the timer is active"),
+    ):
+        sp = sched_sub.add_parser(name, help=text)
+        # SUPPRESS keeps a global 'neurostack --json schedule ...' from being reset.
+        sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                        help="Output as JSON")
+    p.set_defaults(func=cmd_schedule)
 
     # hook (issue #141): one harness event in on stdin, context or a block out
     p = sub.add_parser(
@@ -994,6 +1003,8 @@ def main():
         # hook and hooks are client-side: the vault lives on the server, which
         # may be another machine entirely (issue #141)
         "hook", "hooks",
+        # schedule manages an OS timer and never reads the vault
+        "schedule",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():

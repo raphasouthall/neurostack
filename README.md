@@ -230,7 +230,7 @@ NeuroStack scans your past AI conversations on a timer, extracts the decisions, 
 
 ```bash
 neurostack harvest --sessions 5          # extract insights from last 5 sessions
-neurostack hooks install                 # set up hourly auto-harvest
+neurostack schedule install              # one timer runs due jobs every minute
 ```
 
 Supports Claude Code, VS Code, Codex CLI, Aider, and Gemini CLI session formats.
@@ -392,7 +392,11 @@ neurostack memories prune --expired
 # Sessions
 neurostack harvest --sessions 5          # extract session insights
 neurostack sessions search "query"       # search transcripts
-neurostack hooks install                 # decay timer (default --type)
+
+# Scheduled jobs: one OS timer (systemd, launchd, or Task Scheduler) runs `neurostack run-due`
+neurostack schedule install              # install or overwrite the timer
+neurostack schedule status               # is the timer active?
+neurostack schedule remove
 
 # Harness hooks (session brief, auto-RAG, trigger memories, checkpoints)
 neurostack hooks install --harness claude   # or: omp

@@ -1662,15 +1662,14 @@ def cmd_doctor(args):
             checks.append((
                 "Decay", "WARN",
                 "never run. Install the scheduled timer to keep dormancy"
-                " in sync (neurostack-decay.timer running"
-                " 'neurostack decay --demote')",
+                " in sync (neurostack schedule install)",
             ))
         elif hours > DECAY_STALE_HOURS:
             checks.append((
                 "Decay", "WARN",
                 f"last run {hours:.0f}h ago (> {DECAY_STALE_HOURS:.0f}h stale)."
-                " The decay timer may have stopped"
-                " — check neurostack-decay.timer",
+                " The scheduled timer may have stopped"
+                " — check neurostack schedule status",
             ))
         else:
             checks.append(("Decay", "OK", f"last run {hours:.1f}h ago"))
