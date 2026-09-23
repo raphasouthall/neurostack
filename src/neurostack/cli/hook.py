@@ -11,16 +11,16 @@ The `checkpoint` event (issue #143) is the one that hands work back. `--run`
 is how it runs now (#147, #155): it builds the prompt, pipes it through
 `checkpoint_command` from client.toml (for example `claude -p --model sonnet`)
 and saves the reply. `--format` names which transcript root to search when
-nothing else does — the server-side queue's worker calls `--run` over SSH
-with an empty stdin and only `--session`/`--harness`/`--format` to go on
-(issue #176). `checkpoint --save` still reads a model's JSON reply on
+nothing else does. The queue's checkpoint-worker (`neurostack run-due`, issue
+#229) calls `run_checkpoint` with only a session, a harness and a format to go
+on. `checkpoint --save` still reads a model's JSON reply on
 stdin, for herdr and for hand use.
 
 Checkpoints are otherwise manual now: `enqueue` (issue #176) is the only
 thing an adapter's `/save` runs. It hands the request to the queue named by
-`queue_url` in client.toml and relays the one line the queue answers with —
-queued, already queued, cap reached, or unreachable — never running a
-checkpoint itself.
+`queue_url` in client.toml, or to the local queue when that is unset, and
+relays the one line the queue answers with — queued, already queued, cap
+reached, or unreachable — never running a checkpoint itself.
 
 Fail open, always: an unreachable server, a malformed payload, or an
 unexpected exception prints one line to stderr and exits 0.
@@ -1328,7 +1328,7 @@ def _latest_session() -> str | None:
 
 def run_enqueue(payload: dict, harness: str = "cli",
                 cfg: ClientConfig | None = None) -> tuple[int, str]:
-    """`hook enqueue`: hand a checkpoint request to the server-side queue.
+    """`hook enqueue`: hand a checkpoint request to the checkpoint queue.
 
     No OS lock, no McpClient, no session state to load: the request either
     lands on the queue or it does not, and this only relays which (#176).

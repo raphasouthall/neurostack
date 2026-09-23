@@ -33,7 +33,7 @@ def cmd_run_due(args):
     else:
         for r in runs:
             took = f"{r['duration_s']:.1f}s" if "duration_s" in r else "-"
-            print(f"  {r['job']:<12} {r['status']:<8} {took:>7}  {_summary(r)}")
+            print(f"  {r['job']:<17} {r['status']:<8} {took:>7}  {_summary(r)}")
 
 
 def cmd_jobs(args):
@@ -67,5 +67,5 @@ def cmd_jobs(args):
         state = "enabled" if r["enabled"] else f"off ({r['reason']})"
         last = (f"{r['last_run']['started_at']} {r['last_run']['status']}"
                 if r["last_run"] else "never run")
-        print(f"  {r['job']:<12} {r['schedule']:<18} {state}")
-        print(f"  {'':<12} last: {last}  next: {r['next_due'].replace('T', ' ')}")
+        print(f"  {r['job']:<17} {r['schedule']:<18} {state}")
+        print(f"  {'':<17} last: {last}  next: {r['next_due'].replace('T', ' ')}")

@@ -4,6 +4,7 @@
 
 import json
 import sys
+from typing import Any
 
 from .utils import _get_workspace
 
@@ -237,7 +238,7 @@ def cmd_harvest(args):
     print(f"\n  Total: {n_saved} saved, {n_skip} skipped ({total} found)")
 
 
-def _enqueue_pending(rows, as_json):
+def enqueue_pending(conn, rows) -> dict[str, Any]:
     """Queue every pending transcript into the harvest job queue (issue #207).
 
     Reuses ``queue.add`` — the same store call ``neurostack queue add`` makes —
@@ -248,9 +249,7 @@ def _enqueue_pending(rows, as_json):
     """
     from ..queue import QueueLimits
     from ..queue import add as queue_add
-    from ..schema import DB_PATH, get_db
 
-    conn = get_db(DB_PATH)
     jobs = []
     queued = 0
     duplicates = 0
@@ -278,10 +277,19 @@ def _enqueue_pending(rows, as_json):
     summary = {"queued": queued, "duplicates": duplicates, "total": len(rows), "jobs": jobs}
     if errors:
         summary["errors"] = errors
+    return summary
 
+
+def _enqueue_pending(rows, as_json):
+    from ..schema import DB_PATH, get_db
+
+    summary = enqueue_pending(get_db(DB_PATH), rows)
     if as_json:
         print(json.dumps(summary))
         return
+
+    jobs, errors = summary["jobs"], summary.get("errors", 0)
+    queued, duplicates = summary["queued"], summary["duplicates"]
 
     for row, job in zip(rows, jobs):
         if "error" in job:

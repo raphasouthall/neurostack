@@ -53,9 +53,9 @@ class ClientConfig:
     # agent activity next to the server-side jobs (issue #165). None means
     # no webhook: `post_event` is a no-op.
     event_url: str | None = None
-    # Where to POST a checkpoint request so the server-side queue can run it
-    # in turn (issue #176). None means no queue: `enqueue` fails closed
-    # instead of guessing at a checkpoint the caller never asked to run.
+    # Where to POST a checkpoint request so a queue can run it in turn (issue
+    # #176). None puts the request in the local job_queue instead, which
+    # `neurostack run-due`'s checkpoint-worker drains (issue #229).
     queue_url: str | None = None
 
     def urls(self) -> list[str]:
