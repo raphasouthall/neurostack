@@ -397,6 +397,8 @@ neurostack sessions search "query"       # search transcripts
 neurostack schedule install              # install or overwrite the timer
 neurostack schedule status               # is the timer active?
 neurostack schedule remove
+neurostack run-due                       # what the timer calls: run each due job once
+neurostack jobs                          # schedule, last run, and next due per job
 
 # Harness hooks (session brief, auto-RAG, trigger memories, checkpoints)
 neurostack hooks install --harness claude   # or: omp
