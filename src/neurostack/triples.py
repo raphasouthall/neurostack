@@ -72,7 +72,10 @@ def _call_triple_llm(prompt: str, base_url: str, model: str, json_mode: bool) ->
         "stream": False,
         "reasoning_effort": "none",
         "temperature": 0.2,
-        "max_tokens": 2048,
+        # 2048 truncated mid-string on dense notes once the extractor started
+        # returning ~40 triples instead of ~12, and a cut-off JSON object fails
+        # both parse attempts and queues the note for an hour of backoff.
+        "max_tokens": 4096,
     }
     if json_mode:
         # Ask the endpoint to constrain output to a JSON object. Supported by
