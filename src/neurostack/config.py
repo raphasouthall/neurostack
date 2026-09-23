@@ -86,6 +86,13 @@ class Config:
     # LLM. Measured +7.9pp agreement on 191 held-out memories (p=0.039) and
     # 13x faster; falls back to the index LLM's own answer on any failure.
     harvest_judge_types: bool = True
+    # `neurostack agent <job>` (#217): the Pi agent that runs jobs needing tools
+    # and reasoning. Provider and model are Pi's names. Sonnet 5 matched Opus 5
+    # on placement in a 13-memory bake-off at 44% of the cost. An empty key
+    # falls back to judge_api_key, which is the same OpenRouter key in practice.
+    agent_provider: str = "openrouter"
+    agent_model: str = "anthropic/claude-sonnet-5"
+    agent_api_key: str = ""
     # Notes in flight at once during `backfill triples`. Only the network side
     # (LLM extraction + embedding) runs in parallel; every database write stays
     # on one thread. 1 is the old serial loop. 8 took a 741-note backfill from
@@ -221,6 +228,7 @@ def load_config() -> Config:
         for key in ("embed_url", "embed_model", "index_llm_url", "index_llm_model",
                     "index_llm_api_key", "index_llm_command", "embed_api_key",
                     "judge_url", "judge_model", "judge_api_key",
+                    "agent_provider", "agent_model", "agent_api_key",
                     "api_host", "api_key"):
             if key in data:
                 setattr(cfg, key, data[key])
@@ -299,6 +307,9 @@ def load_config() -> Config:
         "NEUROSTACK_JUDGE_URL": ("judge_url", str),
         "NEUROSTACK_JUDGE_MODEL": ("judge_model", str),
         "NEUROSTACK_JUDGE_API_KEY": ("judge_api_key", str),
+        "NEUROSTACK_AGENT_PROVIDER": ("agent_provider", str),
+        "NEUROSTACK_AGENT_MODEL": ("agent_model", str),
+        "NEUROSTACK_AGENT_API_KEY": ("agent_api_key", str),
         "NEUROSTACK_JUDGE_CONCURRENCY": ("judge_concurrency", int),
         "NEUROSTACK_JUDGE_TIMEOUT_S": ("judge_timeout_s", float),
         "NEUROSTACK_HARVEST_JUDGE_TYPES": ("harvest_judge_types", bool),
