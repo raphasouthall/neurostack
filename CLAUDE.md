@@ -94,6 +94,8 @@ Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurost
 | `neurostack schedule install` | Install or overwrite the one OS timer (systemd --user, launchd, or Task Scheduler) that runs `neurostack run-due` every minute (#222). `--json` |
 | `neurostack schedule status` | Is the timer active? `--json` prints `{"backend", "active"}` |
 | `neurostack schedule remove` | Remove the timer |
+| `neurostack run-due` | Run each due job once, in order, under one non-blocking lock; the timer calls it every minute (#225). Runs land in `job_runs`. `--job NAME`, `--force`, `--json`. Config `jobs = [...]` limits which jobs this host runs; `notify_command` gets a failed run's row as JSON on stdin |
+| `neurostack jobs` | Every scheduled job with its schedule, whether this host runs it (or why not), last run, and next due. `--json` |
 | `neurostack prediction-errors` | Show notes flagged as poor retrieval fit |
 | `neurostack promote` | Promotion queue: memories that should become vault notes (#92). The uncovered bucket is judged, not thresholded (#215). `--workspace`, `--limit`, `--handoff-age-days` |
 | `neurostack feedback` | Show accumulated implicit-feedback stats — searches, uses, ranks (issue #66) |
