@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -523,6 +524,36 @@ def _notify(command: str, row: dict[str, Any]) -> None:
         log.warning("notify_command failed: %s", exc)
 
 
+# A tray balloon from Windows PowerShell's own System.Windows.Forms, so nothing
+# has to be installed. It must outlive the balloon, which is why every OS runs
+# its tool with Popen and nobody waits for it.
+_WIN_BALLOON = (
+    "Add-Type -AssemblyName System.Windows.Forms; $n = New-Object System.Windows.Forms.NotifyIcon;"
+    " $n.Icon = [System.Drawing.SystemIcons]::Warning; $n.Visible = $true;"
+    " $n.ShowBalloonTip(10000, $env:NS_TITLE, $env:NS_BODY, 'Warning');"
+    " Start-Sleep 10; $n.Dispose()"
+)
+
+
+def _desktop_notify(title: str, body: str) -> None:
+    """Show a failed run on the desktop when no notify_command is set (issue #237)."""
+    if sys.platform == "darwin":
+        # Title and body travel as arguments, so no AppleScript quoting is needed.
+        cmd = ["osascript", "-e", "on run argv", "-e",
+               "display notification (item 2 of argv) with title (item 1 of argv)",
+               "-e", "end run", title, body]
+    elif sys.platform == "win32":
+        cmd = ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", _WIN_BALLOON]
+    else:
+        cmd = ["notify-send", title, body]
+    try:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         env={**os.environ, "NS_TITLE": title, "NS_BODY": body})
+    except OSError:
+        pass  # no notification tool here; `neurostack doctor` still shows the failure
+
+
 def _run(cfg, conn, job: Job, now: datetime | None) -> dict[str, Any]:
     run_id = conn.execute(
         "INSERT INTO job_runs (job, started_at, status) VALUES (?, ?, 'running')",
@@ -552,6 +583,9 @@ def _run(cfg, conn, job: Job, now: datetime | None) -> dict[str, Any]:
     log.info("job %s %s in %.1fs", job.name, status, duration)
     if status == "failed" and cfg.notify_command:
         _notify(cfg.notify_command, row)
+    elif status == "failed":
+        head = (error or "").partition("\n")[0][:200]
+        _desktop_notify("NeuroStack", f"{job.name} failed: {head}")
     return {**row, "duration_s": duration}
 
 
