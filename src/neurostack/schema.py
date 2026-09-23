@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 28
+SCHEMA_VERSION = 29
 
 # One row per queued job. The orchestrator (n8n, cron, anything) only calls
 # `neurostack queue`; dedupe, the daily cap, claiming and stale reaping live
@@ -69,6 +69,22 @@ CREATE TABLE IF NOT EXISTS memory_coverage (
     score REAL NOT NULL,
     judged_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+"""
+
+# One row per scheduled job run (issue #225). `neurostack run-due` writes a
+# `running` row before the body starts and settles it after, so a crash leaves
+# the row behind as evidence. The latest row per job decides what is due next.
+JOB_RUNS_SQL = """
+CREATE TABLE IF NOT EXISTS job_runs (
+    id INTEGER PRIMARY KEY,
+    job TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL CHECK(status IN ('running','ok','failed','skipped')),
+    result TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_job_runs_latest ON job_runs(job, started_at DESC);
 """
 
 SCHEMA_SQL = """
@@ -457,6 +473,7 @@ CREATE INDEX IF NOT EXISTS idx_triple_failed_retry
 
 SCHEMA_SQL += JOB_QUEUE_SQL
 SCHEMA_SQL += COVERAGE_SQL
+SCHEMA_SQL += JOB_RUNS_SQL
 
 # Migration from v1 to v2: add triples tables
 MIGRATION_V2 = """
@@ -1300,6 +1317,13 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (28)")
         conn.commit()
         log.info("Migration to v28 complete.")
+
+    if current < 29:
+        log.info("Migrating schema v28 -> v29: job_runs for neurostack run-due (issue #225)...")
+        conn.executescript(JOB_RUNS_SQL)
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (29)")
+        conn.commit()
+        log.info("Migration to v29 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:

@@ -97,6 +97,13 @@ class Config:
     # endpoint. Set it to reach a compatible proxy, such as CLIProxyAPI serving
     # the Anthropic Messages API from a Claude subscription login.
     agent_base_url: str = ""
+    # `neurostack run-due` (#225). A failed job run's row goes to this shell
+    # command as JSON on stdin, e.g. `ntfy publish mytopic` or a curl to a
+    # webhook. Empty sends nothing.
+    notify_command: str = ""
+    # Names of the scheduled jobs this host runs, e.g. ["decay", "reindex"].
+    # None runs every job whose requirements this host meets.
+    jobs: list[str] | None = None
     # Notes in flight at once during `backfill triples`. Only the network side
     # (LLM extraction + embedding) runs in parallel; every database write stays
     # on one thread. 1 is the old serial loop. 8 took a 741-note backfill from
@@ -233,6 +240,7 @@ def load_config() -> Config:
                     "index_llm_api_key", "index_llm_command", "embed_api_key",
                     "judge_url", "judge_model", "judge_api_key",
                     "agent_provider", "agent_model", "agent_api_key", "agent_base_url",
+                    "notify_command",
                     "api_host", "api_key"):
             if key in data:
                 setattr(cfg, key, data[key])
@@ -262,6 +270,11 @@ def load_config() -> Config:
             if isinstance(raw, str):
                 raw = [p for p in raw.replace(",", " ").split() if p]
             cfg.disabled_tools = [str(t).strip() for t in raw if str(t).strip()]
+        if "jobs" in data:
+            raw = data["jobs"]
+            if isinstance(raw, str):
+                raw = raw.replace(",", " ").split()
+            cfg.jobs = [str(j).strip() for j in raw if str(j).strip()]
         if "cooccurrence_boost_weight" in data:
             cfg.cooccurrence_boost_weight = float(data["cooccurrence_boost_weight"])
         if "link_section_penalty" in data:
@@ -315,6 +328,7 @@ def load_config() -> Config:
         "NEUROSTACK_AGENT_MODEL": ("agent_model", str),
         "NEUROSTACK_AGENT_API_KEY": ("agent_api_key", str),
         "NEUROSTACK_AGENT_BASE_URL": ("agent_base_url", str),
+        "NEUROSTACK_NOTIFY_COMMAND": ("notify_command", str),
         "NEUROSTACK_JUDGE_CONCURRENCY": ("judge_concurrency", int),
         "NEUROSTACK_JUDGE_TIMEOUT_S": ("judge_timeout_s", float),
         "NEUROSTACK_HARVEST_JUDGE_TYPES": ("harvest_judge_types", bool),
