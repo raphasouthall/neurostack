@@ -91,6 +91,9 @@ Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurost
 | `neurostack harvest` | Extract insights from recent Claude Code sessions |
 | `neurostack record-usage "path1" "path2"` | Record note usage for hotness scoring |
 | `neurostack decay` | Report note excitability and dormancy |
+| `neurostack schedule install` | Install or overwrite the one OS timer (systemd --user, launchd, or Task Scheduler) that runs `neurostack run-due` every minute (#222). `--json` |
+| `neurostack schedule status` | Is the timer active? `--json` prints `{"backend", "active"}` |
+| `neurostack schedule remove` | Remove the timer |
 | `neurostack prediction-errors` | Show notes flagged as poor retrieval fit |
 | `neurostack promote` | Promotion queue: memories that should become vault notes (#92). The uncovered bucket is judged, not thresholded (#215). `--workspace`, `--limit`, `--handoff-age-days` |
 | `neurostack feedback` | Show accumulated implicit-feedback stats — searches, uses, ranks (issue #66) |
