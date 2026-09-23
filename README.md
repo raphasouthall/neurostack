@@ -61,7 +61,7 @@ npm install -g neurostack
 neurostack init
 ```
 
-The setup wizard asks which vault folder to index, which mode to run (Lite or Full), and which profession pack to apply. It does everything else automatically.
+The setup wizard asks which vault folder to index, which mode to run (Lite or Full), and which profession pack to apply. Then it finishes the install for you. It adds the NeuroStack hook to omp or Claude Code if you have them, so `/save` keeps what a session learned. It sets up the AI that turns saved sessions into memories, using the same model as your summaries. It also installs one background timer that keeps the index tidy. Press Enter at each question to take the default. At the end it runs `neurostack doctor` and shows what to try first.
 
 **Step 3. Connect to your AI**
 
@@ -90,12 +90,14 @@ Everything runs on your machine. Choose a tier during `neurostack init`:
 - **Lite** (~130 MB) gives you keyword search, link-based connections between notes, stale detection and the MCP server. No GPU or Ollama required.
 - **Full** (~560 MB) adds semantic search by meaning, AI-generated summaries, connections between notes, and topic clustering via local [Ollama](https://ollama.ai). GPU or 6+ core CPU recommended.
 
-Non-interactive setup:
+Non-interactive setup takes every default:
 
 ```bash
-neurostack init --mode lite ~/my-notes    # lite mode
-neurostack init --mode full ~/my-notes    # full mode
+neurostack init --mode lite ~/my-notes --yes    # lite mode
+neurostack init --mode full ~/my-notes --yes    # full mode
 ```
+
+`--no-hooks`, `--no-schedule` and `--checkpoint none` turn off the hook, the timer and the checkpoint AI.
 
 </details>
 
@@ -251,7 +253,7 @@ The index updates as you write and stale detection runs continuously, so you do 
 
 ## Scheduling
 
-NeuroStack runs its background jobs from one OS timer. The timer calls `neurostack run-due` once a minute, and `run-due` works out which jobs are due and runs them one at a time.
+NeuroStack runs its background jobs from one OS timer. The timer calls `neurostack run-due` once a minute, and `run-due` works out which jobs are due and runs them one at a time. `neurostack init` installs the timer for you. Installing it records each daily job as just run, so the jobs start at their next scheduled time instead of all at once. The commands below manage it by hand.
 
 ```bash
 neurostack schedule install   # install or overwrite the timer
