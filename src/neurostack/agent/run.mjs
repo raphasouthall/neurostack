@@ -91,8 +91,11 @@ const modelRuntime = await ModelRuntime.create({
 	modelsPath: `${job.state_dir}/models.json`,
 });
 await modelRuntime.setRuntimeApiKey(job.provider, job.api_key);
-const model = getModel(job.provider, job.model);
-if (!model) throw new Error(`model not found: ${job.provider}/${job.model}`);
+const known = getModel(job.provider, job.model);
+if (!known) throw new Error(`model not found: ${job.provider}/${job.model}`);
+// A base URL points the provider's own API at a compatible proxy, for example
+// CLIProxyAPI serving the Anthropic Messages API from a subscription login.
+const model = job.base_url ? { ...known, baseUrl: job.base_url } : known;
 
 const { session } = await createAgentSession({
 	cwd: job.cwd,

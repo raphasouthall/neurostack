@@ -93,6 +93,10 @@ class Config:
     agent_provider: str = "openrouter"
     agent_model: str = "anthropic/claude-sonnet-5"
     agent_api_key: str = ""
+    # Base URL for the agent's provider API. Empty uses the provider's own
+    # endpoint. Set it to reach a compatible proxy, such as CLIProxyAPI serving
+    # the Anthropic Messages API from a Claude subscription login.
+    agent_base_url: str = ""
     # Notes in flight at once during `backfill triples`. Only the network side
     # (LLM extraction + embedding) runs in parallel; every database write stays
     # on one thread. 1 is the old serial loop. 8 took a 741-note backfill from
@@ -228,7 +232,7 @@ def load_config() -> Config:
         for key in ("embed_url", "embed_model", "index_llm_url", "index_llm_model",
                     "index_llm_api_key", "index_llm_command", "embed_api_key",
                     "judge_url", "judge_model", "judge_api_key",
-                    "agent_provider", "agent_model", "agent_api_key",
+                    "agent_provider", "agent_model", "agent_api_key", "agent_base_url",
                     "api_host", "api_key"):
             if key in data:
                 setattr(cfg, key, data[key])
@@ -310,6 +314,7 @@ def load_config() -> Config:
         "NEUROSTACK_AGENT_PROVIDER": ("agent_provider", str),
         "NEUROSTACK_AGENT_MODEL": ("agent_model", str),
         "NEUROSTACK_AGENT_API_KEY": ("agent_api_key", str),
+        "NEUROSTACK_AGENT_BASE_URL": ("agent_base_url", str),
         "NEUROSTACK_JUDGE_CONCURRENCY": ("judge_concurrency", int),
         "NEUROSTACK_JUDGE_TIMEOUT_S": ("judge_timeout_s", float),
         "NEUROSTACK_HARVEST_JUDGE_TYPES": ("harvest_judge_types", bool),

@@ -95,7 +95,7 @@ Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurost
 | `neurostack promote` | Promotion queue: memories that should become vault notes (#92). The uncovered bucket is judged, not thresholded (#215). `--workspace`, `--limit`, `--handoff-age-days` |
 | `neurostack feedback` | Show accumulated implicit-feedback stats — searches, uses, ranks (issue #66) |
 | `neurostack migrate write-back` | Export qualifying memories to markdown files (issue #20). `--dry-run` to preview |
-| `neurostack agent promotion` | Run a bundled Pi agent job (#217) on OpenRouter (`agent_model`, default `anthropic/claude-sonnet-5`). Needs Node 22.19+; deps install once into `~/.cache/neurostack/agent`. `--model`, `--cwd`, `--timeout` |
+| `neurostack agent promotion` | Run a bundled Pi agent job (#217) on OpenRouter (`agent_model`, default `anthropic/claude-sonnet-5`). Needs Node 22.19+; deps install once into `~/.cache/neurostack/agent`. `--model`, `--cwd`, `--timeout`. `agent_base_url` sends it through a compatible proxy (e.g. CLIProxyAPI) |
 | `neurostack sync` | Reconcile write-back files against the DB (DB wins on conflict) |
 
 ### Setup & Diagnostics
