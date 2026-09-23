@@ -33,6 +33,15 @@ def _get_workspace(args) -> str | None:
     return ws or None
 
 
+def _ollama_command(action: str) -> str:
+    """How to check (`status`) or start (`start`) Ollama on this OS."""
+    if sys.platform == "darwin":
+        return "open -a Ollama (or run: ollama serve)"
+    if sys.platform == "win32":
+        return "open the Ollama tray app (or run: ollama serve)"
+    return f"systemctl {action} ollama"
+
+
 def _db_lock_hint() -> str:
     """Try to identify what process holds the neurostack DB lock."""
     import shutil
@@ -111,12 +120,12 @@ def _handle_error(exc: Exception, command: str) -> None:
     elif isinstance(exc, ConnectionError):
         hint = (
             "Could not connect to a required service (likely Ollama).\n"
-            "Check that Ollama is running: systemctl status ollama\n"
+            f"Check that Ollama is running: {_ollama_command('status')}\n"
         )
     elif isinstance(exc, OSError) and "Connection refused" in msg:
         hint = (
             "Connection refused - is Ollama running?\n"
-            "Start it with: systemctl start ollama\n"
+            f"Start it with: {_ollama_command('start')}\n"
         )
 
     # -- missing dependencies ------------------------------------------------
@@ -139,7 +148,7 @@ def _handle_error(exc: Exception, command: str) -> None:
     elif exc_type == "ConnectError":
         hint = (
             "Could not connect to Ollama.\n"
-            "Check that Ollama is running: systemctl status ollama\n"
+            f"Check that Ollama is running: {_ollama_command('status')}\n"
         )
     elif exc_type == "ReadTimeout":
         hint = (

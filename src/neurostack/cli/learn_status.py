@@ -18,13 +18,13 @@ at worst, never a checkpoint.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import sys
-from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
+from ..locks import file_lock
 
 # A checkpoint fires on an idle session, so a working setup writes most days.
 # Two days of silence is a laptop that was shut, three is a broken hook.
@@ -44,16 +44,8 @@ def learn_status_path() -> Path:
     return cache_dir() / "learn-status.json"
 
 
-@contextmanager
 def _status_lock():
-    path = cache_dir() / "learn-status.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    return file_lock(cache_dir() / "learn-status.lock")
 
 
 def load_learn_status() -> dict:
