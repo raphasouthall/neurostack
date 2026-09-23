@@ -114,7 +114,7 @@ def parse_note(path: Path, vault_root: Path) -> ParsedNote:
         h1 = re.search(r"^#\s+(.+)$", body, re.MULTILINE)
         title = h1.group(1) if h1 else path.stem
 
-    rel_path = str(path.relative_to(vault_root))
+    rel_path = path.relative_to(vault_root).as_posix()
     chunks = chunk_by_headings(body)
     wiki_links = extract_wiki_links(body)
 

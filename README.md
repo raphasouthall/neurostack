@@ -249,6 +249,36 @@ The index updates as you write and stale detection runs continuously, so you do 
 
 ---
 
+## Scheduling
+
+NeuroStack runs its background jobs from one OS timer. The timer calls `neurostack run-due` once a minute, and `run-due` works out which jobs are due and runs them one at a time.
+
+```bash
+neurostack schedule install   # install or overwrite the timer
+neurostack schedule status    # show whether the timer is active
+neurostack schedule remove    # remove the timer
+```
+
+`schedule install` uses the scheduler your OS already ships:
+
+| OS | Backend | What it writes |
+|----|---------|----------------|
+| Linux | systemd user timer | `~/.config/systemd/user/neurostack.timer` and `neurostack.service` |
+| macOS | launchd agent | `~/Library/LaunchAgents/io.neurostack.run-due.plist` |
+| Windows | Task Scheduler | a task named `NeuroStackRunDue` |
+
+The timer calls the `neurostack` executable it finds on your `PATH` at install time, so run `schedule install` again after you move or reinstall NeuroStack. All three subcommands accept `--json`.
+
+A systemd user timer runs only while you have a login session. On a headless Linux server, or when you run NeuroStack as root, enable lingering for that user so the timer keeps running after you log out:
+
+```bash
+sudo loginctl enable-linger <user>
+```
+
+`neurostack doctor` shows when each job last ran.
+
+---
+
 ## What changes day-to-day
 
 | Without NeuroStack | With NeuroStack |
@@ -490,7 +520,7 @@ Full citations: [docs/neuroscience-appendix.md](docs/neuroscience-appendix.md)
 
 ## Requirements
 
-- Linux or macOS
+- Linux, macOS, or Windows
 - **Lite mode:** Node.js + Python 3.11+. No GPU or Ollama required.
 - **Full mode:** [Ollama](https://ollama.ai) with `nomic-embed-text` and a summary model. GPU or 6+ core CPU recommended.
 

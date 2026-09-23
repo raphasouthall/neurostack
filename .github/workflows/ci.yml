@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -38,9 +39,14 @@ jobs:
           echo "All versions match: $PYPROJECT"
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    # Linux finishes in about 2 minutes; a stuck Windows run should not hold a runner for 6 hours.
+    timeout-minutes: 30
     strategy:
+      # One OS failing must not cancel the others; each cell reports on its own.
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4

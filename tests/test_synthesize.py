@@ -8,6 +8,7 @@ real against an in-memory DB.
 
 import json
 import struct
+import sys
 
 import numpy as np
 import pytest
@@ -295,13 +296,15 @@ class TestRealRun:
 
 class TestIndexLlmCommand:
     """A subscription CLI has no HTTP endpoint, so the prompt goes to a shell
-    command on stdin and the reply comes back on stdout (issue #184)."""
+    command on stdin and the reply comes back on stdout (issue #184). Commands
+    are Python one-liners because Windows runs them under cmd.exe."""
 
     def test_command_answers_instead_of_http(self):
         members = [{"memory_id": 1, "created_at": "2026-09-01", "content": "a fact"}]
         out = synth_mod._synthesize(
             members, "http://unused.invalid", "ignored",
-            command="cat >/dev/null; printf 'the synthesised learning'",
+            command=(f"{sys.executable} -c \"import sys; sys.stdin.read();"
+                     " sys.stdout.write('the synthesised learning')\""),
         )
         assert out == "the synthesised learning"
 
@@ -311,7 +314,8 @@ class TestIndexLlmCommand:
                     "content": "BASSnet needs 8000 MB"}]
         synth_mod._synthesize(
             members, "http://unused.invalid", "ignored",
-            command=f"tee {seen} >/dev/null; printf 'ok'",
+            command=(f"{sys.executable} -c \"import sys; open(r'{seen}', 'w')"
+                     ".write(sys.stdin.read()); sys.stdout.write('ok')\""),
         )
         prompt = seen.read_text()
         assert "BASSnet needs 8000 MB" in prompt
@@ -322,7 +326,8 @@ class TestIndexLlmCommand:
         with pytest.raises(RuntimeError, match="exited 3"):
             synth_mod._synthesize(
                 members, "http://unused.invalid", "ignored",
-                command="echo 'session limit reached' >&2; exit 3",
+                command=(f"{sys.executable} -c \"import sys;"
+                         " sys.stderr.write('session limit reached'); sys.exit(3)\""),
             )
 
     def test_an_empty_reply_still_raises(self):
