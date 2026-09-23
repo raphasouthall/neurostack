@@ -246,38 +246,20 @@ def _clear_triple_failure(conn, note_path: str) -> None:
         pass
 
 
-def _index_triples_for_note(
-    note_path: str,
-    title: str,
-    content: str,
-    content_hash: str,
-    now: str,
-    conn,
-    embed_url: str,
-    summarize_url: str,
-):
-    """Extract and store triples for a single note."""
-    # Delete old triples (and their vec index entries)
-    _has_vec = has_vec_index(conn)
-    if _has_vec:
-        delete_triple_vecs(conn, note_path)
-    conn.execute("DELETE FROM triples WHERE note_path = ?", (note_path,))
+def _extract_triples_for_note(
+    title: str, content: str, embed_url: str, summarize_url: str, note_path: str = "",
+) -> tuple[list[dict], list[str], list]:
+    """The network half of triple indexing: LLM extraction, then embedding.
 
-    try:
-        triples = extract_triples(title, content, base_url=summarize_url)
-    except TripleExtractionError as e:
-        # Hard parse failure — queue for retry instead of silently dropping (#28).
-        _record_triple_failure(conn, note_path, content_hash, str(e))
-        return
-
-    # Extraction succeeded (possibly with zero triples) — clear any retry row.
-    _clear_triple_failure(conn, note_path)
+    Touches no database connection, so it is safe to run on a worker thread.
+    Raises TripleExtractionError on a hard parse failure so the caller can
+    queue the note for retry.
+    """
+    triples = extract_triples(title, content, base_url=summarize_url)
     if not triples:
-        return
+        return [], [], []
 
-    # Build triple texts for batch embedding
     triple_texts = [triple_to_text(t) for t in triples]
-
     if HAS_NUMPY:
         try:
             embeddings = get_embeddings_batch(triple_texts, base_url=embed_url)
@@ -286,6 +268,29 @@ def _index_triples_for_note(
             embeddings = [None] * len(triples)
     else:
         embeddings = [None] * len(triples)
+    return triples, triple_texts, embeddings
+
+
+def _store_triples_for_note(
+    conn,
+    note_path: str,
+    content_hash: str,
+    now: str,
+    extracted: tuple[list[dict], list[str], list],
+) -> None:
+    """The database half: replace a note's triples with `extracted`.
+
+    Main-thread only; sqlite connections are not shared across threads.
+    """
+    _has_vec = has_vec_index(conn)
+    if _has_vec:
+        delete_triple_vecs(conn, note_path)
+    conn.execute("DELETE FROM triples WHERE note_path = ?", (note_path,))
+    _clear_triple_failure(conn, note_path)
+
+    triples, triple_texts, embeddings = extracted
+    if not triples:
+        return
 
     for i, t in enumerate(triples):
         emb = embeddings[i]
@@ -310,6 +315,18 @@ def _index_triples_for_note(
 
     # Update co-occurrence for entities in this note
     upsert_cooccurrence_for_note(conn, note_path)
+
+
+def _record_triple_failed(conn, note_path: str, content_hash: str, error: str) -> None:
+    """A hard parse failure: drop the note's stale triples and queue a retry (#28).
+
+    The stale rows have to go, because backfill_triples selects notes with no
+    triples; leaving the old set in place would hide the note from every retry.
+    """
+    if has_vec_index(conn):
+        delete_triple_vecs(conn, note_path)
+    conn.execute("DELETE FROM triples WHERE note_path = ?", (note_path,))
+    _record_triple_failure(conn, note_path, content_hash, error)
 
 
 def _prepare_note(
@@ -912,11 +929,21 @@ def backfill_triples(
     vault_root: Path | None = None,
     embed_url: str | None = None,
     summarize_url: str | None = None,
+    workers: int | None = None,
 ):
-    """Generate triples for all notes that don't have any yet."""
+    """Generate triples for all notes that don't have any yet.
+
+    `workers` (default `config.triple_backfill_workers`) is how many notes are
+    in flight at once on the network side: LLM extraction and embedding run on
+    a thread pool, and every database write happens here on the calling
+    thread, because a sqlite connection cannot be shared across threads. At 1
+    the loop is the old serial one.
+    """
+    cfg = get_config()
     vault_root = vault_root or _vault_root()
-    embed_url = embed_url or get_config().embed_url
-    summarize_url = summarize_url or get_config().index_llm_url
+    embed_url = embed_url or cfg.embed_url
+    summarize_url = summarize_url or cfg.index_llm_url
+    workers = max(1, workers or cfg.triple_backfill_workers)
     conn = get_db(DB_PATH)
     now_iso = datetime.now(timezone.utc).isoformat()
     # Notes without triples, excluding those still in retry backoff (#28): a note
@@ -937,39 +964,58 @@ def backfill_triples(
         log.info("All notes already have triples.")
         return
 
-    log.info(f"Backfilling triples for {total} notes...")
-    success = 0
-    total_triples = 0
-    for i, row in enumerate(rows):
-        note_path = row["path"]
-        title = row["title"]
-        content_hash = row["content_hash"]
+    log.info(f"Backfilling triples for {total} notes with {workers} worker(s)...")
+
+    jobs = []
+    for row in rows:
         chunks = conn.execute(
             "SELECT content FROM chunks WHERE note_path = ? ORDER BY position",
-            (note_path,),
+            (row["path"],),
         ).fetchall()
-        if not chunks:
-            continue
+        if chunks:
+            jobs.append((row["path"], row["title"], row["content_hash"],
+                         "\n\n".join(c["content"] for c in chunks)))
 
-        full_content = "\n\n".join(c["content"] for c in chunks)
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            _index_triples_for_note(
-                note_path, title, full_content,
-                content_hash, now, conn, embed_url, summarize_url,
-            )
-            count = conn.execute(
-                "SELECT COUNT(*) as c FROM triples WHERE note_path = ?", (note_path,)
-            ).fetchone()["c"]
-            if count > 0:
-                success += 1
-                total_triples += count
-        except Exception as e:
-            log.warning(f"Triple extraction failed for {note_path}: {e}")
+    def _extract(job):
+        note_path, title, _, content = job
+        return _extract_triples_for_note(title, content, embed_url, summarize_url, note_path)
 
-        if (i + 1) % 10 == 0 or i + 1 == total:
-            conn.commit()
-            log.info(f"  Progress: {i + 1}/{total} ({success} notes, {total_triples} triples)")
+    success = 0
+    total_triples = 0
+    done = 0
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        # Submit in order and consume in order: results land on this thread one
+        # at a time, so the write side stays serial while the network side
+        # runs `workers` deep.
+        futures = [(job, pool.submit(_extract, job)) for job in jobs]
+        for (note_path, _, content_hash, _), fut in futures:
+            done += 1
+            try:
+                extracted = fut.result()
+            except TripleExtractionError as e:
+                _record_triple_failed(conn, note_path, content_hash, str(e))
+                extracted = None
+            except Exception as e:
+                log.warning(f"Triple extraction failed for {note_path}: {e}")
+                extracted = None
+
+            if extracted is not None:
+                try:
+                    now = datetime.now(timezone.utc).isoformat()
+                    _store_triples_for_note(conn, note_path, content_hash, now, extracted)
+                    if extracted[0]:
+                        success += 1
+                        total_triples += len(extracted[0])
+                except Exception as e:
+                    log.warning(f"Storing triples failed for {note_path}: {e}")
+
+            if done % 10 == 0 or done == len(jobs):
+                conn.commit()
+                log.info(
+                    f"  Progress: {done}/{len(jobs)} ({success} notes, {total_triples} triples)"
+                )
 
     conn.commit()
     log.info(f"Backfill complete: {total_triples} triples from {success}/{total} notes.")
