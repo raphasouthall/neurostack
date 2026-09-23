@@ -195,6 +195,10 @@ File: `~/.config/neurostack/config.toml`
 | `api_host` | `127.0.0.1` | `NEUROSTACK_API_HOST` |
 | `api_port` | `8000` | `NEUROSTACK_API_PORT` |
 | `api_key` | (none) | `NEUROSTACK_API_KEY` |
+| `notify_command` | (none) | `NEUROSTACK_NOTIFY_COMMAND` |
+| `checkpoint_command` | (none), so the server queue workers stay off | `NEUROSTACK_CHECKPOINT_COMMAND` |
+| `checkpoint_timeout_s` | `300` | `NEUROSTACK_CHECKPOINT_TIMEOUT_S` |
+| `checkpoint_max_messages` | `0` (no cap) | `NEUROSTACK_CHECKPOINT_MAX_MESSAGES` |
 
 ### Memory write-back (issue #20, opt-in)
 

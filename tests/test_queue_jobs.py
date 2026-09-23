@@ -59,16 +59,23 @@ def queue_server(server, queue_db, client):
 def runs(monkeypatch):
     """Replace the checkpoint runner; it records the payload and the file it was handed."""
     state = SimpleNamespace(reply=Verdict(data={"ok": True, "saved": 2, "found": 3}),
-                            calls=[], seen=[])
+                            calls=[], seen=[], cfgs=[])
 
     def fake(payload, harness="cli", cfg=None):
         state.calls.append((payload, harness))
+        state.cfgs.append(cfg)
         path = payload.get("transcript_path")
         state.seen.append(Path(path).read_text() if path else None)
         return state.reply
 
     monkeypatch.setattr("neurostack.cli.hook.run_checkpoint", fake)
     return state
+
+
+def _server(tmp_path, command="true"):
+    """The server's Config, as far as the workers read it."""
+    return SimpleNamespace(db_dir=tmp_path, checkpoint_command=command,
+                           checkpoint_timeout_s=300.0, checkpoint_max_messages=40)
 
 
 def _row(conn, job_id):
@@ -173,7 +180,7 @@ def test_worker_runs_the_checkpoint_on_the_uploaded_transcript_then_drops_it(
     job_id = add(in_memory_db, "checkpoint", "s1", {"session": "s1", "harness": "claude"},
                  transcript="the uploaded text\n")["job_id"]
 
-    result = JOBS["checkpoint-worker"].run(SimpleNamespace(db_dir=tmp_path), in_memory_db)
+    result = JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
 
     assert result["claimed"] == 1 and result["finished_ok"] == 1
     (payload, harness), = runs.calls
@@ -199,7 +206,7 @@ def test_a_failed_or_busy_checkpoint_finishes_failed_and_fails_the_run(
                  transcript="x\n")["job_id"]
 
     with pytest.raises(JobFailed, match=output):
-        JOBS["checkpoint-worker"].run(SimpleNamespace(db_dir=tmp_path), in_memory_db)
+        JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
 
     assert (_row(in_memory_db, job_id)["status"], _row(in_memory_db, job_id)["output"]) == (
         "failed", output)
@@ -209,7 +216,7 @@ def test_a_failed_or_busy_checkpoint_finishes_failed_and_fails_the_run(
 def test_a_job_without_a_transcript_fails_without_running(in_memory_db, client, runs, tmp_path):
     add(in_memory_db, "checkpoint", "s1", {"session": "s1"})
     with pytest.raises(JobFailed, match="no transcript uploaded"):
-        JOBS["checkpoint-worker"].run(SimpleNamespace(db_dir=tmp_path), in_memory_db)
+        JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
     assert runs.calls == []
 
 
@@ -220,7 +227,7 @@ def test_a_job_without_a_transcript_fails_without_running(in_memory_db, client, 
 def test_harvest_worker_derives_the_session_from_the_transcript_path(
         in_memory_db, client, runs, tmp_path, payload, session, harness):
     add(in_memory_db, "harvest", f"{payload['path']}@1", {**payload, "mtime": 1}, transcript="t\n")
-    JOBS["harvest-worker"].run(SimpleNamespace(db_dir=tmp_path), in_memory_db)
+    JOBS["harvest-worker"].run(_server(tmp_path), in_memory_db)
     (sent, used), = runs.calls
     assert (sent["session"], used) == (session, harness)
 
@@ -232,7 +239,7 @@ def test_worker_reaps_a_stale_run_before_claiming(in_memory_db, client, runs, tm
         (_iso(datetime.now(timezone.utc) - timedelta(minutes=31)), stale))
     in_memory_db.commit()
 
-    result = JOBS["checkpoint-worker"].run(SimpleNamespace(db_dir=tmp_path), in_memory_db)
+    result = JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
 
     assert result["reaped"] == 1 and result["claimed"] == 0
     assert _row(in_memory_db, stale)["status"] == "failed"
@@ -247,7 +254,7 @@ def test_checkpoint_worker_stops_at_fifty_a_day(in_memory_db, client, runs, tmp_
                          " ('checkpoint', 'late', '{\"session\": \"late\"}')")
     in_memory_db.commit()
 
-    result = JOBS["checkpoint-worker"].run(SimpleNamespace(db_dir=tmp_path), in_memory_db)
+    result = JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
     assert result["claimed"] == 0 and "daily cap 50/50" in result["reason"]
     assert runs.calls == []
 
@@ -288,7 +295,7 @@ def test_harvest_scan_fails_when_nothing_reaches_the_server(client, tmp_path, mo
 # -- which host runs what -----------------------------------------------------
 
 def test_workers_run_on_the_index_host_and_the_scan_on_any_client(client, tmp_path):
-    cfg = SimpleNamespace(jobs=None, db_path=tmp_path / "neurostack.db")
+    cfg = SimpleNamespace(jobs=None, db_path=tmp_path / "neurostack.db", checkpoint_command="true")
     cfg.db_path.touch()
     client.url = "http://192.168.0.65:8001/mcp"
     for name in ("checkpoint-worker", "harvest-worker"):
@@ -298,5 +305,53 @@ def test_workers_run_on_the_index_host_and_the_scan_on_any_client(client, tmp_pa
     client.url = "http://127.0.0.1:8001/mcp"
     assert blocked(cfg, JOBS["checkpoint-worker"]) is None
     client.checkpoint_command = None
-    for name in ("checkpoint-worker", "harvest-worker", "harvest-scan"):
-        assert blocked(cfg, JOBS[name]) == "no checkpoint_command in client.toml"
+    assert blocked(cfg, JOBS["harvest-scan"]) == "no checkpoint_command in client.toml"
+    assert blocked(cfg, JOBS["checkpoint-worker"]) is None  # the server key decides
+
+
+# -- the server's own checkpoint command (issue #233) --------------------------
+
+def test_worker_runs_the_server_command_with_no_client_toml(isolated_home, in_memory_db,
+                                                            runs, tmp_path):
+    add(in_memory_db, "checkpoint", "s1", {"session": "s1"}, transcript="x\n")
+
+    JOBS["checkpoint-worker"].run(_server(tmp_path, command="server-model --json"),
+                                  in_memory_db)
+
+    (used,) = runs.cfgs
+    assert (used.checkpoint_command, used.checkpoint_timeout_s,
+            used.checkpoint_max_messages) == ("server-model --json", 300.0, 40)
+
+
+def test_jobs_json_turns_the_workers_off_without_the_server_key(isolated_home, tmp_path,
+                                                                monkeypatch, capsys):
+    from neurostack.cli.jobs import cmd_jobs
+    from neurostack.config import Config
+
+    cfg = Config(vault_root=tmp_path, db_dir=tmp_path / "data")
+    get_db(cfg.db_path)
+    monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
+
+    cmd_jobs(SimpleNamespace(json=True))
+
+    rows = {r["job"]: r for r in json.loads(capsys.readouterr().out)}
+    for name in ("checkpoint-worker", "harvest-worker"):
+        assert rows[name]["enabled"] is False
+        assert rows[name]["reason"] == "no checkpoint_command in config.toml"
+
+
+def test_the_server_keys_load_from_config_toml_and_env(tmp_path, monkeypatch):
+    from neurostack.config import load_config
+
+    config_file = tmp_path / "config.toml"
+    config_file.write_text('checkpoint_command = "claude -p"\ncheckpoint_timeout_s = 90\n'
+                           "checkpoint_max_messages = 40\n")
+    monkeypatch.setattr("neurostack.config.CONFIG_PATH", config_file)
+    cfg = load_config()
+    assert (cfg.checkpoint_command, cfg.checkpoint_timeout_s,
+            cfg.checkpoint_max_messages) == ("claude -p", 90.0, 40)
+
+    monkeypatch.setenv("NEUROSTACK_CHECKPOINT_COMMAND", "proxy-model")
+    monkeypatch.setenv("NEUROSTACK_CHECKPOINT_TIMEOUT_S", "30")
+    cfg = load_config()
+    assert (cfg.checkpoint_command, cfg.checkpoint_timeout_s) == ("proxy-model", 30.0)
