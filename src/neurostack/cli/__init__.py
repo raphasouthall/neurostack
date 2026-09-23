@@ -3,6 +3,7 @@
 """CLI entry point for neurostack."""
 
 import argparse
+import io
 import sys
 from pathlib import Path
 
@@ -64,6 +65,11 @@ from .writeback import cmd_migrate, cmd_sync
 
 
 def main():
+    # Windows pipes stdout through the ANSI code page (cp1252), which has no
+    # ✓ or ✗; print a stand-in character rather than crash.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="replace")
     cfg = get_config()
 
     parser = argparse.ArgumentParser(description="neurostack: Local AI context engine")

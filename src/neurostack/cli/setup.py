@@ -122,9 +122,26 @@ _HARNESS_NAMES = {"omp": "omp", "claude": "Claude Code"}
 CHECKPOINT_MAX_MESSAGES = 40
 
 
-def _checkpoint_default(cfg) -> str:
-    """Keep a checkpoint command someone already set; otherwise use the index LLM."""
-    return "keep" if cfg.checkpoint_command else "index-llm"
+def _llm_reachable(url: str) -> bool:
+    """Whether anything answers HTTP at `url` within 2 s. Any status counts."""
+    import httpx
+
+    try:
+        httpx.get(url, timeout=2.0)
+    except httpx.HTTPError:
+        return False
+    return True
+
+
+def _checkpoint_default(cfg, index_llm_url: str) -> str:
+    """Keep a checkpoint command someone already set; else use the index LLM if it answers."""
+    if cfg.checkpoint_command:
+        return "keep"
+    if cfg.index_llm_command or _llm_reachable(index_llm_url):
+        return "index-llm"
+    print(f"\n  No LLM reachable at {index_llm_url}, so checkpoints are off."
+          " Run neurostack init again after installing Ollama or adding an API key.")
+    return "none"
 
 
 def _merge_toml(path: Path, values: dict[str, object], drop=()) -> None:
@@ -500,8 +517,8 @@ def cmd_init(args):
             _full_index_pipeline(vault_root, cfg)
 
         harnesses = [] if args.no_hooks else [h for h in HARNESSES if harness_detected(h)]
-        _finish_setup(cfg, harnesses, args.checkpoint or _checkpoint_default(cfg),
-                      not args.no_schedule)
+        checkpoint = args.checkpoint or _checkpoint_default(cfg, cfg.index_llm_url)
+        _finish_setup(cfg, harnesses, checkpoint, not args.no_schedule)
         _print_done()
         return
 
@@ -639,7 +656,7 @@ def cmd_init(args):
             0, ("keep", f"Keep the current command: {cfg.checkpoint_command}"))
     checkpoint = _prompt(
         "Which AI turns a saved session into memories?",
-        default=_checkpoint_default(cfg), choices=checkpoint_choices,
+        default=_checkpoint_default(cfg, index_llm_url), choices=checkpoint_choices,
     )
     print()
     schedule = _confirm(
