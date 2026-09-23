@@ -839,14 +839,14 @@ def cmd_stats(args):
         print("Communities: \033[33mnot built\033[0m — run: neurostack communities build")
 
 
-def _verify_prediction_errors(conn, args) -> None:
+def verify_prediction_errors(conn) -> dict:
     """Re-run each flagged query and resolve flags that no longer reproduce.
 
     A flag is a single observation frozen at search time. Re-indexing, a new
     note or a ranking change can make it obsolete, and nothing re-checked it,
     so the report filled with notes that no longer answer the query at all.
     """
-    from ..search import PREDICTION_ERROR_SIM_THRESHOLD, hybrid_search
+    from ..search import hybrid_search
 
     rows = conn.execute(
         "SELECT error_id, note_path, query, context FROM prediction_errors"
@@ -879,14 +879,20 @@ def _verify_prediction_errors(conn, args) -> None:
             [(s["error_id"],) for s in stale],
         )
         conn.commit()
+    return {"checked": len(rows), "kept": len(kept), "resolved_stale": len(stale),
+            "errors": failed, "stale": stale}
 
+
+def _verify_prediction_errors(conn, args) -> None:
+    from ..search import PREDICTION_ERROR_SIM_THRESHOLD
+
+    report = verify_prediction_errors(conn)
     if args.json:
-        print(json.dumps({"checked": len(rows), "kept": len(kept),
-                          "resolved_stale": len(stale), "errors": failed,
-                          "stale": stale}, indent=2, default=str))
+        print(json.dumps(report, indent=2, default=str))
         return
 
-    print(f"Verified {len(rows)} flag(s): {len(kept)} still reproduce, "
+    rows, stale, failed = report["checked"], report["stale"], report["errors"]
+    print(f"Verified {rows} flag(s): {report['kept']} still reproduce, "
           f"{len(stale)} resolved as stale.")
     for s in stale:
         print(f"  stale: {s['note_path']}")
@@ -1095,14 +1101,12 @@ def cmd_decay(args):
     conn = get_db(DB_PATH)
 
     if getattr(args, "demote", False):
-        from ..search import record_decay_run, run_excitability_demotion
+        from ..search import run_excitability_demotion
         result = run_excitability_demotion(
             conn,
             threshold=args.threshold,
             half_life_days=args.half_life,
         )
-        # Stamp the run so `neurostack doctor` can flag a stalled decay timer.
-        record_decay_run(result["demoted"], result["promoted"])
         if args.json:
             print(json.dumps(result, indent=2))
         else:

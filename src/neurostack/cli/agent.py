@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 AGENT_DIR = Path(__file__).resolve().parent.parent / "agent"
 JOBS = {
@@ -26,6 +27,10 @@ CUSTOM = {"timeout_s": 1800, "thinking": "medium"}
 MIN_NODE = (22, 19)
 
 
+class AgentError(RuntimeError):
+    """The agent cannot start: node, npm, or an API key is missing."""
+
+
 def _state_dir() -> Path:
     return Path.home() / ".cache" / "neurostack" / "agent"
 
@@ -33,13 +38,12 @@ def _state_dir() -> Path:
 def _check_node() -> str:
     node = shutil.which("node")
     if not node:
-        sys.exit("neurostack agent: node not found; install Node.js "
-                 f"{MIN_NODE[0]}.{MIN_NODE[1]} or newer")
+        raise AgentError(f"node not found; install Node.js {MIN_NODE[0]}.{MIN_NODE[1]} or newer")
     raw = subprocess.run([node, "--version"], capture_output=True, text=True).stdout
     version = tuple(int(x) for x in raw.strip().lstrip("v").split(".")[:2])
     if version < MIN_NODE:
-        sys.exit(f"neurostack agent: node {raw.strip()} is too old; need "
-                 f"{MIN_NODE[0]}.{MIN_NODE[1]} or newer")
+        raise AgentError(f"node {raw.strip()} is too old; need "
+                         f"{MIN_NODE[0]}.{MIN_NODE[1]} or newer")
     return node
 
 
@@ -53,30 +57,60 @@ def _install(state: Path) -> None:
         (state / "package.json").write_bytes(manifest)
         npm = shutil.which("npm")
         if not npm:
-            sys.exit("neurostack agent: npm not found")
+            raise AgentError("npm not found")
         subprocess.run([npm, "install", "--no-audit", "--no-fund", "--omit=dev"],
                        cwd=state, check=True)
         stamp.write_text(digest)
     shutil.copyfile(AGENT_DIR / "run.mjs", state / "run.mjs")
 
 
+def job_prompt(job: str) -> str:
+    return (AGENT_DIR / "jobs" / f"{job}.md").read_text(encoding="utf-8")
+
+
+def run_agent(cfg, prompt: str, spec: dict[str, Any], *, cwd: str, model: str | None = None,
+              timeout: int | None = None) -> int:
+    """Run one Pi agent job to completion and return the runner's exit code.
+
+    The runner's stdout goes to whatever `sys.stdout` is, so `run-due` can keep
+    its own stdout for the JSON report.
+    """
+    node = _check_node()
+    key = cfg.agent_api_key or cfg.judge_api_key
+    if not key:
+        raise AgentError("set agent_api_key (or judge_api_key) in config.toml")
+
+    state = _state_dir()
+    _install(state)
+    job = {
+        "cwd": cwd,
+        "prompt": prompt,
+        "state_dir": str(state),
+        "provider": cfg.agent_provider,
+        "model": model or cfg.agent_model,
+        "base_url": cfg.agent_base_url,
+        "api_key": key,
+        "thinking": spec["thinking"],
+        "timeout_s": timeout or spec["timeout_s"],
+    }
+    env = {
+        **os.environ,
+        "NEUROSTACK_AGENT_JOB": json.dumps(job),
+        "NEUROSTACK_AGENT_CLI": json.dumps([sys.executable, "-m", "neurostack"]),
+    }
+    return subprocess.run([node, str(state / "run.mjs")], cwd=cwd, env=env,
+                          stdout=sys.stdout).returncode
+
+
 def cmd_agent(args):
     from ..config import get_config
 
     cfg = get_config()
-    node = _check_node()
-    key = cfg.agent_api_key or cfg.judge_api_key
-    if not key:
-        sys.exit("neurostack agent: set agent_api_key (or judge_api_key) in config.toml")
-
-    state = _state_dir()
-    _install(state)
-    cwd = str(Path(args.cwd or cfg.vault_root).expanduser())
     if bool(args.job) == bool(args.prompt_file):
         sys.exit("neurostack agent: give a bundled job or --prompt-file, not both or neither")
     if args.job:
         spec = JOBS[args.job]
-        prompt = (AGENT_DIR / "jobs" / f"{args.job}.md").read_text(encoding="utf-8")
+        prompt = job_prompt(args.job)
     else:
         spec = CUSTOM
         src = sys.stdin if args.prompt_file == "-" else open(args.prompt_file, encoding="utf-8")
@@ -84,21 +118,9 @@ def cmd_agent(args):
             prompt = src.read()
     if args.mode:
         prompt += f"\n\n## RUN MODE\nMODE={args.mode}\n"
-    job = {
-        "cwd": cwd,
-        "prompt": prompt,
-        "state_dir": str(state),
-        "provider": cfg.agent_provider,
-        "model": args.model or cfg.agent_model,
-        "base_url": cfg.agent_base_url,
-        "api_key": key,
-        "thinking": spec["thinking"],
-        "timeout_s": args.timeout or spec["timeout_s"],
-    }
-    env = {
-        **os.environ,
-        "NEUROSTACK_AGENT_JOB": json.dumps(job),
-        "NEUROSTACK_AGENT_CLI": json.dumps([sys.executable, "-m", "neurostack"]),
-    }
-    proc = subprocess.run([node, str(state / "run.mjs")], cwd=cwd, env=env)
-    sys.exit(proc.returncode)
+    cwd = str(Path(args.cwd or cfg.vault_root).expanduser())
+    try:
+        code = run_agent(cfg, prompt, spec, cwd=cwd, model=args.model, timeout=args.timeout)
+    except AgentError as exc:
+        sys.exit(f"neurostack agent: {exc}")
+    sys.exit(code)

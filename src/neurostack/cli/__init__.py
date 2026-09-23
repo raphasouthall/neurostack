@@ -9,6 +9,7 @@ from pathlib import Path
 from .. import __version__
 from ..adapters import HARNESSES as ADAPTER_HARNESSES
 from ..config import get_config
+from ..jobs import JOBS
 from .agent import JOBS as AGENT_JOBS
 from .agent import cmd_agent
 from .api import cmd_api, cmd_bundle, cmd_serve
@@ -16,6 +17,7 @@ from .hook import EVENTS as HOOK_EVENTS
 from .hook import cmd_hook
 from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
 from .jobqueue import cmd_queue
+from .jobs import cmd_jobs, cmd_run_due
 from .memories import cmd_consolidate, cmd_memories, cmd_promote, cmd_synthesize
 from .schedule import cmd_schedule
 from .search import (
@@ -847,6 +849,20 @@ def main():
                         help="Output as JSON")
     p.set_defaults(func=cmd_schedule)
 
+    # run-due (issue #225): the OS timer's entry point, runs each due job once
+    p = sub.add_parser("run-due", help="Run every scheduled job that is due (the timer calls this)")
+    p.add_argument("--job", default=None, choices=list(JOBS), help="Consider only this job")
+    p.add_argument("--force", action="store_true", help="Run even when the job is not due")
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                   help="Output as JSON")
+    p.set_defaults(func=cmd_run_due)
+
+    # jobs (issue #225)
+    p = sub.add_parser("jobs", help="List scheduled jobs, their last run, and next due time")
+    p.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                   help="Output as JSON")
+    p.set_defaults(func=cmd_jobs)
+
     # hook (issue #141): one harness event in on stdin, context or a block out
     p = sub.add_parser(
         "hook",
@@ -1005,6 +1021,8 @@ def main():
         "hook", "hooks",
         # schedule manages an OS timer and never reads the vault
         "schedule",
+        # run-due and jobs check their own requirements per job
+        "run-due", "jobs",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():
