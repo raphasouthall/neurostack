@@ -130,6 +130,12 @@ def clear_reinforcement_buffer():
     _reset()
 
 
+@pytest.fixture(autouse=True)
+def no_desktop_notifications(monkeypatch):
+    """A failed job in a test must not pop a real notification (issue #237)."""
+    monkeypatch.setattr("neurostack.jobs._desktop_notify", lambda title, body: None)
+
+
 @pytest.fixture
 def in_memory_db():
     """Create an in-memory SQLite database with the NeuroStack schema."""

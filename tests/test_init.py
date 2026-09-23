@@ -15,6 +15,7 @@ import pytest
 from neurostack import jobs
 from neurostack.cli import schedule
 from neurostack.cli.setup import cmd_init
+from neurostack.client import client_config_path
 from neurostack.config import Config
 from neurostack.jobs import Daily, Every, Job, doctor_checks, run_due, seed_runs
 from neurostack.schema import get_db
@@ -23,9 +24,13 @@ CALENDAR_JOBS = {"decay", "synthesize", "health", "verify", "reindex", "communit
 
 
 @pytest.fixture
-def home(isolated_home, tmp_path, monkeypatch):
-    """A fresh machine: config under the throwaway HOME, the timer's systemctl faked."""
-    cfg = Config(vault_root=tmp_path / "unused", db_dir=tmp_path / "data")
+def home(isolated_home, tmp_path, monkeypatch, server):
+    """A fresh machine: config under the throwaway HOME, the timer's systemctl faked.
+
+    The index LLM URL points at a local HTTP server, so the checkpoint step finds it.
+    """
+    cfg = Config(vault_root=tmp_path / "unused", db_dir=tmp_path / "data",
+                 index_llm_url=server.url)
     monkeypatch.setattr("neurostack.config._config", cfg)
     monkeypatch.setattr("neurostack.config.CONFIG_PATH",
                         isolated_home / ".config" / "neurostack" / "config.toml")
@@ -42,6 +47,25 @@ def _init(home, **flags):
     args = dict(path=str(home.vault), profession=None, mode="lite", index=False,
                 yes=True, no_hooks=False, no_schedule=False, checkpoint=None)
     cmd_init(SimpleNamespace(**{**args, **flags}))
+
+
+def _closed_port_url():
+    """A local URL nothing listens on. Port 0 is not that on Windows, where a
+    connect to it did not fail in CI."""
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
+def test_no_reachable_llm_turns_checkpoints_off_and_says_why(home, capsys):
+    home.cfg.index_llm_url = url = _closed_port_url()
+    _init(home, no_schedule=True)
+
+    assert "checkpoint_command" not in _toml(home.path / ".config" / "neurostack" / "config.toml")
+    assert f"No LLM reachable at {url}, so checkpoints are off." in capsys.readouterr().out
 
 
 def _toml(path):
@@ -63,7 +87,7 @@ def test_yes_installs_the_timer_seeds_the_daily_jobs_and_sets_the_checkpoint_mod
     assert config["checkpoint_command"] == "/opt/ns/bin/neurostack checkpoint-llm"
     assert config["checkpoint_max_messages"] == 40
     assert config["vault_root"] == str(home.vault)
-    client = _toml(home.path / ".config" / "neurostack" / "client.toml")
+    client = _toml(client_config_path())  # AppData on Windows, ~/.config elsewhere
     assert client["checkpoint_command"] == config["checkpoint_command"]
 
 
