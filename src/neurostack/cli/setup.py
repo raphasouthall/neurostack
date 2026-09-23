@@ -116,6 +116,37 @@ def _confirm(label, default=True):
     return raw in ("y", "yes")
 
 
+_HARNESS_NAMES = {"omp": "omp", "claude": "Claude Code"}
+# Largest window one checkpoint summarizes. 40 messages keeps a backlog
+# transcript inside a small model's context; the cursor walks on from there.
+CHECKPOINT_MAX_MESSAGES = 40
+
+
+def _checkpoint_default(cfg) -> str:
+    """Keep a checkpoint command someone already set; otherwise use the index LLM."""
+    return "keep" if cfg.checkpoint_command else "index-llm"
+
+
+def _merge_toml(path: Path, values: dict[str, object], drop=()) -> None:
+    """Set `values` in a TOML file and remove `drop`, keeping every other key."""
+    try:
+        import tomllib as _tomllib
+    except ImportError:
+        import tomli as _tomllib  # type: ignore
+    import tomli_w as _tomli_w
+
+    existing = {}
+    if path.exists():
+        with open(path, "rb") as f:
+            existing = _tomllib.load(f)
+    for key in drop:
+        existing.pop(key, None)
+    existing.update(values)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        _tomli_w.dump(existing, f)
+
+
 def _do_init(vault_root, cfg, profession_name=None, run_index=False):
     """Core init logic — creates vault, config, applies profession."""
     import shutil
@@ -166,35 +197,21 @@ def _do_init(vault_root, cfg, profession_name=None, run_index=False):
             label = d.split("/")[-1].replace("-", " ").title()
             idx.write_text(f"# {label}\n\n")
 
-    # Write config
-    try:
-        import tomllib as _tomllib
-    except ImportError:
-        import tomli as _tomllib  # type: ignore
-    import tomli_w as _tomli_w
-
-    existing = {}
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, "rb") as f:
-            existing = _tomllib.load(f)
-
-    # Rewriting the file is the moment to finish the #142 rename: leaving the old
-    # keys beside the new ones would make config load warn on every start.
-    for legacy in _LEGACY_LLM_KEYS:
-        existing.pop(legacy, None)
-    existing["mode"] = cfg.mode
-    existing["vault_root"] = str(vault_root)
-    existing["embed_url"] = cfg.embed_url
-    existing["index_llm_url"] = cfg.index_llm_url
-    existing["index_llm_model"] = cfg.index_llm_model
+    # Write config. Rewriting the file is the moment to finish the #142 rename:
+    # leaving the old keys beside the new ones would make config load warn on
+    # every start.
+    updates: dict[str, object] = {
+        "mode": cfg.mode,
+        "vault_root": str(vault_root),
+        "embed_url": cfg.embed_url,
+        "index_llm_url": cfg.index_llm_url,
+        "index_llm_model": cfg.index_llm_model,
+    }
     if cfg.index_llm_api_key:
-        existing["index_llm_api_key"] = cfg.index_llm_api_key
+        updates["index_llm_api_key"] = cfg.index_llm_api_key
     if cfg.embed_api_key:
-        existing["embed_api_key"] = cfg.embed_api_key
-
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_PATH, "wb") as f:
-        _tomli_w.dump(existing, f)
+        updates["embed_api_key"] = cfg.embed_api_key
+    _merge_toml(CONFIG_PATH, updates, drop=_LEGACY_LLM_KEYS)
 
     # Create DB directory
     cfg.db_dir.mkdir(parents=True, exist_ok=True)
@@ -396,11 +413,61 @@ def _full_index_pipeline(vault_root, cfg):
         print(f"  \033[33m!\033[0m Communities failed: {e}")
 
 
-def _print_checkpoint_hint():
-    """Point the user at the harness adapter that runs checkpoints."""
-    print("\n  \033[1mLearning\033[0m")
-    print("  Checkpoints run once a harness adapter is installed:"
-          " neurostack hooks install --harness claude|omp")
+def _finish_setup(cfg, harnesses, checkpoint, schedule) -> None:
+    """Install harness hooks, set the checkpoint model, install the timer (issue #236)."""
+    import shlex
+
+    from ..adapters import install_adapter
+    from ..client import client_config_path
+    from ..config import CONFIG_PATH
+    from .schedule import _binary, install_timer
+
+    print("\n  \033[1mLearning and maintenance\033[0m")
+    for harness in harnesses:
+        status, path = install_adapter(harness)
+        if status == "installed":
+            print(f"  \033[32m✓\033[0m Installed the {_HARNESS_NAMES[harness]} hook: {path}")
+        else:
+            print(f"  \033[33m!\033[0m {_HARNESS_NAMES[harness]} hook not installed ({status})")
+
+    if checkpoint == "index-llm":
+        # Absolute, because the timer and the harness hooks run with a short PATH.
+        command = f"{shlex.quote(_binary())} checkpoint-llm"
+        _merge_toml(CONFIG_PATH, {"checkpoint_command": command,
+                                  "checkpoint_max_messages": CHECKPOINT_MAX_MESSAGES})
+        # client.toml serves /save and any checkpoint run by hand on this machine.
+        _merge_toml(client_config_path(), {"checkpoint_command": command})
+        cfg.checkpoint_command = command
+        cfg.checkpoint_max_messages = CHECKPOINT_MAX_MESSAGES
+        print(f"  \033[32m✓\033[0m Checkpoints use {cfg.index_llm_model} at {cfg.index_llm_url}")
+    elif checkpoint == "keep":
+        print(f"  \033[32m✓\033[0m Checkpoints keep: {cfg.checkpoint_command}")
+    else:
+        print("  - Checkpoints off. Set checkpoint_command in config.toml to turn them on.")
+
+    if schedule:
+        backend, path, err = install_timer()
+        if err:
+            print(f"  \033[31m✗\033[0m Maintenance timer not installed ({backend}): {err}")
+        else:
+            print(f"  \033[32m✓\033[0m Maintenance timer installed ({backend}): {path}")
+    else:
+        print("  - Maintenance timer skipped. Install it later: neurostack schedule install")
+
+
+def _print_done() -> None:
+    """Doctor's report, then the three things worth doing next."""
+    from types import SimpleNamespace
+
+    try:
+        cmd_doctor(SimpleNamespace(json=False, strict=False))
+    except SystemExit:
+        pass  # doctor printed what failed; the setup steps themselves finished
+    print("\n  \033[32m✓\033[0m Setup complete. Next:")
+    print('    neurostack search "a topic from your notes"')
+    print("    /save              # inside omp or Claude Code: keep what this session learned")
+    print("    neurostack jobs    # what runs automatically, and when")
+    print()
 
 
 def cmd_init(args):
@@ -409,16 +476,18 @@ def cmd_init(args):
     import sqlite3
     import subprocess
 
+    from ..adapters import HARNESSES, harness_detected
     from ..professions import list_professions
 
     cfg = get_config()
 
-    # Non-interactive mode: use flags directly
-    if args.path or args.profession or not sys.stdin.isatty():
-        vault_root = Path(args.path) if args.path else cfg.vault_root
+    # Non-interactive mode: use flags directly, defaults for everything else
+    if args.path or args.profession or args.yes or not sys.stdin.isatty():
+        vault_root = Path(args.path).expanduser() if args.path else cfg.vault_root
         mode = getattr(args, "mode", None) or "lite"
 
         cfg.mode = "local"
+        cfg.vault_root = vault_root
         if mode == "full":
             uv_bin = _find_uv()
             if uv_bin:
@@ -430,11 +499,10 @@ def cmd_init(args):
         if mode == "full" and args.index:
             _full_index_pipeline(vault_root, cfg)
 
-        _print_checkpoint_hint()
-
-        print("\n  \033[32m✓\033[0m Setup complete.")
-        print("    neurostack search 'query' # Search")
-        print("    neurostack serve          # Start MCP server")
+        harnesses = [] if args.no_hooks else [h for h in HARNESSES if harness_detected(h)]
+        _finish_setup(cfg, harnesses, args.checkpoint or _checkpoint_default(cfg),
+                      not args.no_schedule)
+        _print_done()
         return
 
     # ── Interactive setup wizard ──
@@ -554,6 +622,30 @@ def cmd_init(args):
             else:
                 embed_api_key = index_llm_api_key
 
+    # ── Step 6: Learning and maintenance (issue #236) ──
+    print("\n  \033[1mLearning from your AI sessions\033[0m")
+    harnesses = [
+        h for h in HARNESSES if harness_detected(h) and _confirm(
+            f"Install the {_HARNESS_NAMES[h]} hook so sessions get saved automatically?",
+            default=True,
+        )
+    ]
+    checkpoint_choices = [
+        ("index-llm", f"The same AI as summaries ({index_llm_model} at {index_llm_url})"),
+        ("none", "Skip, checkpoints off"),
+    ]
+    if cfg.checkpoint_command:
+        checkpoint_choices.insert(
+            0, ("keep", f"Keep the current command: {cfg.checkpoint_command}"))
+    checkpoint = _prompt(
+        "Which AI turns a saved session into memories?",
+        default=_checkpoint_default(cfg), choices=checkpoint_choices,
+    )
+    print()
+    schedule = _confirm(
+        "Run maintenance jobs automatically (one timer, every minute)?", default=True,
+    )
+
     # ── Summary ──
     print("\n  \033[1m━━━ Plan ━━━\033[0m\n")
     print(f"  Mode:       {mode}")
@@ -570,6 +662,10 @@ def cmd_init(args):
         print("  Index:      full (summaries + triples + communities)")
     else:
         print("  Index:      lite (FTS5 only)")
+    hooks_label = ", ".join(_HARNESS_NAMES[h] for h in harnesses) or "none"
+    print(f"  Hooks:      {hooks_label}")
+    print(f"  Checkpoint: {checkpoint}")
+    print(f"  Timer:      {'install' if schedule else 'skip'}")
 
     if not _confirm("\n  Proceed?", default=True):
         print("\n  Cancelled.")
@@ -606,7 +702,7 @@ def cmd_init(args):
         # Lite: create vault with FTS5-only index
         _do_init(vault_root, cfg, profession_name=profession, run_index=True)
 
-    _print_checkpoint_hint()
+    _finish_setup(cfg, harnesses, checkpoint, schedule)
 
     # 4. PATH check
     local_bin = str(Path.home() / ".local" / "bin")
@@ -614,12 +710,7 @@ def cmd_init(args):
         print("\n  \033[33m!\033[0m Add to PATH:"
               ' export PATH="$HOME/.local/bin:$PATH"')
 
-    # Done
-    print("\n  \033[32m✓\033[0m Setup complete.\033[0m")
-    print("    neurostack search 'query' # Search")
-    print("    neurostack serve          # Start MCP server")
-    print("    neurostack doctor         # Check health")
-    print()
+    _print_done()
 
 
 def cmd_scaffold(args):

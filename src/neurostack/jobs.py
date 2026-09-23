@@ -458,6 +458,33 @@ def blocked(cfg, job: Job) -> str | None:
     return job.requires(cfg)
 
 
+_SEEDED = "seeded at install"
+
+
+def seed_runs(cfg, conn, now: datetime | None = None) -> list[str]:
+    """Record a skipped run for each daily or weekly job this host runs and that never ran.
+
+    Without it the first tick after install finds every calendar job overdue
+    and runs all of them back to back, reindex and promotion included. The
+    seeded row makes each one wait for its next scheduled time. Interval jobs
+    are left alone, since their first run is cheap and wanted. Jobs that
+    already have a row are untouched, so running this twice changes nothing.
+    """
+    stamp = _utc(now or datetime.now())
+    seeded = []
+    for job in JOBS.values():
+        if not isinstance(job.schedule, Daily) or blocked(cfg, job) or last_run(conn, job.name):
+            continue
+        conn.execute(
+            "INSERT INTO job_runs (job, started_at, finished_at, status, result)"
+            " VALUES (?, ?, ?, 'skipped', ?)",
+            (job.name, stamp, stamp, json.dumps({"skipped": True, "reason": _SEEDED})),
+        )
+        seeded.append(job.name)
+    conn.commit()
+    return seeded
+
+
 def doctor_checks(cfg, conn, now: datetime | None = None) -> list[tuple[str, str, str]]:
     """`neurostack doctor` rows, one per job this host runs."""
     now = now or datetime.now()
@@ -468,8 +495,8 @@ def doctor_checks(cfg, conn, now: datetime | None = None) -> list[tuple[str, str
         name = f"Job {job.name}"
         last = last_run(conn, job.name)
         if last is None:
-            checks.append((name, "WARN",
-                           "never run, install the timer with neurostack schedule install"))
+            checks.append((name, "WARN", "never run yet; neurostack schedule status shows"
+                                         " whether the timer is on"))
             continue
         age = now - _local(last["started_at"])
         hours = age.total_seconds() / 3600
@@ -478,6 +505,9 @@ def doctor_checks(cfg, conn, now: datetime | None = None) -> list[tuple[str, str
             checks.append((name, "WARN", f"last run failed: {head}"))
         elif age > 2 * job.schedule.period:
             checks.append((name, "WARN", f"stale, last run {hours:.0f}h ago"))
+        elif _SEEDED in (last["result"] or ""):
+            first = job.schedule.next_due(_local(last["started_at"]), now)
+            checks.append((name, "OK", f"waiting for its first run at {first:%Y-%m-%d %H:%M}"))
         else:
             checks.append((name, "OK", f"last run {hours:.1f}h ago"))
     return checks
