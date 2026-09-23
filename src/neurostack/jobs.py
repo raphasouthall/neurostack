@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar
 
-from .queue import CHECKPOINT_CAP_PER_DAY, QueueLimits
+from .queue import LIMITS
 
 log = logging.getLogger(__name__)
 
@@ -243,8 +243,10 @@ def _checkpoint_payload(queue: str, job: dict[str, Any]) -> tuple[str, str]:
 def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
     """A job body that claims one queued checkpoint, runs it, and finishes it.
 
-    One claim per tick, like the n8n workflow. The checkpoint runs in-process
-    through `run_checkpoint`, the function `hook checkpoint --run` calls.
+    One claim per tick, like the n8n workflow. The client uploaded the
+    transcript with the job (issue #232), so it is written to a temp file under
+    `db_dir/tmp` and handed to `run_checkpoint`, the function `hook checkpoint
+    --run` calls, as `transcript_path`. The file goes once the job is finished.
     """
     def body(cfg, conn) -> dict[str, Any]:
         from .cli.hook import run_checkpoint
@@ -258,24 +260,37 @@ def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
             return {**result, "reason": out["reason"]}
         job = out["job"]
         session, harness = _checkpoint_payload(queue, job)
+        p = job["payload"]
         payload = {"session": session, "harness": harness,
-                   "format": "claude-code" if harness == "claude" else "omp"}
+                   "format": p.get("format") or ("claude-code" if harness == "claude" else "omp")}
+        if p.get("transcript_offset"):
+            payload["transcript_offset"] = p["transcript_offset"]
+        tmp = cfg.db_dir / "tmp" / f"{queue}-{job['job_id']}.jsonl"
         try:
-            verdict = run_checkpoint(payload, harness or "cli", load_client_config())
-            data, text = verdict.data, verdict.text
-        except Exception as exc:  # cmd_hook would print this and leave no payload
-            data, text = None, f"{type(exc).__name__}: {exc}"
-        # The n8n `Build Finish` mapping: success is the payload's ok field, and
-        # a run with no payload (a busy lock, a crash) counts as failed.
-        ok = bool(data and data.get("ok"))
-        saved = data["saved"] if data else 0
-        if data is None:
-            output = f"no payload: {text[-200:] or 'no output'}"
-        elif ok:
-            output = f"saved {saved} of {data['found']}"
-        else:
-            output = f"failed: {data.get('error') or 'unknown'}"
-        finish(conn, job["job_id"], ok, saved=saved, output=output)
+            if job["transcript"] is None:
+                data, text = None, "no transcript uploaded with the job"
+            else:
+                tmp.parent.mkdir(parents=True, exist_ok=True)
+                tmp.write_text(job["transcript"], encoding="utf-8")
+                try:
+                    verdict = run_checkpoint({**payload, "transcript_path": str(tmp)},
+                                             harness or "cli", load_client_config())
+                    data, text = verdict.data, verdict.text
+                except Exception as exc:  # cmd_hook would print this and leave no payload
+                    data, text = None, f"{type(exc).__name__}: {exc}"
+            # The n8n `Build Finish` mapping: success is the payload's ok field, and
+            # a run with no payload (a busy lock, a crash) counts as failed.
+            ok = bool(data and data.get("ok"))
+            saved = data["saved"] if data else 0
+            if data is None:
+                output = f"no payload: {text[-200:] or 'no output'}"
+            elif ok:
+                output = f"saved {saved} of {data['found']}"
+            else:
+                output = f"failed: {data.get('error') or 'unknown'}"
+            finish(conn, job["job_id"], ok, saved=saved, output=output)
+        finally:
+            tmp.unlink(missing_ok=True)
         if not ok:
             # n8n stopped the execution with an error here, which alerted.
             raise JobFailed([f"{queue} job {job['job_id']} ({job['key']}): {output}"])
@@ -286,10 +301,18 @@ def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
 
 def _harvest_scan(cfg, conn) -> dict[str, Any]:
     from .cli.sessions import enqueue_pending
+    from .client import McpClient, load_client_config
     from .harvest import pending_sessions
 
     rows = pending_sessions(50)
-    summary = enqueue_pending(conn, rows)
+    client = McpClient(load_client_config())
+    try:
+        summary = enqueue_pending(client, rows)
+    finally:
+        client.close()
+    if rows and not summary["queued"] + summary["duplicates"]:
+        # Nothing reached the server: say so instead of recording an ok scan.
+        raise JobFailed([f"no transcript queued: {summary['jobs'][-1].get('error')}"])
     return {"pending": len(rows), "queued": summary["queued"],
             "duplicates": summary["duplicates"], "errors": summary.get("errors", 0)}
 
@@ -316,8 +339,8 @@ def _client_of() -> str | None:
 
 
 def _needs_index(cfg) -> str | None:
-    # A client keeps a local neurostack.db for its checkpoint queue, so the
-    # file existing does not make this host the server.
+    # A client keeps a local neurostack.db for its own job_runs, so the file
+    # existing does not make this host the server.
     if server := _client_of():
         return f"index is served by {server}"
     if not cfg.db_path.exists():
@@ -331,6 +354,12 @@ def _needs_checkpoint_command(cfg) -> str | None:
     if not load_client_config().checkpoint_command:
         return "no checkpoint_command in client.toml"
     return None
+
+
+def _needs_queue_server(cfg) -> str | None:
+    # ponytail: checkpoint_command is read from client.toml on the server until
+    # #233 moves it into server config.
+    return _needs_index(cfg) or _needs_checkpoint_command(cfg)
 
 
 def _needs_vault(cfg) -> str | None:
@@ -372,15 +401,12 @@ for _job in (
         "Full index without summaries or triples"),
     Job("communities", Daily("04:30"), _communities, _needs_index,
         "Rebuild the community partition when it is stale"),
-    Job("checkpoint-worker", Every(1),
-        _work_queue("checkpoint", QueueLimits(cap_per_day=CHECKPOINT_CAP_PER_DAY,
-                                              stale_minutes=30, concurrency=1)),
-        _needs_checkpoint_command, "Run one queued /save checkpoint"),
-    Job("harvest-worker", Every(5),
-        _work_queue("harvest", QueueLimits(cap_per_day=100, stale_minutes=45)),
-        _needs_checkpoint_command, "Harvest one queued transcript through checkpoint_command"),
+    Job("checkpoint-worker", Every(1), _work_queue("checkpoint", LIMITS["checkpoint"]),
+        _needs_queue_server, "Run one uploaded /save checkpoint"),
+    Job("harvest-worker", Every(5), _work_queue("harvest", LIMITS["harvest"]),
+        _needs_queue_server, "Harvest one uploaded transcript through checkpoint_command"),
     Job("harvest-scan", Every(30), _harvest_scan, _needs_checkpoint_command,
-        "Queue transcripts with new messages for the harvest worker"),
+        "Upload transcripts with new messages to the server's harvest queue"),
 ):
     register(_job)
 

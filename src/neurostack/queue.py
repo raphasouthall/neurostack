@@ -13,7 +13,10 @@ Everything a scheduler needs is here instead:
 - ``finish`` records the outcome.
 - ``reap`` fails jobs whose runner went away.
 
-A scheduler then only calls ``neurostack queue …`` and reads JSON.
+A scheduler then only calls ``neurostack queue …`` and reads JSON. Clients on
+another machine reach the same functions through the ``queue_*`` MCP tools and
+upload the transcript with the job (issue #232); settling a job drops the
+transcript so finished rows stay small.
 """
 
 from __future__ import annotations
@@ -24,10 +27,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 LIVE = ("queued", "running")
-# The checkpoint queue's daily cap: /save requests shared with the model quota.
-# The n8n webhook passed this to `queue add`; the local enqueue and the
-# checkpoint-worker use it now.
-CHECKPOINT_CAP_PER_DAY = 50
+# Largest transcript a job may carry, decompressed. A client trims a longer
+# one to its newest records before uploading it (issue #232).
+TRANSCRIPT_CAP_BYTES = 10 * 1024 * 1024
 
 
 @dataclass
@@ -40,6 +42,14 @@ class QueueLimits:
     extra: dict = field(default_factory=dict)
 
 
+# The two queues clients feed, with the caps the n8n workflows used (#229).
+# The checkpoint cap is the /save budget shared with the model quota.
+LIMITS = {
+    "checkpoint": QueueLimits(cap_per_day=50, stale_minutes=30),
+    "harvest": QueueLimits(cap_per_day=100, stale_minutes=45),
+}
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -48,8 +58,15 @@ def _iso(moment: datetime) -> str:
     return moment.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _row(row: sqlite3.Row) -> dict:
+def _row(row: sqlite3.Row, transcript: bool = False) -> dict:
+    """A job as a dict. The transcript is only handed out on claim; every other
+    reply carries its length, so listings and reaps stay small."""
     out = dict(row)
+    text = out.pop("transcript", None)
+    if transcript:
+        out["transcript"] = text
+    else:
+        out["transcript_chars"] = len(text or "")
     try:
         out["payload"] = json.loads(out.get("payload") or "{}")
     except ValueError:
@@ -67,7 +84,8 @@ def _settled_today(conn: sqlite3.Connection, queue: str) -> int:
 
 
 def add(conn: sqlite3.Connection, queue: str, key: str,
-        payload: dict | None = None, limits: QueueLimits | None = None) -> dict:
+        payload: dict | None = None, limits: QueueLimits | None = None,
+        transcript: str | None = None) -> dict:
     """Queue one job. Idempotent per key while a job for it is still live."""
     limits = limits or QueueLimits()
     if not queue or not key:
@@ -87,9 +105,9 @@ def add(conn: sqlite3.Connection, queue: str, key: str,
                 "cap": limits.cap_per_day, "queue": queue, "key": key}
 
     cur = conn.execute(
-        "INSERT INTO job_queue (queue, key, payload, requested_at)"
-        " VALUES (?, ?, ?, ?)",
-        (queue, key, json.dumps(payload or {}), _iso(_now())),
+        "INSERT INTO job_queue (queue, key, payload, requested_at, transcript)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (queue, key, json.dumps(payload or {}), _iso(_now()), transcript),
     )
     conn.commit()
     waiting = conn.execute(
@@ -114,8 +132,8 @@ def reap(conn: sqlite3.Connection, queue: str,
     stale = [r for r in rows if not r["started_at"] or r["started_at"] < cutoff]
     for r in stale:
         conn.execute(
-            "UPDATE job_queue SET status = 'failed', finished_at = ?, output = ?"
-            " WHERE job_id = ?",
+            "UPDATE job_queue SET status = 'failed', finished_at = ?, output = ?,"
+            " transcript = NULL WHERE job_id = ?",
             (_iso(_now()), f"runner went stale after {limits.stale_minutes} minutes",
              r["job_id"]),
         )
@@ -179,7 +197,7 @@ def claim(conn: sqlite3.Connection, queue: str,
         " AND started_at = ? ORDER BY job_id DESC LIMIT 1",
         (queue, started),
     ).fetchone()
-    return {"claimed": True, "reaped": reaped, "job": _row(row)}
+    return {"claimed": True, "reaped": reaped, "job": _row(row, transcript=True)}
 
 
 def finish(conn: sqlite3.Connection, job_id: int, ok: bool,
@@ -191,8 +209,8 @@ def finish(conn: sqlite3.Connection, job_id: int, ok: bool,
     if row is None:
         raise ValueError(f"no job {job_id}")
     conn.execute(
-        "UPDATE job_queue SET status = ?, saved = ?, output = ?, finished_at = ?"
-        " WHERE job_id = ?",
+        "UPDATE job_queue SET status = ?, saved = ?, output = ?, finished_at = ?,"
+        " transcript = NULL WHERE job_id = ?",
         ("done" if ok else "failed", int(saved), output[:2000],
          _iso(_now()), job_id),
     )
