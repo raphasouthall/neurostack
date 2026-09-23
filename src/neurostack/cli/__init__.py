@@ -9,6 +9,8 @@ from pathlib import Path
 from .. import __version__
 from ..adapters import HARNESSES as ADAPTER_HARNESSES
 from ..config import get_config
+from .agent import JOBS as AGENT_JOBS
+from .agent import cmd_agent
 from .api import cmd_api, cmd_bundle, cmd_serve
 from .hook import EVENTS as HOOK_EVENTS
 from .hook import cmd_hook
@@ -735,6 +737,17 @@ def main():
         help="Restrict to vault subdirectory. Also reads NEUROSTACK_WORKSPACE",
     )
     p.set_defaults(func=cmd_promote)
+
+    # agent
+    p = sub.add_parser(
+        "agent",
+        help="Run a bundled Pi agent job that needs tools and reasoning (issue #217)",
+    )
+    p.add_argument("job", choices=sorted(AGENT_JOBS))
+    p.add_argument("--model", default=None, help="Override agent_model for this run")
+    p.add_argument("--cwd", default=None, help="Vault clone to work in (default vault_root)")
+    p.add_argument("--timeout", type=int, default=None, help="Seconds before the run aborts")
+    p.set_defaults(func=cmd_agent)
 
     # consolidate
     p = sub.add_parser(
