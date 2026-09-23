@@ -277,10 +277,17 @@ def _store_triples_for_note(
     content_hash: str,
     now: str,
     extracted: tuple[list[dict], list[str], list],
+    update_cooccurrence: bool = True,
 ) -> None:
     """The database half: replace a note's triples with `extracted`.
 
     Main-thread only; sqlite connections are not shared across threads.
+
+    `update_cooccurrence=False` skips the per-note pair upsert. A bulk
+    backfill rebuilds the whole table once at the end, and the incremental
+    path is O(entities^2) upserts into the largest table in the database, so
+    doing it per note during a backfill was the serial bottleneck: 8 network
+    workers moved the rate from 1 note per 3 minutes to only 2.
     """
     _has_vec = has_vec_index(conn)
     if _has_vec:
@@ -313,8 +320,8 @@ def _store_triples_for_note(
 
     log.info(f"  Extracted {len(triples)} triples from {note_path}")
 
-    # Update co-occurrence for entities in this note
-    upsert_cooccurrence_for_note(conn, note_path)
+    if update_cooccurrence:
+        upsert_cooccurrence_for_note(conn, note_path)
 
 
 def _record_triple_failed(conn, note_path: str, content_hash: str, error: str) -> None:
@@ -930,8 +937,9 @@ def backfill_triples(
     embed_url: str | None = None,
     summarize_url: str | None = None,
     workers: int | None = None,
-):
-    """Generate triples for all notes that don't have any yet.
+) -> int:
+    """Generate triples for all notes that don't have any yet. Returns the
+    number of notes that received triples.
 
     `workers` (default `config.triple_backfill_workers`) is how many notes are
     in flight at once on the network side: LLM extraction and embedding run on
@@ -962,7 +970,7 @@ def backfill_triples(
     total = len(rows)
     if total == 0:
         log.info("All notes already have triples.")
-        return
+        return 0
 
     log.info(f"Backfilling triples for {total} notes with {workers} worker(s)...")
 
@@ -1004,7 +1012,10 @@ def backfill_triples(
             if extracted is not None:
                 try:
                     now = datetime.now(timezone.utc).isoformat()
-                    _store_triples_for_note(conn, note_path, content_hash, now, extracted)
+                    _store_triples_for_note(
+                        conn, note_path, content_hash, now, extracted,
+                        update_cooccurrence=False,
+                    )
                     if extracted[0]:
                         success += 1
                         total_triples += len(extracted[0])
@@ -1019,6 +1030,17 @@ def backfill_triples(
 
     conn.commit()
     log.info(f"Backfill complete: {total_triples} triples from {success}/{total} notes.")
+
+    if success:
+        # One rebuild for the whole batch instead of an O(entities^2) upsert
+        # per note; the per-note path is skipped above for that reason.
+        from .cooccurrence import persist_cooccurrence
+
+        log.info("Rebuilding entity co-occurrence...")
+        n = persist_cooccurrence(conn)
+        conn.commit()
+        log.info(f"Co-occurrence rebuilt: {n} pairs.")
+    return success
 
 
 def reembed_all_chunks(
