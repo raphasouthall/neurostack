@@ -743,7 +743,12 @@ def main():
         "agent",
         help="Run a bundled Pi agent job that needs tools and reasoning (issue #217)",
     )
-    p.add_argument("job", choices=sorted(AGENT_JOBS))
+    p.add_argument("job", nargs="?", choices=sorted(AGENT_JOBS),
+                   help="Bundled job; omit when passing --prompt-file")
+    p.add_argument("--prompt-file", default=None,
+                   help="Run your own prompt file instead of a bundled job ('-' reads stdin)")
+    p.add_argument("--mode", default=None,
+                   help="Appended to the prompt as '## RUN MODE / MODE=<value>'")
     p.add_argument("--model", default=None, help="Override agent_model for this run")
     p.add_argument("--cwd", default=None, help="Vault clone to work in (default vault_root)")
     p.add_argument("--timeout", type=int, default=None, help="Seconds before the run aborts")
