@@ -13,6 +13,7 @@ from ..jobs import JOBS
 from .agent import JOBS as AGENT_JOBS
 from .agent import cmd_agent
 from .api import cmd_api, cmd_bundle, cmd_serve
+from .checkpoint_llm import cmd_checkpoint_llm
 from .hook import EVENTS as HOOK_EVENTS
 from .hook import cmd_hook
 from .index import cmd_backfill, cmd_export, cmd_index, cmd_reembed_chunks, cmd_watch
@@ -101,6 +102,15 @@ def main():
     p.add_argument("--index-llm-model", help="Index-time LLM model override")
     p.add_argument("--embed-url", help="Embedding endpoint override")
     p.add_argument("--summarize-url", help="LLM endpoint override")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="Accept every default without asking")
+    p.add_argument("--no-hooks", action="store_true",
+                   help="Do not install the omp or Claude Code hook")
+    p.add_argument("--no-schedule", action="store_true",
+                   help="Do not install the maintenance timer")
+    p.add_argument("--checkpoint", choices=["index-llm", "none"], default=None,
+                   help="AI that turns saved sessions into memories: the index LLM, or none "
+                        "(default: index-llm unless config.toml already sets checkpoint_command)")
     p.set_defaults(func=cmd_init)
 
     # scaffold
@@ -863,6 +873,11 @@ def main():
                    help="Output as JSON")
     p.set_defaults(func=cmd_jobs)
 
+    # checkpoint-llm (issue #236): the checkpoint_command `neurostack init` writes
+    p = sub.add_parser("checkpoint-llm",
+                       help="Answer a checkpoint prompt on stdin with the index LLM")
+    p.set_defaults(func=cmd_checkpoint_llm)
+
     # hook (issue #141): one harness event in on stdin, context or a block out
     p = sub.add_parser(
         "hook",
@@ -1023,6 +1038,8 @@ def main():
         "schedule",
         # run-due and jobs check their own requirements per job
         "run-due", "jobs",
+        # checkpoint-llm only calls the index LLM; a client host has no vault
+        "checkpoint-llm",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():
