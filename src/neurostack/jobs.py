@@ -247,8 +247,13 @@ def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
     transcript with the job (issue #232), so it is written to a temp file under
     `db_dir/tmp` and handed to `run_checkpoint`, the function `hook checkpoint
     --run` calls, as `transcript_path`. The file goes once the job is finished.
+    The model command, its timeout and the window cap come from the server's
+    config.toml (issue #233). client.toml, when this host has one, still names
+    the MCP endpoint the memories are saved through.
     """
     def body(cfg, conn) -> dict[str, Any]:
+        from dataclasses import replace
+
         from .cli.hook import run_checkpoint
         from .client import load_client_config
         from .queue import claim, finish
@@ -273,8 +278,14 @@ def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
                 tmp.parent.mkdir(parents=True, exist_ok=True)
                 tmp.write_text(job["transcript"], encoding="utf-8")
                 try:
+                    client_cfg = replace(
+                        load_client_config(),
+                        checkpoint_command=cfg.checkpoint_command,
+                        checkpoint_timeout_s=cfg.checkpoint_timeout_s,
+                        checkpoint_max_messages=cfg.checkpoint_max_messages,
+                    )
                     verdict = run_checkpoint({**payload, "transcript_path": str(tmp)},
-                                             harness or "cli", load_client_config())
+                                             harness or "cli", client_cfg)
                     data, text = verdict.data, verdict.text
                 except Exception as exc:  # cmd_hook would print this and leave no payload
                     data, text = None, f"{type(exc).__name__}: {exc}"
@@ -357,9 +368,11 @@ def _needs_checkpoint_command(cfg) -> str | None:
 
 
 def _needs_queue_server(cfg) -> str | None:
-    # ponytail: checkpoint_command is read from client.toml on the server until
-    # #233 moves it into server config.
-    return _needs_index(cfg) or _needs_checkpoint_command(cfg)
+    if reason := _needs_index(cfg):
+        return reason
+    if not cfg.checkpoint_command:
+        return "no checkpoint_command in config.toml"
+    return None
 
 
 def _needs_vault(cfg) -> str | None:

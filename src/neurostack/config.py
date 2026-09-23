@@ -104,6 +104,16 @@ class Config:
     # Names of the scheduled jobs this host runs, e.g. ["decay", "reindex"].
     # None runs every job whose requirements this host meets.
     jobs: list[str] | None = None
+    # The server's checkpoint-worker and harvest-worker (#233) pipe each
+    # checkpoint prompt through this shell command and save what it prints,
+    # e.g. `claude -p --model haiku`, or a script that posts to an
+    # OpenAI-style endpoint. Empty turns both workers off on this host.
+    checkpoint_command: str = ""
+    checkpoint_timeout_s: float = 300.0
+    # Largest window one server checkpoint summarizes, 0 for no cap. Same
+    # meaning as the client.toml key: a backlog transcript can exceed the
+    # model's context, so the window is cut and the cursor walks on.
+    checkpoint_max_messages: int = 0
     # Notes in flight at once during `backfill triples`. Only the network side
     # (LLM extraction + embedding) runs in parallel; every database write stays
     # on one thread. 1 is the old serial loop. 8 took a 741-note backfill from
@@ -240,12 +250,16 @@ def load_config() -> Config:
                     "index_llm_api_key", "index_llm_command", "embed_api_key",
                     "judge_url", "judge_model", "judge_api_key",
                     "agent_provider", "agent_model", "agent_api_key", "agent_base_url",
-                    "notify_command",
+                    "notify_command", "checkpoint_command",
                     "api_host", "api_key"):
             if key in data:
                 setattr(cfg, key, data[key])
         if "index_llm_command_timeout_s" in data:
             cfg.index_llm_command_timeout_s = float(data["index_llm_command_timeout_s"])
+        if "checkpoint_timeout_s" in data:
+            cfg.checkpoint_timeout_s = float(data["checkpoint_timeout_s"])
+        if "checkpoint_max_messages" in data:
+            cfg.checkpoint_max_messages = int(data["checkpoint_max_messages"])
         if "judge_concurrency" in data:
             cfg.judge_concurrency = int(data["judge_concurrency"])
         if "judge_timeout_s" in data:
@@ -329,6 +343,9 @@ def load_config() -> Config:
         "NEUROSTACK_AGENT_API_KEY": ("agent_api_key", str),
         "NEUROSTACK_AGENT_BASE_URL": ("agent_base_url", str),
         "NEUROSTACK_NOTIFY_COMMAND": ("notify_command", str),
+        "NEUROSTACK_CHECKPOINT_COMMAND": ("checkpoint_command", str),
+        "NEUROSTACK_CHECKPOINT_TIMEOUT_S": ("checkpoint_timeout_s", float),
+        "NEUROSTACK_CHECKPOINT_MAX_MESSAGES": ("checkpoint_max_messages", int),
         "NEUROSTACK_JUDGE_CONCURRENCY": ("judge_concurrency", int),
         "NEUROSTACK_JUDGE_TIMEOUT_S": ("judge_timeout_s", float),
         "NEUROSTACK_HARVEST_JUDGE_TYPES": ("harvest_judge_types", bool),
