@@ -1378,9 +1378,10 @@ def _unharvested(sessions: list[SessionFile]) -> list[SessionFile]:
 def pending_sessions(n_sessions: int = 50, provider: str | None = None) -> list[dict]:
     """Transcripts waiting to be harvested, newest first (issue #180).
 
-    A queue scheduler enqueues these. Sessions with a message watermark are
-    read in full to get a current count (issue #209); everything else is a
-    cheap state-file comparison.
+    A queue scheduler enqueues these. Pending is decided by the message
+    watermark where one exists (issue #209), else by mtime. Each pending
+    transcript is then read in full for `messages`, the count
+    `record_watermark` stores once the transcript is queued.
     """
     return [
         {
@@ -1388,9 +1389,21 @@ def pending_sessions(n_sessions: int = 50, provider: str | None = None) -> list[
             "provider": s.provider,
             "mtime": s.mtime,
             "session_id": s.session_id or s.path.stem,
+            "messages": len(extract_messages(s)),
         }
         for s in _unharvested(find_recent_sessions(n_sessions, provider=provider))
     ]
+
+
+def record_watermark(path: str, mtime: float, messages: int) -> None:
+    """Mark a transcript handled up to `messages`, so it stops showing as pending.
+
+    `harvest --pending --enqueue` calls this once the server has the
+    transcript (issue #232); the harvest itself then runs on the server.
+    """
+    state = _load_harvest_state()
+    state[path] = {"mtime": mtime, "messages": messages}
+    _save_harvest_state(state)
 
 
 def harvest_session_file(

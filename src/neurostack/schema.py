@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 
 # One row per queued job. The orchestrator (n8n, cron, anything) only calls
 # `neurostack queue`; dedupe, the daily cap, claiming and stale reaping live
@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS job_queue (
     output TEXT NOT NULL DEFAULT '',
     requested_at TEXT NOT NULL DEFAULT (datetime('now')),
     started_at TEXT,
-    finished_at TEXT
+    finished_at TEXT,
+    -- The session transcript a client uploaded with the job (issue #232),
+    -- cleared once the job settles.
+    transcript TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_job_queue_pick ON job_queue(queue, status, job_id);
 CREATE INDEX IF NOT EXISTS idx_job_queue_finished ON job_queue(queue, finished_at);
@@ -1324,6 +1327,15 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (29)")
         conn.commit()
         log.info("Migration to v29 complete.")
+
+    if current < 30:
+        log.info("Migrating schema v29 -> v30: job_queue.transcript (issue #232)...")
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(job_queue)")}
+        if "transcript" not in cols:
+            conn.execute("ALTER TABLE job_queue ADD COLUMN transcript TEXT")
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (30)")
+        conn.commit()
+        log.info("Migration to v30 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
