@@ -86,6 +86,10 @@ class Config:
     # LLM. Measured +7.9pp agreement on 191 held-out memories (p=0.039) and
     # 13x faster; falls back to the index LLM's own answer on any failure.
     harvest_judge_types: bool = True
+    # One extra index-LLM call per harvested session (#259) that reads the
+    # transcript tail and saves up to three session verdicts, the conclusions
+    # the per-message pass misses because they span several messages.
+    harvest_conclusions: bool = True
     # `neurostack agent <job>` (#217): the Pi agent that runs jobs needing tools
     # and reasoning. Provider and model are Pi's names. Sonnet 5 matched Opus 5
     # on placement in a 13-memory bake-off at 44% of the cost. An empty key
@@ -266,6 +270,8 @@ def load_config() -> Config:
             cfg.judge_timeout_s = float(data["judge_timeout_s"])
         if "harvest_judge_types" in data:
             cfg.harvest_judge_types = bool(data["harvest_judge_types"])
+        if "harvest_conclusions" in data:
+            cfg.harvest_conclusions = bool(data["harvest_conclusions"])
         if "triple_backfill_workers" in data:
             cfg.triple_backfill_workers = int(data["triple_backfill_workers"])
         for old, new in _LEGACY_LLM_KEYS.items():
@@ -349,6 +355,7 @@ def load_config() -> Config:
         "NEUROSTACK_JUDGE_CONCURRENCY": ("judge_concurrency", int),
         "NEUROSTACK_JUDGE_TIMEOUT_S": ("judge_timeout_s", float),
         "NEUROSTACK_HARVEST_JUDGE_TYPES": ("harvest_judge_types", bool),
+        "NEUROSTACK_HARVEST_CONCLUSIONS": ("harvest_conclusions", bool),
         "NEUROSTACK_TRIPLE_BACKFILL_WORKERS": ("triple_backfill_workers", int),
         "NEUROSTACK_SESSION_DIR": ("session_dir", Path),
         "NEUROSTACK_API_HOST": ("api_host", str),

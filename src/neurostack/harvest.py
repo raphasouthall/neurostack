@@ -885,30 +885,36 @@ _CLASSIFY_PROMPT_HEAD = (
 )
 
 
-def _parse_classify_reply(response: str, batch_len: int) -> dict[int, dict]:
-    """Map 0-based candidate index -> verdict object from the model's reply.
+def _json_items(response: str) -> list:
+    """The JSON array in a model reply, or [] when there is none.
 
-    Tolerates a code fence or stray prose around the array; ignores objects
-    with an out-of-range or missing ``n``. A bare object (what small models
-    return for a one-candidate batch, including every one-candidate retry)
-    counts as a one-element array.
+    Tolerates a code fence, stray prose or a ``<think>`` block around it. A
+    bare object (what small models return for a one-item answer) counts as a
+    one-element array.
     """
     response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL)
     start, end = response.find("["), response.rfind("]")
     if start < 0 or end <= start:
         start, end = response.find("{"), response.rfind("}")
         if start < 0 or end <= start:
-            return {}
+            return []
     try:
         items = json.loads(response[start:end + 1])
     except json.JSONDecodeError:
-        return {}
+        return []
     if isinstance(items, dict):
-        items = [items]
-    if not isinstance(items, list):
-        return {}
+        return [items]
+    return items if isinstance(items, list) else []
+
+
+def _parse_classify_reply(response: str, batch_len: int) -> dict[int, dict]:
+    """Map 0-based candidate index -> verdict object from the model's reply.
+
+    Ignores objects with an out-of-range or missing ``n``. A bare object
+    counts as a one-element array, which covers every one-candidate retry.
+    """
     verdicts: dict[int, dict] = {}
-    for item in items:
+    for item in _json_items(response):
         if not isinstance(item, dict):
             continue
         n = item.get("n")
@@ -987,14 +993,35 @@ def _judge_types(kept: list[dict]) -> None:
             c["entity_type"] = choice
 
 
-def _classify_batch(
-    batch: list[dict], index_llm_url: str, index_llm_model: str
-) -> dict[int, dict]:
-    """One classifier call. Raises on transport/HTTP failure."""
+def _index_llm_reply(
+    prompt: str, index_llm_url: str, index_llm_model: str, max_tokens: int
+) -> str:
+    """One index-LLM chat completion. Raises on transport/HTTP failure."""
     import httpx
 
     from .config import _auth_headers, get_config
 
+    resp = httpx.post(
+        f"{index_llm_url}/v1/chat/completions",
+        headers=_auth_headers(get_config().index_llm_api_key),
+        json={
+            "model": index_llm_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "reasoning_effort": "none",
+            "temperature": 0.1,
+            "max_tokens": max_tokens,
+        },
+        timeout=60.0,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+def _classify_batch(
+    batch: list[dict], index_llm_url: str, index_llm_model: str
+) -> dict[int, dict]:
+    """One classifier call. Raises on transport/HTTP failure."""
     numbered = []
     for i, c in enumerate(batch):
         role = c.get("role", "assistant")
@@ -1006,25 +1033,10 @@ def _classify_batch(
     prompt = _CLASSIFY_PROMPT_HEAD.format(
         n=len(batch), messages="\n---\n".join(numbered),
     )
-    resp = httpx.post(
-        f"{index_llm_url}/v1/chat/completions",
-        headers=_auth_headers(get_config().index_llm_api_key),
-        json={
-            "model": index_llm_model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            "reasoning_effort": "none",
-            "temperature": 0.1,
-            # One JSON object per candidate, each carrying a summary: 500
-            # truncated a 10-message answer mid-line (issue #117).
-            "max_tokens": 2000,
-        },
-        timeout=60.0,
-    )
-    resp.raise_for_status()
-    return _parse_classify_reply(
-        resp.json()["choices"][0]["message"]["content"], len(batch),
-    )
+    # One JSON object per candidate, each carrying a summary: 500 truncated a
+    # 10-message answer mid-line (issue #117).
+    reply = _index_llm_reply(prompt, index_llm_url, index_llm_model, 2000)
+    return _parse_classify_reply(reply, len(batch))
 
 
 def _llm_classify(
@@ -1110,6 +1122,94 @@ def _llm_classify(
         _judge_types(results)
 
     return results
+
+
+# Session verdicts (issue #259). The per-message pass sees one message at a
+# time, so a conclusion spread over several turns never became a memory: a
+# session saved "Root cause found, 4 of 4 flags are wrong" but not what was
+# wrong or what fixed it. This pass reads the session as a whole. The budget
+# is characters of rendered transcript, filled from the end, because the
+# verdict usually lands in the last few turns.
+_CONCLUSIONS_BUDGET = 16000
+_CONCLUSIONS_MESSAGE_CAP = 2000
+_MAX_CONCLUSIONS = 3
+
+_CONCLUSIONS_PROMPT = (
+    "You are reading an AI coding session transcript, oldest message first.\n\n"
+    "Reply with ONLY a JSON array of 0 to 3 objects. No preamble, no code "
+    "fence. Each object is:\n"
+    '{{"type": "<bug|decision|convention|learning|observation>", '
+    '"summary": "<one or two sentences>"}}\n\n'
+    "Return only the conclusions the session reached: a root cause found, a "
+    "fix applied, or a decision made. Combine what several messages "
+    "established into one statement of the final outcome. Each summary must "
+    "make sense on its own months later, so name the concrete things "
+    "involved: devices, files, scripts, settings, values.\n"
+    "Never return a fragment or an intermediate finding, a progress note, an "
+    "open question, or a restatement of the task. A session that reached no "
+    "conclusion gets [], and that is a normal answer.\n\n"
+    "Example:\n"
+    "(assistant) Root cause found: all 3 failing requests hit the same timeout.\n"
+    "(user) Which timeout?\n"
+    "(assistant) The ingress in deploy/ingress.yaml cuts requests at 30s. "
+    "Raised it to 120s and the 502s stopped.\n"
+    '-> [{{"type": "bug", "summary": "The 502s were the 30s ingress timeout '
+    'in deploy/ingress.yaml; raising it to 120s fixed them"}}]\n\n'
+    "Transcript:\n{transcript}\n\nAnswer:"
+)
+
+
+def _conclusions_transcript(messages: list[Message]) -> list[str]:
+    """``(role) text`` lines in order, dropping the oldest past the budget."""
+    lines: list[str] = []
+    used = 0
+    for msg in reversed(messages):
+        if msg.role not in ("user", "assistant") or not msg.text:
+            continue
+        if msg.role == "user" and msg.text.startswith("<"):
+            continue
+        line = f"({msg.role}) {msg.text[:_CONCLUSIONS_MESSAGE_CAP]}"
+        used += len(line)
+        if used > _CONCLUSIONS_BUDGET:
+            break
+        lines.append(line)
+    return lines[::-1]
+
+
+def _session_conclusions(
+    messages: list[Message], index_llm_url: str, index_llm_model: str
+) -> list[dict]:
+    """Zero to three session verdicts, shaped like `_llm_classify` keepers.
+
+    Raises on transport/HTTP failure; the caller decides what that costs.
+    Under two messages there is nothing to combine, so no call is made.
+    """
+    lines = _conclusions_transcript(messages)
+    if len(lines) < 2:
+        return []
+    prompt = _CONCLUSIONS_PROMPT.format(transcript="\n---\n".join(lines))
+    reply = _index_llm_reply(prompt, index_llm_url, index_llm_model, 800)
+
+    conclusions = []
+    for item in _json_items(reply)[:_MAX_CONCLUSIONS]:
+        if not isinstance(item, dict):
+            continue
+        summary = str(item.get("summary", "")).strip()
+        if not summary:
+            continue
+        etype = str(item.get("type", "")).strip()
+        conclusions.append({
+            "text": summary,
+            "summary": summary,
+            "entity_type": etype if etype in _VALID_TYPES else "observation",
+            "session_verdict": True,
+        })
+
+    from .config import get_config
+
+    if get_config().harvest_judge_types:
+        _judge_types(conclusions)
+    return conclusions
 
 
 # Cap on a when-error: value. Error lines run long; the match is a substring,
@@ -1216,6 +1316,17 @@ def _harvest_messages(
             c["summary"] = _make_summary(c["text"])
             classified.append(c)
 
+    # Session verdicts go last, so the per-message keepers are already in the
+    # DB when a verdict that repeats one of them reaches the dedup check. A
+    # failed pass costs the verdicts and nothing else.
+    if use_llm and cfg.harvest_conclusions:
+        try:
+            classified += _session_conclusions(
+                messages, cfg.index_llm_url, cfg.index_llm_model,
+            )
+        except Exception as exc:
+            log.warning("harvest: session conclusions failed: %s", exc)
+
     # Save classified insights
     for item in classified:
         summary = item.get("summary", _make_summary(item["text"]))
@@ -1229,6 +1340,8 @@ def _harvest_messages(
             continue
 
         tags = _extract_tags(item["text"])
+        if item.get("session_verdict"):
+            tags.append("session-verdict")
         # A model-emitted trigger becomes a when-* tag so the memory surfaces
         # the next time the same tool call or error happens (issue #135).
         trigger = _trigger_tag(item.get("trigger"))
