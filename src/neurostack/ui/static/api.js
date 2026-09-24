@@ -1,18 +1,13 @@
-let prompted = false;
-
-// GET /api/<path> as JSON. On 401 the user is asked once per page load for the
-// key; a request whose key has since changed retries with the new one.
-export async function api(path) {
-  const key = localStorage.getItem('ns_api_key');
-  const res = await fetch(`/api/${path}`, key ? { headers: { Authorization: `Bearer ${key}` } } : {});
-  if (res.status === 401) {
-    if (!prompted) {
-      prompted = true;
-      const entered = window.prompt('NeuroStack API key');
-      if (entered) localStorage.setItem('ns_api_key', entered);
-    }
-    if (localStorage.getItem('ns_api_key') !== key) return api(path);
-  }
+// GET /api/<path> as JSON, or POST `body` when given. The session cookie rides
+// along; a 401 outside the login call tells the app to show the login page.
+export async function api(path, body) {
+  const res = await fetch(`/api/${path}`, body === undefined ? { credentials: 'same-origin' } : {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401 && path !== 'login') window.dispatchEvent(new Event('ns-auth'));
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
   return json;

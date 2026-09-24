@@ -4,6 +4,7 @@
 
 ### Added
 
+- **#251 — dashboard login.** `neurostack ui` on a non-localhost address now shows a username and password login instead of asking for `api_key`. Manage users with `neurostack ui user add|remove|list`; they live in `ui-users.json` beside the database as scrypt hashes (mode 600). Signing in sets an HttpOnly, SameSite=Strict session cookie valid for 30 days, and changing or removing a user signs their sessions out. The bearer `api_key` path is gone from the dashboard; `neurostack api` keeps its own.
 - **#241 — `neurostack ui` web dashboard.** A read-only dashboard served by the stdlib (`src/neurostack/ui/server.py`) from static ES modules, with no build step and no new Python dependency. Pages: Overview, Automations (the `run-due` registry, runs and queues), Graph (force-graph, top notes by PageRank, note detail) and Memories. Data comes from `src/neurostack/dashboard.py` on a per-request read-only connection; `vault_stats` now wraps `index_stats(conn)`. Non-loopback hosts require `api_key` and a bearer token on `/api/*`. Vendored: htm 3.1.1 with Preact (Apache-2.0/MIT) and force-graph 1.51.4 (MIT).
 
 ### Removed
