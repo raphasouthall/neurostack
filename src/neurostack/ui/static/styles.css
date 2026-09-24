@@ -140,17 +140,24 @@ main { flex: 1; min-width: 0; padding: 24px 28px; }
 .btn-primary { background: var(--black); border-color: var(--black); color: #fff; }
 .input {
   height: 32px;
-  padding: 0 12px 0 30px;
+  padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%239a9a95' stroke-width='1.5'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='M10.5 10.5L14 14'/%3E%3C/svg%3E") no-repeat 10px center / 14px;
+  background: #fff;
   font: inherit;
   color: var(--ink);
+}
+/* Only text fields get the magnifier; selects keep their native arrow. */
+input.input {
+  padding-left: 30px;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%239a9a95' stroke-width='1.5'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='M10.5 10.5L14 14'/%3E%3C/svg%3E") no-repeat 10px center / 14px;
 }
 .input:focus, .btn:focus-visible, .tab:focus-visible, .nav-item:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
 
 /* Stats strip */
 .stat-strip { display: flex; flex-wrap: wrap; }
+/* A strip placed straight in a card, not in a .card-body, needs the card padding. */
+.card > .stat-strip { padding: 16px; }
 .stat { padding: 0 20px; border-left: 1px solid var(--line); }
 .stat:first-child { padding-left: 0; border-left: 0; }
 .stat > :first-child { display: block; font-size: 12px; color: var(--faint); }

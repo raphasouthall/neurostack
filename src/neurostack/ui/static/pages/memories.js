@@ -5,7 +5,8 @@ import { api, fmtAgo, fmtNum } from '../api.js';
 document.head.insertAdjacentHTML('beforeend', `<style>
 .mem-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
 .mem-full { white-space: pre-wrap; cursor: pointer; }
-.mem-tag { display: inline-block; margin: 0 4px 2px 0; padding: 1px 6px; border: 1px solid #e8e8e5; border-radius: 6px; background: #f7f7f5; color: #6b6b66; font-size: 11px; }
+.mem-tags { display: flex; flex-wrap: wrap; gap: 2px 4px; min-width: 12em; }
+.mem-tag { padding: 1px 6px; border: 1px solid #e8e8e5; border-radius: 6px; background: #f7f7f5; color: #6b6b66; font-size: 11px; white-space: nowrap; }
 </style>`);
 
 const LIMITS = [50, 100, 250, 500];
@@ -89,10 +90,10 @@ export default function Page() {
                 onKeyDown=${(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle(m.id))}>
                 <td><div class=${open === m.id ? 'mem-full' : 'mem-clamp'}>${m.content}</div></td>
                 <td><span class="chip">${m.entity_type}</span></td>
-                <td title=${m.tags.join(', ')}>
+                <td title=${m.tags.join(', ')}><div class="mem-tags">
                   ${m.tags.slice(0, 3).map((t) => html`<span class="mem-tag">${t}</span>`)}
                   ${m.tags.length > 3 && html`<span class="mem-tag">+${m.tags.length - 3}</span>`}
-                </td>
+                </div></td>
                 <td><span class="sub" title=${m.workspace || ''}>${tail(m.workspace)}</span></td>
                 <td>${m.source_agent}</td>
                 <td title=${`${m.created_at} UTC`}>${fmtAgo(m.created_at)}</td>
