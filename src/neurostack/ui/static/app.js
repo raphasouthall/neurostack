@@ -1,4 +1,6 @@
 import { html, render } from './lib.js';
+import { api } from './api.js';
+import Login from './pages/login.js';
 
 const routes = {
   '': './pages/overview.js',
@@ -7,10 +9,13 @@ const routes = {
   memories: './pages/memories.js',
 };
 const main = document.getElementById('app');
+const userBox = document.getElementById('user');
 let seq = 0;
+let signedOut = false;
 
 // The route is the hash path before any `?`; pages own their query string.
 async function route() {
+  if (signedOut) return;
   const name = location.hash.replace(/^#\/?/, '').split('?')[0];
   const key = name in routes ? name : '';
   for (const a of document.querySelectorAll('.nav-item')) {
@@ -27,5 +32,31 @@ async function route() {
   if (n === seq) render(html`<${Page} key=${key} />`, main);
 }
 
+// Any 401 lands here. Bumping seq drops a page import still in flight.
+function showLogin() {
+  signedOut = true;
+  seq++;
+  document.body.classList.add('signed-out');
+  render(html`<${Login} onDone=${start} />`, main);
+}
+
+async function signOut() {
+  await api('logout', {}).catch(() => {});
+  showLogin();
+}
+
+// A failed /api/me other than 401 still routes, so the page shows its own error.
+async function start() {
+  signedOut = false;
+  const me = await api('me').catch(() => ({ user: null }));
+  if (signedOut) return;
+  document.body.classList.remove('signed-out');
+  render(me.user && html`
+    <span class="sub" title=${me.user}>${me.user}</span>
+    <button class="btn" onClick=${signOut}>Sign out</button>`, userBox);
+  route();
+}
+
+addEventListener('ns-auth', showLogin);
 addEventListener('hashchange', route);
-route();
+start();

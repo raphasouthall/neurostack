@@ -1,18 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""The `neurostack ui` HTTP server: routing, errors, static files, auth (issue #243)."""
+"""The `neurostack ui` HTTP server: routing, errors, static files, login (issues #243, #251)."""
 
+import base64
 import json
 import sqlite3
 import sys
 import threading
 import urllib.error
 import urllib.request
+from http.cookies import SimpleCookie
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
 import neurostack
+from neurostack.ui import auth, server
 from neurostack.ui.server import make_server
 
 
@@ -44,8 +47,9 @@ def calls(monkeypatch):
 
 
 @pytest.fixture
-def start(tmp_path):
+def start(tmp_path, monkeypatch):
     """Start a server on port 0 in a thread and return its base URL."""
+    monkeypatch.setattr(server, "_FAIL_DELAY", 0)
     static = tmp_path / "static"
     static.mkdir()
     (static / "index.html").write_text("<h1>hi</h1>")
@@ -56,8 +60,8 @@ def start(tmp_path):
     sqlite3.connect(db).execute("CREATE TABLE notes (path TEXT)").connection.close()
     servers = []
 
-    def run(host="127.0.0.1", api_key="", db_path=db):
-        httpd = make_server(SimpleNamespace(db_path=db_path, api_key=api_key),
+    def run(host="127.0.0.1", db_path=db):
+        httpd = make_server(SimpleNamespace(db_path=db_path, db_dir=tmp_path),
                             host, 0, static_dir=static)
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         servers.append(httpd)
@@ -69,8 +73,8 @@ def start(tmp_path):
         httpd.server_close()
 
 
-def get(url, method="GET", headers=None):
-    req = urllib.request.Request(url, method=method, headers=headers or {})
+def get(url, method="GET", headers=None, data=None):
+    req = urllib.request.Request(url, method=method, headers=headers or {}, data=data)
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.status, resp.headers, resp.read()
@@ -166,16 +170,95 @@ def test_static_files_are_served(start, path, ctype, body):
     assert (status, headers["Content-Type"], got) == (200, ctype, body)
 
 
-def test_non_loopback_host_needs_api_key(tmp_path):
-    with pytest.raises(ValueError, match="api_key"):
-        make_server(SimpleNamespace(db_path=tmp_path / "x.db", api_key=""), "0.0.0.0", 0)
+def login(base, username="ada", password="correct horse"):
+    body = json.dumps({"username": username, "password": password}).encode()
+    return get(base + "/api/login", "POST", {"Content-Type": "application/json"}, body)
 
 
-def test_non_loopback_api_needs_bearer(start, calls):
-    base = start(host="0.0.0.0", api_key="s3cret")
+def session(headers):
+    return {"Cookie": f"ns_session={SimpleCookie(headers['Set-Cookie'])['ns_session'].value}"}
 
+
+@pytest.fixture
+def cfg(tmp_path):
+    cfg = SimpleNamespace(db_dir=tmp_path)
+    auth.add_user(cfg, "ada", "correct horse")
+    return cfg
+
+
+def test_non_loopback_host_needs_a_user(tmp_path):
+    with pytest.raises(ValueError, match="neurostack ui user add"):
+        make_server(SimpleNamespace(db_path=tmp_path / "x.db", db_dir=tmp_path), "0.0.0.0", 0)
+
+
+@pytest.mark.parametrize("username, password", [("ada", "wrong pass"), ("bob", "correct horse")])
+def test_bad_login_is_401(start, cfg, username, password):
+    status, headers, body = login(start(host="0.0.0.0"), username, password)
+    assert (status, json.loads(body)) == (401, {"error": "wrong username or password"})
+    assert "Set-Cookie" not in headers
+
+
+def test_oversized_login_is_413(start, cfg):
+    base = start(host="0.0.0.0")
+    assert get(base + "/api/login", "POST", data=b"x" * 5000)[0] == 413
+
+
+def test_login_cookie_opens_the_api(start, calls, cfg):
+    base = start(host="0.0.0.0")
+    status, headers, body = login(base)
+    cookie = SimpleCookie(headers["Set-Cookie"])["ns_session"]
+
+    assert (status, json.loads(body)) == (200, {"user": "ada"})
+    assert cookie["httponly"] and cookie["samesite"] == "Strict"
     assert get(base + "/api/overview")[0] == 401
-    assert get(base + "/api/overview", headers={"Authorization": "Bearer wrong"})[0] == 401
-    assert get(base + "/api/overview", headers={"Authorization": "s3cret"})[0] == 401
-    assert get(base + "/api/overview", headers={"Authorization": "Bearer s3cret"})[0] == 200
+    assert get(base + "/api/me")[0] == 401
+    assert get(base + "/api/overview", headers=session(headers))[0] == 200
+    assert json.loads(get(base + "/api/me", headers=session(headers))[2]) == {"user": "ada"}
     assert get(base + "/")[0] == 200
+
+
+def test_expired_or_tampered_token_is_401(start, calls, cfg):
+    base = start(host="0.0.0.0")
+    token = auth.make_session(cfg, "ada", now=1000)
+    assert auth.check_session(cfg, token, now=1000 + auth.SESSION_TTL - 1) == "ada"
+    assert auth.check_session(cfg, token, now=1000 + auth.SESSION_TTL) is None
+
+    fresh = auth.make_session(cfg, "ada")
+    raw = base64.urlsafe_b64decode(fresh + "=" * (-len(fresh) % 4)).decode()
+    name, expiry, mac = raw.split("|")
+    # A later expiry under the old signature.
+    forged = base64.urlsafe_b64encode(f"{name}|{int(expiry) + 1}|{mac}".encode()).decode()
+    for bad in (token, forged, "garbage"):
+        assert get(base + "/api/overview", headers={"Cookie": f"ns_session={bad}"})[0] == 401
+    assert get(base + "/api/overview", headers={"Cookie": f"ns_session={fresh}"})[0] == 200
+
+
+@pytest.mark.parametrize("change", [
+    lambda cfg: auth.remove_user(cfg, "ada"),
+    lambda cfg: auth.add_user(cfg, "ada", "new password"),
+])
+def test_changing_the_user_ends_old_sessions(start, calls, cfg, change):
+    base = start(host="0.0.0.0")
+    cookie = session(login(base)[1])
+    assert get(base + "/api/overview", headers=cookie)[0] == 200
+    change(cfg)
+    assert get(base + "/api/overview", headers=cookie)[0] == 401
+
+
+def test_logout_clears_the_cookie(start, cfg):
+    status, headers, _ = get(start(host="0.0.0.0") + "/api/logout", "POST")
+    cookie = SimpleCookie(headers["Set-Cookie"])["ns_session"]
+    assert (status, cookie.value, cookie["max-age"]) == (200, "", "0")
+
+
+def test_loopback_needs_no_login(start, calls):
+    base = start()
+    assert json.loads(get(base + "/api/me")[2]) == {"user": None}
+    assert get(base + "/api/overview")[0] == 200
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+def test_login_files_are_private(cfg):
+    auth.make_session(cfg, "ada")
+    for name in ("ui-users.json", "ui-secret"):
+        assert (cfg.db_dir / name).stat().st_mode & 0o777 == 0o600

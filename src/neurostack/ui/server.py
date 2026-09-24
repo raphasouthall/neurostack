@@ -4,19 +4,23 @@
 
 Answers the dashboard's JSON API from `dashboard.py` over a read-only SQLite
 connection and serves the static frontend. It is stdlib only, so it runs on the
-base install without the FastAPI extra that `neurostack api` needs.
+base install without the FastAPI extra that `neurostack api` needs. On a
+non-loopback host the API needs a session cookie from `POST /api/login`.
 """
 
-import hmac
 import json
 import logging
 import mimetypes
 import socket
 import sqlite3
+import time
 import webbrowser
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
+
+from . import auth
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +29,14 @@ LOOPBACK = ("127.0.0.1", "::1", "localhost")
 # mimetypes reads the OS registry, which maps .js to text/plain on some Windows
 # installs and has no entry for .mjs on older Pythons.
 _TYPES = {".js": "text/javascript", ".mjs": "text/javascript"}
+COOKIE = "ns_session"
+_MAX_BODY = 4096
+# Seconds a failed login waits before answering, to slow password guessing.
+_FAIL_DELAY = 1.0
+
+
+def _cookie(token: str, max_age: int) -> str:
+    return f"{COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}"
 
 
 class _Error(Exception):
@@ -101,15 +113,63 @@ class _Handler(BaseHTTPRequestHandler):
     def _not_allowed(self):
         self._json(405, {"error": "method not allowed"}, [("Allow", "GET")])
 
-    do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _not_allowed
+    do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _not_allowed
+
+    def do_POST(self):
+        path = urlsplit(self.path).path
+        if path not in ("/api/login", "/api/logout"):
+            return self._not_allowed()
+        try:
+            if path == "/api/logout":
+                self._json(200, {"user": None}, [("Set-Cookie", _cookie("", 0))])
+                return
+            name = self._login()
+            token = auth.make_session(self.server.cfg, name)
+            self._json(200, {"user": name}, [("Set-Cookie", _cookie(token, auth.SESSION_TTL))])
+        except _Error as exc:
+            self._json(exc.status, {"error": str(exc)})
+        except Exception as exc:
+            log.exception("ui request failed: %s", self.path)
+            self._json(500, {"error": str(exc)})
+
+    def _login(self) -> str:
+        try:
+            size = int(self.headers.get("Content-Length", 0))
+            if size < 0:
+                raise ValueError
+        except ValueError:
+            raise _Error(400, "bad Content-Length") from None
+        if size > _MAX_BODY:
+            raise _Error(413, "body too large")
+        try:
+            body = json.loads(self.rfile.read(size))
+            name, password = body["username"], body["password"]
+            if not isinstance(name, str) or not isinstance(password, str):
+                raise TypeError
+        except (ValueError, KeyError, TypeError):
+            raise _Error(400, "body must be JSON {username, password}") from None
+        if not auth.verify(self.server.cfg, name, password):
+            time.sleep(_FAIL_DELAY)
+            raise _Error(401, "wrong username or password")
+        return name
+
+    def _user(self):
+        """The user the request's session cookie signs in, or None."""
+        jar = SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie", ""))
+        except CookieError:
+            return None
+        morsel = jar.get(COOKIE)
+        return auth.check_session(self.server.cfg, morsel.value) if morsel else None
 
     def _api(self, url):
         srv = self.server
-        if srv.api_key:
-            auth = self.headers.get("Authorization", "")
-            token = auth[len("Bearer "):] if auth.startswith("Bearer ") else ""
-            if not hmac.compare_digest(token.encode(), srv.api_key.encode()):
-                raise _Error(401, "missing or invalid bearer token")
+        user = None if srv.loopback else self._user()
+        if not srv.loopback and not user:
+            raise _Error(401, "sign in first")
+        if url.path == "/api/me":
+            return {"user": user}
         db = Path(srv.cfg.db_path)
         if not db.exists():
             raise _Error(503, "no index yet, run neurostack index")
@@ -155,17 +215,17 @@ class _V6Server(ThreadingHTTPServer):
 def make_server(cfg, host: str, port: int, static_dir=None) -> ThreadingHTTPServer:
     """Bind the dashboard server without starting it.
 
-    Raises ValueError when a non-loopback host has no api_key to guard the API.
+    Raises ValueError when a non-loopback host has no user to sign in as.
     """
     loopback = host in LOOPBACK
-    if not loopback and not cfg.api_key:
+    if not loopback and not auth.list_users(cfg):
         raise ValueError(
-            f"neurostack ui on {host} needs api_key set (config.toml or "
-            "NEUROSTACK_API_KEY); only loopback hosts run without one"
+            f"neurostack ui on {host} needs a login; create one with "
+            "`neurostack ui user add NAME`. Only loopback hosts run without one"
         )
     httpd = (_V6Server if ":" in host else ThreadingHTTPServer)((host, port), _Handler)
     httpd.cfg = cfg
-    httpd.api_key = "" if loopback else cfg.api_key
+    httpd.loopback = loopback
     httpd.static_dir = Path(static_dir or STATIC_DIR).resolve()
     return httpd
 

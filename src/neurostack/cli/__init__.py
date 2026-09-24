@@ -60,7 +60,7 @@ from .setup import (
     cmd_update,
 )
 from .triggers import cmd_triggers
-from .ui import cmd_ui
+from .ui import cmd_ui, cmd_ui_user
 from .utils import _handle_error
 from .writeback import cmd_migrate, cmd_sync
 
@@ -346,6 +346,17 @@ def main():
     p.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
     p.add_argument("--open", action="store_true", help="Open the dashboard in a browser")
     p.set_defaults(func=cmd_ui)
+    # Bare `neurostack ui` serves; `ui user ...` manages logins (issue #251).
+    p_user = p.add_subparsers().add_parser(
+        "user", help="Manage dashboard logins for non-loopback hosts")
+    user_sub = p_user.add_subparsers(dest="user_cmd", required=True)
+    p_add = user_sub.add_parser("add", help="Create a user or change their password")
+    p_add.add_argument("name")
+    p_add.add_argument("--password-stdin", action="store_true",
+                       help="Read the password from stdin instead of prompting")
+    user_sub.add_parser("remove", help="Remove a user and end their sessions").add_argument("name")
+    user_sub.add_parser("list", help="List users")
+    p_user.set_defaults(func=cmd_ui_user)
 
     # sessions
     p = sub.add_parser(
