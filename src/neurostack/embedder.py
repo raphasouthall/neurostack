@@ -33,12 +33,23 @@ def get_embedding(
     payload = {"model": model, "input": text}
     if cfg.embed_dim:
         payload["dimensions"] = cfg.embed_dim
-    resp = httpx.post(
-        f"{base_url}/v1/embeddings",
-        headers=_auth_headers(cfg.embed_api_key),
-        json=payload,
-        timeout=300.0,
-    )
+    # Single embeds sit on interactive paths (vault_remember, memory search)
+    # behind a 30 s MCP client timeout, so a hung call gets a short deadline
+    # and one retry instead of the 300 s batch timeout.
+    for attempt in (1, 2):
+        try:
+            resp = httpx.post(
+                f"{base_url}/v1/embeddings",
+                headers=_auth_headers(cfg.embed_api_key),
+                json=payload,
+                timeout=cfg.embed_timeout_s,
+            )
+            if resp.status_code == 429 or resp.status_code >= 500:
+                resp.raise_for_status()
+            break
+        except (httpx.TransportError, httpx.HTTPStatusError):
+            if attempt == 2:
+                raise
     resp.raise_for_status()
     data = resp.json()
     return np.array(data["data"][0]["embedding"], dtype=np.float32)
