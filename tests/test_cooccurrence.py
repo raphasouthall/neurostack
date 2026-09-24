@@ -5,6 +5,7 @@ from neurostack.cooccurrence import (
     buffer_reinforcement,
     flush_reinforcement,
     get_cooccurrence_stats,
+    note_entities,
     persist_cooccurrence,
     reinforce_cooccurrence,
     reinforcement_buffer_size,
@@ -89,6 +90,7 @@ def test_upsert_re_upsert_same_note_recalculates(in_memory_db):
     upsert_cooccurrence_for_note(conn, "note1.md")
 
     # Simulate content change: remove Charlie triple, add Delta
+    old = note_entities(conn, "note1.md")
     conn.execute(
         "DELETE FROM triples WHERE note_path = 'note1.md' AND object = 'Charlie'"
     )
@@ -98,7 +100,7 @@ def test_upsert_re_upsert_same_note_recalculates(in_memory_db):
     )
     conn.commit()
 
-    upsert_cooccurrence_for_note(conn, "note1.md")
+    upsert_cooccurrence_for_note(conn, "note1.md", old)
 
     # Should have Alpha-Beta and Alpha-Delta (and Beta-Delta)
     rows = conn.execute(
@@ -154,6 +156,29 @@ def test_upsert_only_touches_affected_pairs(in_memory_db):
     ).fetchone()
     assert gamma_delta is not None
     assert gamma_delta["weight"] == 1.0
+
+
+def test_upsert_leaves_pairs_outside_the_note_alone(in_memory_db):
+    """A hub entity's other pairs are not recomputed when one note changes."""
+    conn = in_memory_db
+    _insert_triple(conn, "hub.md", "Alpha", "X")
+    _insert_triple(conn, "hub.md", "Alpha", "Y")
+    upsert_cooccurrence_for_note(conn, "hub.md")  # AX, AY, XY
+    conn.execute("UPDATE entity_cooccurrence SET last_seen = 'untouched'")
+    conn.commit()
+
+    _insert_triple(conn, "note1.md", "Alpha", "Beta")
+    result = upsert_cooccurrence_for_note(conn, "note1.md")
+
+    assert result == 1
+    rows = {
+        (r["entity_a"], r["entity_b"]): r["last_seen"]
+        for r in conn.execute("SELECT entity_a, entity_b, last_seen FROM entity_cooccurrence")
+    }
+    assert rows[("X", "Y")] == "untouched"
+    assert rows[("Alpha", "X")] == "untouched"
+    assert rows[("Alpha", "Beta")] != "untouched"
+    assert ("Beta", "X") not in rows
 
 
 def test_three_entities_one_note(in_memory_db):
@@ -497,11 +522,12 @@ def test_upsert_keeps_reinforced_pair_when_structure_vanishes(in_memory_db):
     reinforce_cooccurrence(conn, [("Alpha", "Beta")])
 
     # note1 rewritten: Beta and Ceta gone, Zeta appears
+    old = note_entities(conn, "note1.md")
     conn.execute("DELETE FROM triples WHERE note_path = 'note1.md'")
     conn.commit()
     _insert_triple(conn, "note1.md", "Alpha", "Zeta")
 
-    upsert_cooccurrence_for_note(conn, "note1.md")
+    upsert_cooccurrence_for_note(conn, "note1.md", old)
 
     rows = {
         (r["entity_a"], r["entity_b"]): (r["weight"], r["reinforcement"])

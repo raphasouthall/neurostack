@@ -15,7 +15,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .chunker import parse_note
-from .cooccurrence import persist_cooccurrence, upsert_cooccurrence_for_note
+from .cooccurrence import note_entities, persist_cooccurrence, upsert_cooccurrence_for_note
 from .embedder import HAS_NUMPY, build_chunk_context, embedding_to_blob, get_embeddings_batch
 from .graph import build_graph, compute_pagerank
 from .schema import DB_PATH, get_db
@@ -290,6 +290,7 @@ def _store_triples_for_note(
     workers moved the rate from 1 note per 3 minutes to only 2.
     """
     _has_vec = has_vec_index(conn)
+    old_entities = note_entities(conn, note_path) if update_cooccurrence else set()
     if _has_vec:
         delete_triple_vecs(conn, note_path)
     conn.execute("DELETE FROM triples WHERE note_path = ?", (note_path,))
@@ -321,7 +322,7 @@ def _store_triples_for_note(
     log.info(f"  Extracted {len(triples)} triples from {note_path}")
 
     if update_cooccurrence:
-        upsert_cooccurrence_for_note(conn, note_path)
+        upsert_cooccurrence_for_note(conn, note_path, old_entities)
 
 
 def _record_triple_failed(conn, note_path: str, content_hash: str, error: str) -> None:
@@ -521,6 +522,7 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
 
     # Delete old triples and insert new ones
     if triples:
+        old_entities = note_entities(conn, parsed.path)
         if _has_vec:
             delete_triple_vecs(conn, parsed.path)
         conn.execute("DELETE FROM triples WHERE note_path = ?", (parsed.path,))
@@ -544,7 +546,7 @@ def _write_note_results(conn, result: dict, _has_vec: bool) -> None:
                 triple_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                 upsert_triple_vec(conn, triple_id, emb_blob)
 
-        upsert_cooccurrence_for_note(conn, parsed.path)
+        upsert_cooccurrence_for_note(conn, parsed.path, old_entities)
 
     # Record or clear the triple-extraction retry row (#28). Only when extraction
     # was actually attempted, so skip_triples runs don't erase a pending retry.
