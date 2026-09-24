@@ -70,6 +70,14 @@ https://github.com/preactjs/preact
 
 ===============================================================================
 
+shadcn/ui - MIT
+Copyright 2023, shadcn.
+https://github.com/shadcn-ui/ui
+Component API, variants and token names are ported to Preact + htm in
+src/neurostack/ui/static/components/ui.js.
+
+===============================================================================
+
 force-graph - MIT
 Copyright 2017, Vasco Asturiano.
 https://github.com/vasturiano/force-graph
