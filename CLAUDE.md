@@ -127,7 +127,7 @@ Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurost
 |---------|-------------|
 | `neurostack serve` | Start MCP server. `--transport stdio\|sse\|http`, `--host`, `--port` |
 | `neurostack api` | Start OpenAI-compatible HTTP API. `--host`, `--port` |
-| `neurostack ui` | Read-only web dashboard (automations, stats, graph, memories) on 127.0.0.1:8765. `--host`, `--port`, `--open`. Non-loopback needs `api_key` |
+| `neurostack ui` | Read-only web dashboard (automations, stats, graph, memories) on 127.0.0.1:8765. `--host`, `--port`, `--open`. A non-loopback host needs a login, so run `neurostack ui user add NAME` (`--password-stdin`) first; `ui user list` and `ui user remove NAME` manage them |
 
 ## MCP Tools (27 tools)
 
