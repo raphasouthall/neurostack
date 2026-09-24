@@ -1,6 +1,6 @@
 [project]
 name = "neurostack"
-version = "0.39.3"
+version = "0.40.0"
 description = "Local retrieval layer and optimizer for your Markdown knowledge base. CLI + MCP server: ranked evidence for any AI client, stale-note detection, session harvesting."
 readme = "README.md"
 license = "Apache-2.0"
