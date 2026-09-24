@@ -93,6 +93,11 @@ class Config:
     # transcript tail and saves up to three session verdicts, the conclusions
     # the per-message pass misses because they span several messages.
     harvest_conclusions: bool = True
+    # After a /save checkpoint succeeds, the server worker also runs the
+    # vault-save Pi agent (#268) on the same transcript, which patches vault
+    # notes in place. Off by default: it needs Node and an agent key, and it
+    # commits and pushes the vault.
+    vault_save_on_checkpoint: bool = False
     # `neurostack agent <job>` (#217): the Pi agent that runs jobs needing tools
     # and reasoning. Provider and model are Pi's names. Sonnet 5 matched Opus 5
     # on placement in a 13-memory bake-off at 44% of the cost. An empty key
@@ -275,6 +280,8 @@ def load_config() -> Config:
             cfg.harvest_judge_types = bool(data["harvest_judge_types"])
         if "harvest_conclusions" in data:
             cfg.harvest_conclusions = bool(data["harvest_conclusions"])
+        if "vault_save_on_checkpoint" in data:
+            cfg.vault_save_on_checkpoint = bool(data["vault_save_on_checkpoint"])
         if "triple_backfill_workers" in data:
             cfg.triple_backfill_workers = int(data["triple_backfill_workers"])
         for old, new in _LEGACY_LLM_KEYS.items():
@@ -362,6 +369,7 @@ def load_config() -> Config:
         "NEUROSTACK_JUDGE_TIMEOUT_S": ("judge_timeout_s", float),
         "NEUROSTACK_HARVEST_JUDGE_TYPES": ("harvest_judge_types", bool),
         "NEUROSTACK_HARVEST_CONCLUSIONS": ("harvest_conclusions", bool),
+        "NEUROSTACK_VAULT_SAVE_ON_CHECKPOINT": ("vault_save_on_checkpoint", bool),
         "NEUROSTACK_TRIPLE_BACKFILL_WORKERS": ("triple_backfill_workers", int),
         "NEUROSTACK_SESSION_DIR": ("session_dir", Path),
         "NEUROSTACK_API_HOST": ("api_host", str),

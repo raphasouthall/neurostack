@@ -20,6 +20,7 @@ from typing import Any
 AGENT_DIR = Path(__file__).resolve().parent.parent / "agent"
 JOBS = {
     "promotion": {"timeout_s": 2700, "thinking": "medium"},
+    "vault-save": {"timeout_s": 1800, "thinking": "medium"},
 }
 # A prompt file you supply runs with these limits; the job name only picks a
 # bundled prompt, so personal jobs stay out of the package.
@@ -102,24 +103,54 @@ def run_agent(cfg, prompt: str, spec: dict[str, Any], *, cwd: str, model: str | 
                           stdout=sys.stdout).returncode
 
 
+def vault_save(cfg, transcript: Path, fmt: str, *, cwd: str | None = None,
+               model: str | None = None, timeout: int | None = None) -> int:
+    """Run the vault-save job on one session transcript (JSONL) and return its exit code.
+
+    The transcript is rendered to the flat text the checkpoint prompt uses, with
+    tool output clipped, and written next to the database. The agent reads it in
+    pages, so a long session never has to fit in the prompt.
+    """
+    from .hook import _checkpoint_body, parse_transcript
+
+    messages = parse_transcript(transcript.read_text(encoding="utf-8", errors="replace"), fmt)
+    if not messages:
+        raise AgentError(f"no messages in {transcript}")
+    tmp = cfg.db_dir / "tmp" / f"vault-save-{os.getpid()}.txt"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(_checkpoint_body(messages), encoding="utf-8")
+    try:
+        prompt = job_prompt("vault-save") + f"\n\nTranscript file: {tmp}\n"
+        return run_agent(cfg, prompt, JOBS["vault-save"], cwd=cwd or str(cfg.vault_root),
+                         model=model, timeout=timeout)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def cmd_agent(args):
     from ..config import get_config
 
     cfg = get_config()
     if bool(args.job) == bool(args.prompt_file):
         sys.exit("neurostack agent: give a bundled job or --prompt-file, not both or neither")
-    if args.job:
-        spec = JOBS[args.job]
-        prompt = job_prompt(args.job)
-    else:
-        spec = CUSTOM
-        src = sys.stdin if args.prompt_file == "-" else open(args.prompt_file, encoding="utf-8")
-        with src:
-            prompt = src.read()
-    if args.mode:
-        prompt += f"\n\n## RUN MODE\nMODE={args.mode}\n"
+    if (args.job == "vault-save") != bool(args.transcript):
+        sys.exit("neurostack agent: --transcript goes with vault-save, and vault-save needs it")
     cwd = str(Path(args.cwd or cfg.vault_root).expanduser())
     try:
+        if args.job == "vault-save":
+            code = vault_save(cfg, Path(args.transcript).expanduser(), args.format, cwd=cwd,
+                              model=args.model, timeout=args.timeout)
+            sys.exit(code)
+        if args.job:
+            spec = JOBS[args.job]
+            prompt = job_prompt(args.job)
+        else:
+            spec = CUSTOM
+            src = sys.stdin if args.prompt_file == "-" else open(args.prompt_file, encoding="utf-8")
+            with src:
+                prompt = src.read()
+        if args.mode:
+            prompt += f"\n\n## RUN MODE\nMODE={args.mode}\n"
         code = run_agent(cfg, prompt, spec, cwd=cwd, model=args.model, timeout=args.timeout)
     except AgentError as exc:
         sys.exit(f"neurostack agent: {exc}")

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- `neurostack agent vault-save --transcript PATH` runs a bundled Pi agent job on one whole session transcript (#268). It patches the notes the session touched, rewrites stale lines in place instead of appending dated sections, creates at most 3 notes, and saves identifiers through a new `memory_add` agent tool. Setting `vault_save_on_checkpoint = true` makes the server checkpoint worker run it after each successful `/save`. Promotion stays as the backstop for memories no session save covered.
+
 ### Fixed
 
 - **Reindex held the database write lock for minutes.** After a note's triples changed, `upsert_cooccurrence_for_note` widened the note's entities to every entity already paired with them. On the live vault that turned 51 entities into 10,573 and 55.9M pairs, computed and written inside the index write transaction, so `vault_remember`, `run-due` and other writers waited out the 60 s busy timeout and failed. It now recomputes only pairs inside the note's entities before and after the rewrite, which are the only pairs a one-note change can alter. Callers pass the old entities through the new `old_entities` argument.
