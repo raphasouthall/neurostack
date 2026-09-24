@@ -216,7 +216,7 @@ A memory row stores its content, tags, type, workspace, source agent, embedding 
 
 ### Read mechanics
 
-1. **Hybrid search.** NeuroStack scores each chunk as 0.3 × keyword score plus 0.7 × embedding similarity. It then adds a convergence bonus, a 1.4× boost for the caller's context, usage hotness and co-occurrence, and demotes notes flagged as stale.
+1. **Hybrid search.** NeuroStack runs keyword search and embedding search separately, takes the top 50 chunks from each, and merges the two lists by reciprocal rank (k = 60). A chunk found by only one search still competes. It then adds a convergence bonus, a 1.4× boost for the caller's context, usage hotness and co-occurrence, and demotes notes flagged as stale.
 2. **Diversity.** Results keep one chunk per note, and similar notes suppress each other, so one long note cannot fill the result list.
 3. **Tiered depth.** A client asks for triples (about 15 tokens), summaries (about 75) or full notes (about 300), or lets `auto` escalate only when the cheaper tier misses.
 4. **Context assembly.** `vault_context` splits its token budget into 40% memories, 20% triples, 30% summaries and 10% sessions, so no single source crowds out the rest.

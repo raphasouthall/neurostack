@@ -63,6 +63,12 @@ MAX_QUERY_ENTITIES = 50
 # note's associations are the ones that survive the cap.
 MAX_RESULT_ENTITIES = 40
 
+# Reciprocal rank fusion: each channel (FTS5, vector) contributes 1/(RRF_K + rank)
+# for its top RRF_POOL chunks. k=60 is the standard constant from Cormack et al.
+RRF_K = 60
+RRF_POOL = 50
+
+
 
 def classify_retrieval_error(
     top_cosine: float,
@@ -798,7 +804,7 @@ def hybrid_search(
     Hybrid search combining FTS5 and semantic similarity.
 
     Modes:
-    - "hybrid": FTS5 pre-filters top 50, then cosine-reranks
+    - "hybrid": FTS5 top 50 and vector top 50 fused by reciprocal rank
     - "semantic": Pure embedding search
     - "keyword": Pure FTS5 search
 
@@ -858,34 +864,44 @@ def hybrid_search(
         sem_results = semantic_search(conn, query_embedding, limit=top_k, workspace=workspace)
         return _to_search_results(conn, sem_results[:top_k])
 
-    # Hybrid: FTS5 pre-filter + semantic rerank
-    fts_results = fts_search(conn, query, limit=50, workspace=workspace)
+    # Hybrid: FTS5 and vector search run as separate channels, fused by
+    # reciprocal rank. A paraphrased query shares few words with the note, so an
+    # FTS-only candidate pool misses it; the vector channel recovers it.
+    fts_results = fts_search(conn, query, limit=RRF_POOL, workspace=workspace)
+    sem_results = semantic_search(conn, query_embedding, limit=RRF_POOL, workspace=workspace)
 
-    if not fts_results:
-        # Fall back to pure semantic if no FTS matches
-        sem_results = semantic_search(conn, query_embedding, limit=top_k, workspace=workspace)
-        return _to_search_results(conn, sem_results[:top_k])
+    fused: dict[int, float] = {}
+    fts_rank: dict[int, int] = {}
+    for channel, ranks in ((fts_results, fts_rank), (sem_results, {})):
+        for i, r in enumerate(channel):
+            ranks[r["chunk_id"]] = i + 1
+            fused[r["chunk_id"]] = fused.get(r["chunk_id"], 0.0) + 1.0 / (RRF_K + i + 1)
 
-    # Rerank FTS results by cosine similarity
-    embeddings = []
-    valid_results = []
-    for r in fts_results:
-        if r["embedding"]:
-            embeddings.append(blob_to_embedding(r["embedding"]))
-            valid_results.append(r)
+    if not fused:
+        return []
 
+    placeholders = ",".join("?" * len(fused))
+    valid_results = [
+        dict(row) for row in conn.execute(
+            f"SELECT chunk_id, note_path, heading_path, content, embedding FROM chunks"
+            f" WHERE chunk_id IN ({placeholders}) AND embedding IS NOT NULL",
+            list(fused),
+        )
+    ]
     if not valid_results:
         return _to_search_results(conn, fts_results[:top_k])
 
-    matrix = np.stack(embeddings)
+    matrix = np.stack([blob_to_embedding(r["embedding"]) for r in valid_results])
     scores = cosine_similarity_batch(query_embedding, matrix)
 
-    # Combine FTS rank (normalized) and cosine similarity; preserve raw cosine for error detection
+    # Scale the fused score to [0, 1] (rank 1 in both channels = 1.0) so the
+    # downstream convex blends with convergence and hotness keep their meaning.
+    rrf_max = 2.0 / (RRF_K + 1)
     for i, r in enumerate(valid_results):
-        fts_score = 1.0 / (1.0 + abs(r.get("rank", 0)))
+        fts_score = 1.0 / fts_rank[r["chunk_id"]] if r["chunk_id"] in fts_rank else 0.0
         raw_cosine = float(scores[i])
         r["cosine_sim"] = raw_cosine
-        r["score"] = 0.3 * fts_score + 0.7 * raw_cosine
+        r["score"] = fused[r["chunk_id"]] / rrf_max
         if explain:
             r["_explain"] = {
                 "fts": round(fts_score, 4),
