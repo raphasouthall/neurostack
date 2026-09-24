@@ -1157,10 +1157,12 @@ class TestLinkSectionDownweight:
         """Two notes matching the same query:
 
         - canonical.md: a substantive '## Environments' body chunk (no links),
-          moderately similar to the query (cosine 0.7).
+          moderately similar to the query (cosine 0.7) and matching two of the
+          three query words.
         - linky.md: a '## Related' chunk that is a dense wiki-link block whose
-          link titles repeat the query terms, more similar to the query
-          (cosine 0.9). Without the penalty its higher cosine wins.
+          link titles repeat every query term, more similar to the query
+          (cosine 0.9). It leads both the FTS and vector channels, so without
+          the penalty it wins the fused ranking.
 
         Embeddings are crafted so the two notes' mutual cosine is 0.63 (below the
         0.65 lateral-inhibition threshold) and each note is single-chunk (so the
@@ -1179,7 +1181,7 @@ class TestLinkSectionDownweight:
 
         for path, title, heading, content, vec in [
             ("canonical.md", "Canonical", "## Environments",
-             "azure consolidation environments", canon_vec),
+             "azure environments overview", canon_vec),
             ("linky.md", "Linky", "## Related",
              "[[azure consolidation environments]]", linky_vec),
         ]:
