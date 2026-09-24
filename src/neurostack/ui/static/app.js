@@ -57,6 +57,22 @@ async function start() {
   route();
 }
 
+// index.html set the first theme. A click stores a choice; until then the OS decides.
+const themeBtn = document.getElementById('theme');
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  themeBtn.setAttribute('aria-pressed', theme === 'dark');
+  dispatchEvent(new Event('ns-theme'));
+}
+themeBtn.setAttribute('aria-pressed', document.documentElement.dataset.theme === 'dark');
+themeBtn.addEventListener('click', () => {
+  const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('ns_theme', theme);
+  setTheme(theme);
+});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',
+  (e) => localStorage.getItem('ns_theme') || setTheme(e.matches ? 'dark' : 'light'));
+
 addEventListener('ns-auth', showLogin);
 addEventListener('hashchange', route);
 start();
