@@ -12,6 +12,8 @@ function themeColors() {
 
 document.head.insertAdjacentHTML('beforeend', `<style>
 .graph-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* A select is as wide as its longest option, so a long community name must not widen the page. */
+.graph-bar .input { min-width: 0; max-width: 100%; }
 .graph-bar .sub { margin-left: auto; }
 .graph-canvas, .graph-panel { height: calc(100vh - 210px); min-height: 360px; }
 .graph-canvas { overflow: hidden; border-radius: 20px; }

@@ -1,5 +1,6 @@
 import { html, useState, useEffect } from '../lib.js';
 import { api, fmtAgo, fmtNum } from '../api.js';
+import { BentoGrid, StatTile } from '../bento.js';
 
 const STYLE = `
 .auto-history { display: flex; gap: 2px; }
@@ -61,9 +62,9 @@ function JobRow({ job, open, toggle }) {
       <td>${job.name}<div class="sub">${job.description}</div></td>
       <td>${job.schedule}</td>
       <td style="white-space:nowrap">${job.last ? html`<${Chip} status=${job.last.status} /> <span class="sub">${fmtAgo(job.last.started_at)}</span>` : html`<${Chip} />`}</td>
-      <td class="num">${fmtDur(job.last?.duration_s)}</td>
+      <td class="num hide-sm">${fmtDur(job.last?.duration_s)}</td>
       <td>${job.blocked || fmtAgo(job.next_due)}</td>
-      <td><div class="auto-history">${history.map((s) => html`<i class=${s} title=${s}></i>`)}</div></td>
+      <td class="hide-sm"><div class="auto-history">${history.map((s) => html`<i class=${s} title=${s}></i>`)}</div></td>
     </tr>
     ${open && html`<tr class="auto-panel"><td colspan="6"><${Runs} job=${job.name} /></td></tr>`}`;
 }
@@ -92,31 +93,31 @@ export default function Page() {
   const sum = (k) => queues.reduce((n, [, q]) => n + (q[k] || 0), 0);
 
   return html`${title}
-    <div class="card">
-      <div class="card-body stat-strip">
-        <div class="stat"><span>Jobs</span><strong>${jobs.length}</strong></div>
-        <div class="stat"><span>Last-run failures</span><strong class=${failures ? 'error' : ''}>${failures}</strong></div>
-        <div class="stat"><span>Queued</span><strong>${fmtNum(sum('queued'))}</strong></div>
-        <div class="stat"><span>Running</span><strong>${fmtNum(sum('running'))}</strong></div>
+    <${BentoGrid}>
+      <${StatTile} label="Jobs">${jobs.length}<//>
+      <${StatTile} label="Last-run failures"><span class=${failures ? 'error' : ''}>${failures}</span><//>
+      <${StatTile} label="Queued">${fmtNum(sum('queued'))}<//>
+      <${StatTile} label="Running">${fmtNum(sum('running'))}<//>
+      <div class="card magic-bento-card bento-full">
+        ${state.error && html`<div class="card-body error">Refresh failed: ${state.error.message}</div>`}
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>Job</th><th>Schedule</th><th>Last run</th><th class="num hide-sm">Duration</th><th>Next due</th><th class="hide-sm">History</th></tr></thead>
+          <tbody>
+            ${jobs.map((j) => html`<${JobRow} key=${j.name} job=${j} open=${open === j.name}
+              toggle=${() => setOpen(open === j.name ? null : j.name)} />`)}
+          </tbody>
+        </table></div>
       </div>
-      ${state.error && html`<div class="card-body error">Refresh failed: ${state.error.message}</div>`}
-      <table class="table">
-        <thead><tr><th>Job</th><th>Schedule</th><th>Last run</th><th class="num">Duration</th><th>Next due</th><th>History</th></tr></thead>
-        <tbody>
-          ${jobs.map((j) => html`<${JobRow} key=${j.name} job=${j} open=${open === j.name}
-            toggle=${() => setOpen(open === j.name ? null : j.name)} />`)}
-        </tbody>
-      </table>
-    </div>
-    <div class="card">
-      <div class="card-head">Queues</div>
-      ${queues.length ? html`<table class="table">
-        <thead><tr><th>Queue</th><th class="num">Queued</th><th class="num">Running</th><th class="num">Done</th><th class="num">Failed</th></tr></thead>
-        <tbody>${queues.map(([name, q]) => html`<tr>
-          <td>${name}</td>
-          <td class="num">${fmtNum(q.queued)}</td><td class="num">${fmtNum(q.running)}</td>
-          <td class="num">${fmtNum(q.done)}</td><td class="num">${fmtNum(q.failed)}</td>
-        </tr>`)}</tbody>
-      </table>` : html`<div class="empty">No queues.</div>`}
-    </div>`;
+      <div class="card magic-bento-card bento-full">
+        <div class="card-head"><span class="magic-bento-card__title">Queues</span></div>
+        ${queues.length ? html`<div class="table-wrap"><table class="table">
+          <thead><tr><th>Queue</th><th class="num">Queued</th><th class="num">Running</th><th class="num">Done</th><th class="num">Failed</th></tr></thead>
+          <tbody>${queues.map(([name, q]) => html`<tr>
+            <td>${name}</td>
+            <td class="num">${fmtNum(q.queued)}</td><td class="num">${fmtNum(q.running)}</td>
+            <td class="num">${fmtNum(q.done)}</td><td class="num">${fmtNum(q.failed)}</td>
+          </tr>`)}</tbody>
+        </table></div>` : html`<div class="empty">No queues.</div>`}
+      </div>
+    <//>`;
 }

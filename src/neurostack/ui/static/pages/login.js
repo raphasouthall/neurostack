@@ -4,7 +4,7 @@ import { api } from '../api.js';
 // Module code runs once per page load, so the style is injected once.
 document.head.insertAdjacentHTML('beforeend', `<style>
 .login { display: grid; place-items: center; min-height: calc(100vh - 64px); }
-.login form { width: 400px; display: flex; flex-direction: column; gap: 16px; padding: 32px; }
+.login form { width: min(400px, 100%); display: flex; flex-direction: column; gap: 16px; padding: 32px; }
 .login .logo { padding: 0 0 8px; font-size: 22px; }
 .login .logo-mark { width: 32px; height: 32px; }
 .login .input { height: 56px; font-size: 16px; }
