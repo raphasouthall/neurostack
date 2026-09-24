@@ -316,7 +316,7 @@ checkpoint_max_messages = 40   # largest window one checkpoint summarizes, 0 for
 
 `neurostack ui` serves a read-only dashboard at http://127.0.0.1:8765. It shows four pages. Overview has index coverage, communities, recent notes and memory counts. Automations lists every scheduled job with its last run, next run and 14-run history, and you can click a job to see its runs. Graph draws the top notes by PageRank, and clicking a node opens its summary and links. Memories lists memories with type tabs and search.
 
-It needs no extra install and makes no model calls. Pass `--port` to change the port and `--open` to open a browser. On any address other than localhost, set `api_key` in config.toml first; the page asks for it once.
+It needs no extra install and makes no model calls. Pass `--port` to change the port and `--open` to open a browser. On any address other than localhost, create a login first with `neurostack ui user add NAME`, which prompts for a password of at least 8 characters (`--password-stdin` reads it from a pipe). The page then shows a sign-in form, and a session lasts 30 days. `neurostack ui user list` shows the users and `neurostack ui user remove NAME` deletes one and ends their sessions.
 
 ---
 
