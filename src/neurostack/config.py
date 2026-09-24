@@ -57,6 +57,9 @@ class Config:
     embed_url: str = "http://localhost:11434"
     embed_model: str = "nomic-embed-text"
     embed_dim: int = 768
+    # Deadline per single-text embed call; retried once. Two tries stay under
+    # the 30 s MCP client timeout. Raise it for a slow local model.
+    embed_timeout_s: float = 12.0
     # Index-time LLM: note summaries, triples, community labels, harvest
     # classification, synthesize, consolidate. Nothing on a retrieval path calls
     # it — #142 removed the request-time answering paths, so no user ever waits
@@ -283,6 +286,8 @@ def load_config() -> Config:
             legacy.append((old, new))
         if "embed_dim" in data:
             cfg.embed_dim = int(data["embed_dim"])
+        if "embed_timeout_s" in data:
+            cfg.embed_timeout_s = float(data["embed_timeout_s"])
         if "api_port" in data:
             cfg.api_port = int(data["api_port"])
         if "disabled_tools" in data:
@@ -337,6 +342,7 @@ def load_config() -> Config:
         "NEUROSTACK_EMBED_URL": ("embed_url", str),
         "NEUROSTACK_EMBED_MODEL": ("embed_model", str),
         "NEUROSTACK_EMBED_DIM": ("embed_dim", int),
+        "NEUROSTACK_EMBED_TIMEOUT_S": ("embed_timeout_s", float),
         "NEUROSTACK_INDEX_LLM_URL": ("index_llm_url", str),
         "NEUROSTACK_INDEX_LLM_MODEL": ("index_llm_model", str),
         "NEUROSTACK_INDEX_LLM_API_KEY": ("index_llm_api_key", str),
