@@ -169,6 +169,7 @@ def save_memory(
     # Try to embed. On failure, flag the row for backfill instead of silently
     # storing a NULL embedding that stays invisible to semantic search (issue #29).
     embedding_blob = None
+    emb = None
     embed_pending = 0
     try:
         from .config import get_config
@@ -216,6 +217,7 @@ def save_memory(
                 conn, content, entity_type=entity_type,
                 workspace=workspace, threshold=dedup_threshold,
                 exclude_ids=[memory_id], embed_url=embed_url,
+                query_emb=emb,
             )
             if similar:
                 near_duplicates = [
@@ -516,11 +518,14 @@ def find_similar_memories(
     limit: int = 5,
     exclude_ids: list[int] | None = None,
     embed_url: str | None = None,
+    query_emb=None,
 ) -> list[tuple[Memory, float]]:
     """Find memories similar to the given content.
 
     Returns list of (Memory, similarity_score) tuples above threshold.
     Uses two-stage approach: FTS5 overlap first, then cosine similarity.
+    Pass `query_emb` when the caller already embedded `content`, so the
+    remote embedder is not called twice for the same text.
     """
     results: list[tuple[Memory, float]] = []
     exclude = set(exclude_ids or [])
@@ -578,8 +583,9 @@ def find_similar_memories(
             get_embedding,
         )
 
-        url = embed_url or get_config().embed_url
-        query_emb = get_embedding(content, base_url=url)
+        if query_emb is None:
+            url = embed_url or get_config().embed_url
+            query_emb = get_embedding(content, base_url=url)
 
         for r in rows:
             r = dict(r)
