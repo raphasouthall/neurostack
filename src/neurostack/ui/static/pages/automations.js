@@ -1,27 +1,32 @@
 import { html, useState, useEffect } from '../lib.js';
 import { api, fmtAgo, fmtNum } from '../api.js';
 import { BentoGrid, StatTile } from '../bento.js';
+import {
+  Alert, AlertDescription, AlertTitle, Badge, Card, CardContent, CardDescription, CardHeader, CardTitle, Loading,
+  Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow, Tooltip, TooltipContent, TooltipTrigger,
+} from '../components/ui.js';
 
 const STYLE = `
 .auto-history { display: flex; gap: 2px; }
-.auto-history i { width: 8px; height: 8px; border-radius: 2px; background: var(--hairline); }
-.auto-history i.ok { background: var(--ok); }
-.auto-history i.failed { background: var(--failed); }
-.auto-history i.skipped { background: var(--stone); }
-.auto-history i.running { background: var(--running); }
+.auto-history i { width: 8px; height: 8px; border-radius: 2px; background: var(--border); }
+.auto-history i.ok { background: var(--success); }
+.auto-history i.failed { background: var(--destructive); }
+.auto-history i.skipped { background: var(--muted-foreground); }
+.auto-history i.running { background: var(--chart-1); }
 .table tr.auto-row { cursor: pointer; }
 .table tr.auto-panel:hover { background: none; }
-.auto-panel > td { background: var(--surface-soft); padding: 8px 24px; }
-.auto-panel .table { background: var(--card); border: 1px solid var(--hairline); border-radius: 8px; }
+.auto-panel > td { background: var(--muted); padding: 8px 24px; }
+.auto-panel .table { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 `;
 if (!document.getElementById('auto-style')) {
   document.head.append(Object.assign(document.createElement('style'), { id: 'auto-style', textContent: STYLE }));
 }
 
 const fmtDur = (s) => (s == null ? '' : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`);
+const VARIANT = { ok: 'success', failed: 'destructive' };
 
-function Chip({ status }) {
-  return status ? html`<span class=${`chip ${status}`}>${status}</span>` : html`<span class="sub">never</span>`;
+function Status({ status }) {
+  return status ? html`<${Badge} variant=${VARIANT[status] || 'secondary'}>${status}<//>` : html`<span class="sub">never</span>`;
 }
 
 // `result` is free-form JSON per job; show its scalar fields as key=value.
@@ -33,23 +38,29 @@ function summary(run) {
     .map(([k, v]) => `${k}=${v}`).join(' ');
 }
 
+function Failed({ title, error }) {
+  return html`<${Alert} variant="destructive"><${AlertTitle}>${title}<//><${AlertDescription}>${error.message}<//><//>`;
+}
+
 function Runs({ job }) {
   const [state, setState] = useState({});
   useEffect(() => {
     api(`automations/${encodeURIComponent(job)}/runs?limit=20`)
       .then((runs) => setState({ runs }), (error) => setState({ error }));
   }, [job]);
-  if (state.error) return html`<div class="error">${state.error.message}</div>`;
-  if (!state.runs) return html`<div class="empty">Loading…</div>`;
-  if (!state.runs.length) return html`<div class="empty">No runs yet.</div>`;
-  return html`<table class="table"><tbody>
-    ${state.runs.map((r) => html`<tr>
-      <td><${Chip} status=${r.status} /></td>
-      <td title=${r.started_at}>${fmtAgo(r.started_at)}</td>
-      <td class="num">${fmtDur(r.duration_s)}</td>
-      <td class="sub">${summary(r)}</td>
-    </tr>`)}
-  </tbody></table>`;
+  if (state.error) return html`<${Failed} title="Could not load runs" error=${state.error} />`;
+  if (!state.runs) return html`<${Loading} />`;
+  if (!state.runs.length) return html`<${CardDescription} class="empty">No runs yet.<//>`;
+  return html`<${Table}>
+    <${TableCaption} class="sr-only">Last ${state.runs.length} runs of ${job}<//>
+    <${TableBody}>
+    ${state.runs.map((r) => html`<${TableRow}>
+      <${TableCell}><${Status} status=${r.status} /><//>
+      <${TableCell} title=${r.started_at}>${fmtAgo(r.started_at)}<//>
+      <${TableCell} class="num">${fmtDur(r.duration_s)}<//>
+      <${TableCell} class="sub">${summary(r)}<//>
+    <//>`)}
+  <//><//>`;
 }
 
 function JobRow({ job, open, toggle }) {
@@ -57,16 +68,18 @@ function JobRow({ job, open, toggle }) {
   const recent = (job.recent || []).slice(0, 14).reverse();
   const history = [...Array(14 - recent.length).fill(''), ...recent];
   return html`
-    <tr class=${job.blocked ? 'auto-row muted' : 'auto-row'} tabIndex="0" aria-expanded=${open}
+    <${TableRow} class=${job.blocked ? 'auto-row muted' : 'auto-row'} tabIndex="0" aria-expanded=${open}
       onClick=${toggle} onKeyDown=${(e) => e.key === 'Enter' && toggle()}>
-      <td>${job.name}<div class="sub">${job.description}</div></td>
-      <td>${job.schedule}</td>
-      <td style="white-space:nowrap">${job.last ? html`<${Chip} status=${job.last.status} /> <span class="sub">${fmtAgo(job.last.started_at)}</span>` : html`<${Chip} />`}</td>
-      <td class="num hide-sm">${fmtDur(job.last?.duration_s)}</td>
-      <td>${job.blocked || fmtAgo(job.next_due)}</td>
-      <td class="hide-sm"><div class="auto-history">${history.map((s) => html`<i class=${s} title=${s}></i>`)}</div></td>
-    </tr>
-    ${open && html`<tr class="auto-panel"><td colspan="6"><${Runs} job=${job.name} /></td></tr>`}`;
+      <${TableCell}>${job.name}<div class="sub">${job.description}</div><//>
+      <${TableCell}>${job.schedule}<//>
+      <${TableCell} style="white-space:nowrap">${job.last ? html`<${Status} status=${job.last.status} /> <span class="sub">${fmtAgo(job.last.started_at)}</span>` : html`<${Status} />`}<//>
+      <${TableCell} class="num hide-sm">${fmtDur(job.last?.duration_s)}<//>
+      <${TableCell}>${job.blocked ? html`<${Tooltip}>
+          <${TooltipTrigger}><${Badge} variant="warning">blocked<//><//><${TooltipContent}>${job.blocked}<//>
+        <//>` : fmtAgo(job.next_due)}<//>
+      <${TableCell} class="hide-sm"><div class="auto-history">${history.map((s) => html`<i class=${s} title=${s}></i>`)}</div><//>
+    <//>
+    ${open && html`<${TableRow} class="auto-panel"><${TableCell} colspan="6"><${Runs} job=${job.name} /><//><//>`}`;
 }
 
 export default function Page() {
@@ -84,8 +97,8 @@ export default function Page() {
 
   const title = html`<h1 class="page-title">Automations</h1>`;
   if (!state.data) {
-    return html`${title}<div class="card"><div class="card-body">${state.error
-      ? html`<div class="error">${state.error.message}</div>` : html`<div class="empty">Loading…</div>`}</div></div>`;
+    return html`${title}<${Card}><${CardContent}>${state.error
+      ? html`<${Failed} title="Could not load automations" error=${state.error} />` : html`<${Loading} />`}<//><//>`;
   }
   const jobs = state.data.jobs || [];
   const queues = Object.entries(state.data.queues || {});
@@ -98,26 +111,32 @@ export default function Page() {
       <${StatTile} label="Last-run failures"><span class=${failures ? 'error' : ''}>${failures}</span><//>
       <${StatTile} label="Queued">${fmtNum(sum('queued'))}<//>
       <${StatTile} label="Running">${fmtNum(sum('running'))}<//>
-      <div class="card magic-bento-card bento-full">
-        ${state.error && html`<div class="card-body error">Refresh failed: ${state.error.message}</div>`}
-        <div class="table-wrap"><table class="table">
-          <thead><tr><th>Job</th><th>Schedule</th><th>Last run</th><th class="num hide-sm">Duration</th><th>Next due</th><th class="hide-sm">History</th></tr></thead>
-          <tbody>
+      <${Card} class="magic-bento-card bento-full">
+        ${state.error && html`<${CardContent}><${Failed} title="Refresh failed" error=${state.error} /><//>`}
+        <${Table}>
+          <${TableHeader}><${TableRow}>
+            <${TableHead}>Job<//><${TableHead}>Schedule<//><${TableHead}>Last run<//>
+            <${TableHead} class="num hide-sm">Duration<//><${TableHead}>Next due<//><${TableHead} class="hide-sm">History<//>
+          <//><//>
+          <${TableBody}>
             ${jobs.map((j) => html`<${JobRow} key=${j.name} job=${j} open=${open === j.name}
               toggle=${() => setOpen(open === j.name ? null : j.name)} />`)}
-          </tbody>
-        </table></div>
-      </div>
-      <div class="card magic-bento-card bento-full">
-        <div class="card-head"><span class="magic-bento-card__title">Queues</span></div>
-        ${queues.length ? html`<div class="table-wrap"><table class="table">
-          <thead><tr><th>Queue</th><th class="num">Queued</th><th class="num">Running</th><th class="num">Done</th><th class="num">Failed</th></tr></thead>
-          <tbody>${queues.map(([name, q]) => html`<tr>
-            <td>${name}</td>
-            <td class="num">${fmtNum(q.queued)}</td><td class="num">${fmtNum(q.running)}</td>
-            <td class="num">${fmtNum(q.done)}</td><td class="num">${fmtNum(q.failed)}</td>
-          </tr>`)}</tbody>
-        </table></div>` : html`<div class="empty">No queues.</div>`}
-      </div>
+          <//>
+        <//>
+      <//>
+      <${Card} class="magic-bento-card bento-full">
+        <${CardHeader}><${CardTitle}>Queues<//><//>
+        ${queues.length ? html`<${Table}>
+          <${TableHeader}><${TableRow}>
+            <${TableHead}>Queue<//><${TableHead} class="num">Queued<//><${TableHead} class="num">Running<//>
+            <${TableHead} class="num">Done<//><${TableHead} class="num">Failed<//>
+          <//><//>
+          <${TableBody}>${queues.map(([name, q]) => html`<${TableRow}>
+            <${TableCell}>${name}<//>
+            <${TableCell} class="num">${fmtNum(q.queued)}<//><${TableCell} class="num">${fmtNum(q.running)}<//>
+            <${TableCell} class="num">${fmtNum(q.done)}<//><${TableCell} class="num">${fmtNum(q.failed)}<//>
+          <//>`)}<//>
+        <//>` : html`<${CardDescription} class="empty">No queues.<//>`}
+      <//>
     <//>`;
 }

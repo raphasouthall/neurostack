@@ -1,35 +1,37 @@
 import { html, useState, useEffect, useRef } from '../lib.js';
 import { api, fmtAgo, fmtNum } from '../api.js';
+import {
+  Alert, AlertDescription, AlertTitle, Button, Card, CardAction, CardContent, CardHeader, CardTitle, Input, Loading,
+  NativeSelect,
+} from '../components/ui.js';
 
 // Canvas colours come from the theme tokens. Communities cycle through the
-// accent list; notes outside any community are stone.
-const PALETTE = ['--running', '--ok', '--warning', '--brown', '--success', '--pink', '--pending', '--failed'];
+// chart colours; notes outside any community are muted.
+const PALETTE = ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--chart-6', '--chart-7', '--destructive'];
 function themeColors() {
   const s = getComputedStyle(document.documentElement);
   const v = (name) => s.getPropertyValue(name).trim();
-  return { palette: PALETTE.map(v), none: v('--stone'), link: v('--hairline'), ink: v('--ink') };
+  return { palette: PALETTE.map(v), none: v('--muted-foreground'), link: v('--border'), ink: v('--foreground') };
 }
 
 document.head.insertAdjacentHTML('beforeend', `<style>
 .graph-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-/* A select is as wide as its longest option, so a long community name must not widen the page. */
+/* A long community name must not widen the page. */
 .graph-bar .input { min-width: 0; max-width: 100%; }
 .graph-bar .sub { margin-left: auto; }
 .graph-canvas, .graph-panel { height: calc(100vh - 210px); min-height: 360px; }
-.graph-canvas { overflow: hidden; border-radius: 20px; }
+.graph-canvas { overflow: hidden; border-radius: var(--radius-xl); }
 .graph-stage { min-width: 0; }
 .graph-panel { display: flex; flex-direction: column; }
-.graph-panel .card-head { display: flex; justify-content: space-between; align-items: center; }
-.graph-panel .card-body { flex: 1; overflow: auto; }
-.graph-close { background: none; border: 0; cursor: pointer; font-size: 16px; color: var(--mute); }
+.graph-panel .card-content { flex: 1; overflow: auto; }
+.graph-close { width: 32px; height: 32px; margin: -6px -8px -6px 0; font-size: 16px; font-weight: 400; color: var(--secondary-foreground); }
 .graph-title { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
-.graph-path { font: 12px var(--mono); color: var(--stone); word-break: break-all; margin-bottom: 12px; }
+.graph-path { font: 12px var(--font-mono); color: var(--muted-foreground); word-break: break-all; margin-bottom: 12px; }
 .graph-summary { font-size: 13px; line-height: 1.5; margin: 0 0 12px; }
 .graph-nb { margin-top: 16px; }
-.graph-nb .card-head { padding: 0 0 8px; }
-.graph-nb button { display: block; width: 100%; background: none; border: 0; padding: 4px 0;
-  text-align: left; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; }
-.graph-nb button:hover { text-decoration: underline; }
+.graph-nb .card-header { padding: 0 0 8px; }
+.graph-nb .btn { display: flex; justify-content: flex-start; width: 100%; padding: 4px 0; font-size: 13px;
+  color: var(--foreground); text-align: left; white-space: normal; }
 </style>`);
 
 // force-graph ships as UMD only, so it loads once as a classic script.
@@ -173,42 +175,45 @@ export default function Page() {
   const neighbors = dir => (note?.neighbors || []).filter(x => x.direction === dir);
   const nbList = (label, list) => html`
     <div class="graph-nb">
-      <div class="card-head">${label} (${list.length})</div>
-      ${list.map(x => html`<button onClick=${() => focus(x.path)}>${x.title || x.path}</button>`)}
+      <${CardHeader}><${CardTitle}>${label} (${list.length})<//><//>
+      ${list.map(x => html`<${Button} variant="link" onClick=${() => focus(x.path)}>${x.title || x.path}<//>`)}
     </div>`;
 
   return html`
     <h1 class="page-title">Graph</h1>
-    ${error && html`<div class="card"><div class="card-body error">${error}</div></div>`}
-    <div class="card">
-      <div class="card-body graph-bar">
-        <input class="input" type="search" placeholder="Search titles" aria-label="Search titles"
+    ${error && html`<${Card}><${CardContent}><${Alert} variant="destructive">
+      <${AlertTitle}>Graph error<//><${AlertDescription}>${error}<//>
+    <//><//><//>`}
+    <${Card}>
+      <${CardContent} class="graph-bar">
+        <${Input} type="search" placeholder="Search titles" aria-label="Search titles"
           value=${query} onInput=${e => setQuery(e.target.value)} />
-        <select class="input" aria-label="Node count" value=${limit}
-          onChange=${e => setLimit(+e.target.value)}>
+        <${NativeSelect} aria-label="Node count" value=${limit} onChange=${e => setLimit(+e.target.value)}>
           ${[200, 500, 1000, 2000].map(n => html`<option value=${n}>${fmtNum(n)} notes</option>`)}
-        </select>
-        <select class="input" aria-label="Community" value=${community}
-          onChange=${e => setCommunity(e.target.value)}>
+        <//>
+        <${NativeSelect} aria-label="Community" value=${community} onChange=${e => setCommunity(e.target.value)}>
           <option value="">All communities</option>
           ${communities.map(c => html`
             <option value=${c.id}>${c.title || `Community ${c.id}`} (${c.member_notes})</option>`)}
-        </select>
+        <//>
         ${data && html`<span class="sub">${
           `Showing ${fmtNum(data.nodes.length)} of ${fmtNum(data.total_nodes)} notes`
           + (data.truncated ? ', highest PageRank first' : '')}</span>`}
-      </div>
-    </div>
+      <//>
+    <//>
     <div class=${selected ? 'grid-2' : ''}>
-      <div class="card graph-stage"><div class="graph-canvas" ref=${box}></div></div>
+      <${Card} class="graph-stage"><div class="graph-canvas" ref=${box}></div><//>
       ${selected && html`
-        <div class="card graph-panel">
-          <div class="card-head">Note
-            <button class="graph-close" aria-label="Close" onClick=${() => setSelected(null)}>×</button>
-          </div>
-          <div class="card-body">
-            ${!note ? html`<div class="empty">Loading…</div>`
-              : note.error ? html`<div class="error">${note.error}</div>`
+        <${Card} class="graph-panel">
+          <${CardHeader}>
+            <${CardTitle}>Note<//>
+            <${CardAction}>
+              <${Button} variant="ghost" size="icon" class="graph-close" aria-label="Close" onClick=${() => setSelected(null)}>×<//>
+            <//>
+          <//>
+          <${CardContent}>
+            ${!note ? html`<${Loading} />`
+              : note.error ? html`<${Alert} variant="destructive"><${AlertDescription}>${note.error}<//><//>`
               : html`
                 <h2 class="graph-title">${note.title}</h2>
                 <div class="graph-path">${note.path}</div>
@@ -220,7 +225,7 @@ export default function Page() {
                 </div>
                 ${nbList('In', neighbors('in'))}
                 ${nbList('Out', neighbors('out'))}`}
-          </div>
-        </div>`}
+          <//>
+        <//>`}
     </div>`;
 }
