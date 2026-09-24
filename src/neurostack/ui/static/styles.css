@@ -23,6 +23,8 @@
   --failed: #e23b4a;
   --pink: #e61e49;
   --brown: #936d62;
+  /* Card effect colour as "r, g, b"; bento.js overwrites it from the Settings page. */
+  --glow-rgb: 73, 79, 223;
   /* Stone is the same in both themes, so one magnifier serves both. */
   --search-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238d969e' stroke-width='1.5'%3E%3Ccircle cx='7' cy='7' r='4.5'/%3E%3Cpath d='M10.5 10.5L14 14'/%3E%3C/svg%3E");
   --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -94,7 +96,8 @@ a:active { color: var(--primary-pressed); }
 .nav-user .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Main area */
-main { flex: 1; min-width: 0; padding: 32px; }
+/* A container, so card grids reflow on the width left beside the sidebar. */
+main { flex: 1; min-width: 0; padding: 32px; container-type: inline-size; }
 .page-title { font: 500 32px/1.19 var(--display); letter-spacing: -.32px; margin: 0 0 24px; }
 .sub { font-size: 13px; color: var(--stone); }
 .big-num { font: 500 40px/1 var(--display); letter-spacing: -.4px; font-variant-numeric: tabular-nums; margin-bottom: 8px; }
@@ -123,11 +126,12 @@ main { flex: 1; min-width: 0; padding: 32px; }
 /* Cards */
 .card { background: var(--card); border: 1px solid var(--hairline); border-radius: 20px; overflow: hidden; }
 .card + .card { margin-top: 16px; }
-.grid-2 .card + .card { margin-top: 0; }
+.grid-2 .card + .card, .card-grid > .card { margin-top: 0; }
 .card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 24px 24px 8px;
 }
@@ -153,6 +157,15 @@ main { flex: 1; min-width: 0; padding: 32px; }
 .card.accent .bar, .card.accent .c3 { background: var(--on-primary-faint); }
 .card.accent .c1 { background: var(--on-primary); }
 .card.accent .c2 { background: var(--failed); }
+/* Job list on the accent tile. Dots follow the bar: white ok, red failed, faint otherwise. */
+.accent-jobs { list-style: none; margin: 16px 0 0; padding: 0; font-size: 13px; scrollbar-color: var(--on-primary-faint) transparent; }
+.accent-jobs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto minmax(0, .7fr); gap: 8px; align-items: center;
+  padding: 6px 0; border-top: 1px solid var(--on-primary-faint); }
+.accent-jobs span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.accent-jobs span:not(:nth-child(2)) { color: var(--on-primary-mute); text-align: right; }
+.accent-jobs i { width: 8px; height: 8px; border-radius: 50%; background: var(--on-primary-faint); }
+.accent-jobs i.ok { background: var(--on-primary); }
+.accent-jobs i.failed { background: var(--failed); }
 
 /* Buttons and inputs */
 .btn {
@@ -171,8 +184,9 @@ main { flex: 1; min-width: 0; padding: 32px; }
 }
 .btn-primary { background: var(--ink); color: var(--canvas); }
 .btn:disabled { opacity: .5; cursor: default; }
-.theme-toggle { width: 44px; padding: 0; justify-content: center; }
-.theme-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.btn-soft { background: var(--surface-soft); }
+.theme-toggle, .menu-btn { width: 44px; padding: 0; justify-content: center; }
+:is(.theme-toggle, .menu-btn) svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 /* The icon shows the theme a click switches to. */
 .theme-toggle .sun, [data-theme="dark"] .theme-toggle .moon { display: none; }
 [data-theme="dark"] .theme-toggle .sun { display: block; }
@@ -207,6 +221,9 @@ input.input[type="search"] {
 
 /* Tables */
 .table { width: 100%; border-collapse: collapse; }
+/* A wide table scrolls inside its card instead of widening the page. */
+.table-wrap { overflow-x: auto; }
+.table td.wrap { overflow-wrap: anywhere; }
 .table th, .table td { height: 48px; padding: 0 12px; text-align: left; border-bottom: 1px solid var(--hairline); }
 .table :is(th, td):first-child { padding-left: 24px; }
 .table :is(th, td):last-child { padding-right: 24px; }
@@ -235,3 +252,95 @@ input.input[type="search"] {
 .chip.ok::before { background: var(--ok); }
 .chip.failed::before { background: var(--failed); }
 .chip.running::before { background: var(--running); }
+
+/* Card grid: 1, then 2, then 4 columns as the main area widens. */
+.card-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.card-grid > * { min-width: 0; }
+@container (min-width: 520px) {
+  .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card-grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .bento-lg, .bento-full { grid-column: 1 / -1; }
+}
+@container (min-width: 880px) {
+  .card-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .bento-lg { grid-column: span 2; grid-row: span 2; }
+  /* Size containment keeps the job list from growing the rows, so it fills the
+     2x2 tile the neighbours set and scrolls past that. */
+  .card.accent.bento-lg, .card.accent.bento-lg .card-body { display: flex; flex-direction: column; }
+  .card.accent.bento-lg .card-body { flex: 1; min-height: 0; }
+  .accent-jobs { flex: 1; min-height: 120px; overflow-y: auto; contain: size; }
+}
+.stat-value { font: 500 28px/1.15 var(--display); letter-spacing: -.28px; font-variant-numeric: tabular-nums; margin-top: 4px; }
+@media (max-width: 1023px) {
+  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Bento effects. bento.js sets the classes only while effects run, so the
+   theme keeps its flat, shadowless cards otherwise. */
+.magic-bento-card { position: relative; }
+.bento-live > .magic-bento-card { transition: transform .15s ease-out, translate .3s ease-out, box-shadow .3s ease-out; }
+.bento-live > .magic-bento-card:hover { translate: 0 -2px; box-shadow: 0 8px 24px rgba(0, 0, 0, .12); }
+.bento-glow > .magic-bento-card:hover { box-shadow: 0 8px 24px rgba(0, 0, 0, .12), 0 0 30px rgba(var(--glow-rgb), .2); }
+/* The mask leaves only a 6px ring, so the glow lights the card edge nearest the cursor. */
+.bento-glow > .magic-bento-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 6px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(var(--glow-radius, 300px) circle at var(--glow-x, 50%) var(--glow-y, 50%),
+    rgba(var(--glow-rgb), calc(var(--glow-intensity, 0) * .8)) 0%,
+    rgba(var(--glow-rgb), calc(var(--glow-intensity, 0) * .4)) 30%, transparent 60%);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+}
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgb(var(--glow-rgb));
+  box-shadow: 0 0 6px rgba(var(--glow-rgb), .6);
+  pointer-events: none;
+  z-index: 2;
+}
+.bento-ripple {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 2;
+  background: radial-gradient(circle, rgba(var(--glow-rgb), .4) 0%, rgba(var(--glow-rgb), .2) 30%, transparent 70%);
+}
+.bento-spotlight {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 800px;
+  height: 800px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity .3s, transform .1s;
+  background: radial-gradient(circle, rgba(var(--glow-rgb), .15) 0%, rgba(var(--glow-rgb), .08) 15%,
+    rgba(var(--glow-rgb), .04) 25%, rgba(var(--glow-rgb), .02) 40%, rgba(var(--glow-rgb), .01) 65%, transparent 70%);
+}
+.bento-autohide .magic-bento-card__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bento-autohide .magic-bento-card__description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Phones and small tablets: the sidebar becomes a top bar, and its menu button
+   opens the nav as a full-screen overlay. */
+.menu-btn { display: none; }
+@media (max-width: 768px) {
+  body { flex-direction: column; }
+  .sidebar { width: auto; height: auto; padding: 10px 16px; z-index: 300; }
+  .logo { padding: 0; min-height: 44px; }
+  .menu-btn { display: inline-flex; position: absolute; top: 10px; right: 16px; }
+  body:not(.signed-out) .sidebar:not(.open) > :not(.logo, .menu-btn) { display: none; }
+  .sidebar.open { position: fixed; inset: 0; overflow-y: auto; }
+  main { padding: 16px; }
+  .page-title { font-size: 26px; margin-bottom: 16px; }
+  .hide-sm { display: none; }
+}

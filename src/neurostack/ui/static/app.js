@@ -7,6 +7,7 @@ const routes = {
   automations: './pages/automations.js',
   graph: './pages/graph.js',
   memories: './pages/memories.js',
+  settings: './pages/settings.js',
 };
 const main = document.getElementById('app');
 const userBox = document.getElementById('user');
@@ -57,21 +58,35 @@ async function start() {
   route();
 }
 
-// index.html set the first theme. A click stores a choice; until then the OS decides.
+// index.html set the first theme. A choice is stored; 'system' clears it, so the OS decides.
 const themeBtn = document.getElementById('theme');
+const darkOS = matchMedia('(prefers-color-scheme: dark)');
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
   themeBtn.setAttribute('aria-pressed', theme === 'dark');
   dispatchEvent(new Event('ns-theme'));
 }
+export function chooseTheme(choice) {
+  if (choice === 'system') localStorage.removeItem('ns_theme');
+  else localStorage.setItem('ns_theme', choice);
+  setTheme(choice === 'system' ? (darkOS.matches ? 'dark' : 'light') : choice);
+}
 themeBtn.setAttribute('aria-pressed', document.documentElement.dataset.theme === 'dark');
-themeBtn.addEventListener('click', () => {
-  const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  localStorage.setItem('ns_theme', theme);
-  setTheme(theme);
-});
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change',
+themeBtn.addEventListener('click',
+  () => chooseTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+darkOS.addEventListener('change',
   (e) => localStorage.getItem('ns_theme') || setTheme(e.matches ? 'dark' : 'light'));
+
+// Below 768px the nav is an overlay; picking a page or Escape closes it.
+const nav = document.querySelector('.sidebar');
+const menuBtn = document.getElementById('menu');
+function setMenu(open) {
+  nav.classList.toggle('open', open);
+  menuBtn.setAttribute('aria-expanded', open);
+}
+menuBtn.addEventListener('click', () => setMenu(!nav.classList.contains('open')));
+nav.addEventListener('click', (e) => e.target.closest('.nav-item') && setMenu(false));
+addEventListener('keydown', (e) => e.key === 'Escape' && setMenu(false));
 
 addEventListener('ns-auth', showLogin);
 addEventListener('hashchange', route);

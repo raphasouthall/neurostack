@@ -1,11 +1,12 @@
 import { html, useState, useEffect } from '../lib.js';
 import { api, fmtAgo, fmtNum } from '../api.js';
+import { BentoGrid, StatTile } from '../bento.js';
 
 // Module code runs once per page load, so the style is injected once.
 document.head.insertAdjacentHTML('beforeend', `<style>
 .mem-clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; cursor: pointer; }
 .mem-full { white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
-.mem-table { table-layout: fixed; }
+.mem-table { table-layout: fixed; min-width: 880px; }
 .mem-table td { overflow: hidden; text-overflow: ellipsis; }
 .mem-table th:nth-child(2) { width: 120px; }
 .mem-table th:nth-child(3) { width: 190px; }
@@ -14,8 +15,11 @@ document.head.insertAdjacentHTML('beforeend', `<style>
 .mem-table th:nth-child(6) { width: 90px; }
 .mem-table td:nth-child(n+4) { white-space: nowrap; }
 .mem-tags { display: flex; flex-wrap: wrap; gap: 2px 4px; }
-.mem-tag { padding: 1px 6px; border-radius: 9999px; background: var(--surface-soft); color: var(--mute); font-size: 11px; white-space: nowrap; }
-.mem-tools { display: flex; gap: 8px; }
+.mem-tag { padding: 1px 6px; border-radius: 9999px; background: var(--surface-soft); color: var(--mute); font-size: 11px;
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.mem-tools { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.mem-tools input { min-width: 0; flex: 1 1 160px; }
+@media (max-width: 768px) { .mem-table { min-width: 560px; } }
 </style>`);
 
 const LIMITS = [50, 100, 250, 500];
@@ -69,48 +73,47 @@ export default function Page() {
       ${tab('', 'All', data && data.total)}
       ${Object.entries(byType).map(([t, n]) => tab(t, t, n))}
     </div>
-    <div class="card">
-      <div class="card-head">
-        <span>Memories</span>
-        <span class="mem-tools">
-          <input class="input" type="search" placeholder="Search memories" aria-label="Search memories"
-            value=${text} onInput=${(e) => setText(e.target.value)} />
-          <select class="input" aria-label="Rows to show" value=${limit}
-            onChange=${(e) => setLimit(Number(e.target.value))}>
-            ${LIMITS.map((n) => html`<option value=${n}>${n}</option>`)}
-          </select>
-        </span>
+    <${BentoGrid} className="cols-3">
+      <${StatTile} label="Total">${data ? fmtNum(data.total) : ''}<//>
+      <${StatTile} label=${type || 'All types'}>${data ? fmtNum(type ? byType[type] || 0 : data.total) : ''}<//>
+      <${StatTile} label="Shown">${data ? fmtNum(items.length) : ''}<//>
+      <div class="card magic-bento-card bento-full">
+        <div class="card-head">
+          <span class="magic-bento-card__title">Memories</span>
+          <span class="mem-tools">
+            <input class="input" type="search" placeholder="Search memories" aria-label="Search memories"
+              value=${text} onInput=${(e) => setText(e.target.value)} />
+            <select class="input" aria-label="Rows to show" value=${limit}
+              onChange=${(e) => setLimit(Number(e.target.value))}>
+              ${LIMITS.map((n) => html`<option value=${n}>${n}</option>`)}
+            </select>
+          </span>
+        </div>
+        ${err ? html`<div class="error">${err}</div>`
+          : !data ? html`<div class="empty">Loading</div>`
+          : !items.length ? html`<div class="empty">No memories match</div>`
+          : html`
+          <div class="table-wrap"><table class="table mem-table">
+            <thead><tr><th>Memory</th><th>Type</th><th>Tags</th><th class="hide-sm">Workspace</th><th class="hide-sm">Source</th><th>Created</th></tr></thead>
+            <tbody>
+              ${items.map((m) => {
+                const tags = m.tags.filter((t) => t.trim());
+                return html`
+                <tr key=${m.id} tabindex="0" aria-expanded=${open === m.id} onClick=${() => toggle(m.id)}
+                  onKeyDown=${(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle(m.id))}>
+                  <td><div class=${open === m.id ? 'mem-full' : 'mem-clamp'}>${m.content}</div></td>
+                  <td><span class="chip">${m.entity_type}</span></td>
+                  <td title=${tags.join(', ')}><div class="mem-tags">
+                    ${tags.slice(0, 3).map((t) => html`<span class="mem-tag">${t}</span>`)}
+                    ${tags.length > 3 && html`<span class="mem-tag">+${tags.length - 3}</span>`}
+                  </div></td>
+                  <td class="hide-sm"><span class="sub" title=${m.workspace || ''}>${tail(m.workspace)}</span></td>
+                  <td class="hide-sm" title=${m.source_agent}>${m.source_agent}</td>
+                  <td title=${`${m.created_at} UTC`}>${fmtAgo(m.created_at)}</td>
+                </tr>`;
+              })}
+            </tbody>
+          </table></div>`}
       </div>
-      <div class="stat-strip">
-        <div class="stat"><span>Total</span><strong>${data ? fmtNum(data.total) : ''}</strong></div>
-        <div class="stat"><span>${type || 'All types'}</span>
-          <strong>${data ? fmtNum(type ? byType[type] || 0 : data.total) : ''}</strong></div>
-        <div class="stat"><span>Shown</span><strong>${data ? fmtNum(items.length) : ''}</strong></div>
-      </div>
-      ${err ? html`<div class="error">${err}</div>`
-        : !data ? html`<div class="empty">Loading</div>`
-        : !items.length ? html`<div class="empty">No memories match</div>`
-        : html`
-        <table class="table mem-table">
-          <thead><tr><th>Memory</th><th>Type</th><th>Tags</th><th>Workspace</th><th>Source</th><th>Created</th></tr></thead>
-          <tbody>
-            ${items.map((m) => {
-              const tags = m.tags.filter((t) => t.trim());
-              return html`
-              <tr key=${m.id} tabindex="0" aria-expanded=${open === m.id} onClick=${() => toggle(m.id)}
-                onKeyDown=${(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), toggle(m.id))}>
-                <td><div class=${open === m.id ? 'mem-full' : 'mem-clamp'}>${m.content}</div></td>
-                <td><span class="chip">${m.entity_type}</span></td>
-                <td title=${tags.join(', ')}><div class="mem-tags">
-                  ${tags.slice(0, 3).map((t) => html`<span class="mem-tag">${t}</span>`)}
-                  ${tags.length > 3 && html`<span class="mem-tag">+${tags.length - 3}</span>`}
-                </div></td>
-                <td><span class="sub" title=${m.workspace || ''}>${tail(m.workspace)}</span></td>
-                <td title=${m.source_agent}>${m.source_agent}</td>
-                <td title=${`${m.created_at} UTC`}>${fmtAgo(m.created_at)}</td>
-              </tr>`;
-            })}
-          </tbody>
-        </table>`}
-    </div>`;
+    <//>`;
 }
