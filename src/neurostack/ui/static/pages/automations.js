@@ -3,15 +3,15 @@ import { api, fmtAgo, fmtNum } from '../api.js';
 
 const STYLE = `
 .auto-history { display: flex; gap: 2px; }
-.auto-history i { width: 8px; height: 8px; border-radius: 2px; background: var(--active); }
+.auto-history i { width: 8px; height: 8px; border-radius: 2px; background: var(--hairline); }
 .auto-history i.ok { background: var(--ok); }
 .auto-history i.failed { background: var(--failed); }
-.auto-history i.skipped { background: var(--muted); }
-.auto-history i.running { background: var(--cyan); }
+.auto-history i.skipped { background: var(--stone); }
+.auto-history i.running { background: var(--running); }
 .table tr.auto-row { cursor: pointer; }
 .table tr.auto-panel:hover { background: none; }
-.auto-panel > td { background: var(--bg); padding: 8px 16px; }
-.auto-panel .table { background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.auto-panel > td { background: var(--surface-soft); padding: 8px 24px; }
+.auto-panel .table { background: var(--card); border: 1px solid var(--hairline); border-radius: 8px; }
 `;
 if (!document.getElementById('auto-style')) {
   document.head.append(Object.assign(document.createElement('style'), { id: 'auto-style', textContent: STYLE }));
