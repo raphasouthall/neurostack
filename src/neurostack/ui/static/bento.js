@@ -1,4 +1,5 @@
 import { html, useState, useEffect, useRef } from './lib.js';
+import { Card, CardContent, CardTitle } from './components/ui.js';
 
 // Card effects ported from the React Bits MagicBento behaviour (issue #255).
 // Web Animations and CSS custom properties stand in for gsap.
@@ -201,10 +202,8 @@ export function BentoGrid({ children, className = '' }) {
 }
 
 export function StatTile({ label, children }) {
-  return html`<div class="card magic-bento-card">
-    <div class="card-body">
-      <div class="sub magic-bento-card__title">${label}</div>
-      <div class="stat-value">${children}</div>
-    </div>
-  </div>`;
+  return html`<${Card} class="magic-bento-card"><${CardContent}>
+    <${CardTitle} class="sub">${label}<//>
+    <div class="stat-value">${children}</div>
+  <//><//>`;
 }
