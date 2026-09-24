@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **vault_remember timeouts.** `save_memory` embedded the same text twice, once for the row and again for the near-duplicate check. With a remote embedder whose slow calls take 5 to 7 s, two calls in a row pushed saves past the 30 s MCP client timeout (a real save measured 30.4 s). The duplicate check now reuses the row's embedding.
+
 ### Added
 
 - **#259 — harvest saves session verdicts.** The per-message classifier sees one message at a time, so a conclusion spread over several turns never became a memory: a session kept "Root cause found, 4 of 4 flags are wrong" but not the verdict that the AOC timing chip fails above 60 Hz and ref.ps1 is the fix. Harvest now makes one more index-LLM call per session, or per new chunk when the watermark means only new messages are read. It sees the user and assistant messages in order, up to 16,000 characters taken from the end, and returns 0 to 3 self-contained conclusions naming the concrete devices, files and values. They go through the same judge typing, dedup and dry-run reporting as per-message keepers and carry the `session-verdict` tag. A failed call is logged and the per-message results still save. New config `harvest_conclusions` (default `true`, env `NEUROSTACK_HARVEST_CONCLUSIONS`) turns the pass off.
