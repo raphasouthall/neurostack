@@ -200,6 +200,7 @@ File: `~/.config/neurostack/config.toml`
 | `checkpoint_command` | (none), so the server queue workers stay off | `NEUROSTACK_CHECKPOINT_COMMAND` |
 | `checkpoint_timeout_s` | `300` | `NEUROSTACK_CHECKPOINT_TIMEOUT_S` |
 | `checkpoint_max_messages` | `0` (no cap) | `NEUROSTACK_CHECKPOINT_MAX_MESSAGES` |
+| `harvest_conclusions` | `true` (one extra index-LLM call per harvested session for its verdicts, #259) | `NEUROSTACK_HARVEST_CONCLUSIONS` |
 
 ### Memory write-back (issue #20, opt-in)
 

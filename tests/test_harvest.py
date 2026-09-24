@@ -900,7 +900,7 @@ class TestHarvestTtl:
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
                               index_llm_api_key=None, writeback_enabled=False,
-                              harvest_judge_types=False)
+                              harvest_judge_types=False, harvest_conclusions=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
         monkeypatch.setattr(embedder_mod, "get_embedding",
                             lambda *a, **k: np.ones(768, dtype=np.float32))
@@ -1163,7 +1163,7 @@ class TestHarvestTranscript:
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
                               index_llm_api_key=None, writeback_enabled=False,
-                              harvest_judge_types=False)
+                              harvest_judge_types=False, harvest_conclusions=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
         def embed(content, *a, **k):
@@ -1563,6 +1563,115 @@ class TestHarvestTriggers:
 
 
 # ---------------------------------------------------------------------------
+# Session verdicts (issue #259)
+# ---------------------------------------------------------------------------
+
+_FLICKER_SESSION = [
+    ("user", "The monitor flickers at 144 Hz after every wake; find out why and fix it."),
+    ("assistant", "Root cause found, 4 of 4 EDID flags are wrong on this panel."),
+    ("assistant", "Those flags come from the AOC timing chip, which fails above 60 Hz."),
+    ("assistant", "ref.ps1 now pins the display to 60 Hz at logon, and the flicker is gone."),
+]
+_FRAGMENT = "Root cause found, 4 of 4 EDID flags are wrong on this panel"
+_VERDICT = ("The AOC timing chip fails above 60 Hz, so the monitor stays at 60 Hz; "
+            "ref.ps1 pins it at logon")
+
+
+class TestSessionConclusions:
+    """A verdict that only emerges across messages still becomes a memory."""
+
+    @staticmethod
+    def _run(in_memory_db, tmp_path, monkeypatch, conclusions):
+        """Harvest the flicker session. `conclusions` is the verdict pass's reply,
+        or an exception it raises; the per-message pass keeps only the fragment."""
+        import httpx
+
+        import neurostack.config as config_mod
+
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        config_mod.get_config().harvest_conclusions = True
+        per_message = json.dumps(
+            [{"n": 1, "verdict": "SKIP"},
+             {"n": 2, "verdict": "KEEP", "type": "bug", "summary": _FRAGMENT},
+             {"n": 3, "verdict": "SKIP"}, {"n": 4, "verdict": "SKIP"}])
+        prompts = []
+
+        class _Resp:
+            def __init__(self, content):
+                self.content = content
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"choices": [{"message": {"content": self.content}}]}
+
+        def post(*a, **k):
+            prompt = k["json"]["messages"][0]["content"]
+            if "EXACTLY" in prompt:
+                return _Resp(per_message)
+            prompts.append(prompt)
+            if isinstance(conclusions, Exception):
+                raise conclusions
+            return _Resp(conclusions)
+
+        monkeypatch.setattr(httpx, "post", post)
+        monkeypatch.setattr("neurostack.config._auth_headers", lambda _key: {})
+        transcript = "\n".join(_claude_entry(role, text) for role, text in _FLICKER_SESSION)
+        report = harvest_transcript(transcript, session_id="s", source_agent="claude-code")
+        return report, prompts
+
+    def test_cross_message_verdict_is_saved(self, in_memory_db, tmp_path, monkeypatch):
+        report, prompts = self._run(in_memory_db, tmp_path, monkeypatch, json.dumps(
+            [{"type": "bug", "summary": _VERDICT}]))
+        # The pass read the whole session, in order, in one call.
+        assert len(prompts) == 1
+        at = [prompts[0].index(text) for _, text in _FLICKER_SESSION]
+        assert at == sorted(at)
+        verdicts = [r for r in report["saved"] if "session-verdict" in r["tags"]]
+        assert [(r["content"], r["entity_type"], r["status"]) for r in verdicts] == [
+            (_VERDICT, "bug", "saved")]
+        assert sorted(TestHarvestTranscript._memory_contents(in_memory_db)) == sorted(
+            [_FRAGMENT, _VERDICT])
+
+    def test_empty_array_saves_nothing(self, in_memory_db, tmp_path, monkeypatch):
+        report, _ = self._run(in_memory_db, tmp_path, monkeypatch, "[]")
+        assert [r["content"] for r in report["saved"]] == [_FRAGMENT]
+        assert report["skipped"] == []
+
+    def test_llm_error_keeps_per_message_memories(
+            self, in_memory_db, tmp_path, monkeypatch, caplog):
+        import httpx
+
+        with caplog.at_level(logging.WARNING, logger="neurostack"):
+            report, _ = self._run(in_memory_db, tmp_path, monkeypatch,
+                                  httpx.ConnectError("down"))
+        assert [r["content"] for r in report["saved"]] == [_FRAGMENT]
+        assert TestHarvestTranscript._memory_contents(in_memory_db) == [_FRAGMENT]
+        assert any("session conclusions failed" in r.getMessage() for r in caplog.records)
+
+    def test_duplicate_verdict_is_skipped(self, in_memory_db, tmp_path, monkeypatch):
+        from neurostack.memories import save_memory
+
+        save_memory(in_memory_db, content=_VERDICT, entity_type="bug",
+                    embed_url="http://embed.test")
+        report, _ = self._run(in_memory_db, tmp_path, monkeypatch, json.dumps(
+            [{"type": "bug", "summary": _VERDICT}]))
+        assert [r["content"] for r in report["saved"]] == [_FRAGMENT]
+        assert [(r["content"], r["status"]) for r in report["skipped"]] == [
+            (_VERDICT, "skipped (duplicate)")]
+
+    def test_budget_drops_the_oldest_messages(self, monkeypatch):
+        import neurostack.harvest as harvest_mod
+
+        monkeypatch.setattr(harvest_mod, "_CONCLUSIONS_BUDGET", 150)
+        messages = [Message(role="assistant", text=f"message {i} " + "x" * 50)
+                    for i in range(5)]
+        lines = harvest_mod._conclusions_transcript(messages)
+        assert [line.split()[2] for line in lines] == ["3", "4"]
+
+
+# ---------------------------------------------------------------------------
 # pending_sessions / harvest_session_file — queue driving (issue #180)
 # ---------------------------------------------------------------------------
 
@@ -1626,7 +1735,7 @@ class TestHarvestQueueEntryPoints:
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
                               index_llm_api_key=None, writeback_enabled=False,
-                              harvest_judge_types=False)
+                              harvest_judge_types=False, harvest_conclusions=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
         out = harvest_session_file(str(tmp_path / "new.jsonl"))
@@ -1648,7 +1757,7 @@ class TestHarvestQueueEntryPoints:
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
                               index_llm_api_key=None, writeback_enabled=False,
-                              harvest_judge_types=False)
+                              harvest_judge_types=False, harvest_conclusions=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
         harvest_session_file(str(tmp_path / "new.jsonl"), dry_run=True)
