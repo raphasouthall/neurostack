@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **#241 — `neurostack ui` web dashboard.** A read-only dashboard served by the stdlib (`src/neurostack/ui/server.py`) from static ES modules, with no build step and no new Python dependency. Pages: Overview, Automations (the `run-due` registry, runs and queues), Graph (force-graph, top notes by PageRank, note detail) and Memories. Data comes from `src/neurostack/dashboard.py` on a per-request read-only connection; `vault_stats` now wraps `index_stats(conn)`. Non-loopback hosts require `api_key` and a bearer token on `/api/*`. Vendored: htm 3.1.1 with Preact (Apache-2.0/MIT) and force-graph 1.51.4 (MIT).
+
 ### Removed
 
 - **#142 — request-time answering.** NeuroStack returns evidence; the caller reasons over it. Gone: the `vault_ask` MCP tool and `ask.py`, the `neurostack-ask` API model, the `neurostack ask` CLI command (it now prints the replacement and exits 2), the LLM session summary behind `vault_session_end(summarize=True)`, and the model-written eval label tier in `autolabel.py`. `vault_session_end(session_id, summary="…")` stores a summary the caller writes; `neurostack sessions end ID --summary "…"` is the CLI form. `neurostack eval --autolabel` uses stored summaries and titles, so it needs no model — its `--autolabel-mode`, `--autolabel-k`, `--autolabel-cache`, `--llm-url` and `--llm-model` flags are gone. No LLM call now happens while a caller waits on a retrieval tool. Index-time work is untouched: summaries, triples, community labels, harvest classification, synthesize and consolidate all still call a model.
