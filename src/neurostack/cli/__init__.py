@@ -60,6 +60,7 @@ from .setup import (
     cmd_update,
 )
 from .triggers import cmd_triggers
+from .ui import cmd_ui
 from .utils import _handle_error
 from .writeback import cmd_migrate, cmd_sync
 
@@ -338,6 +339,13 @@ def main():
     p.add_argument("--host", default=cfg.api_host, help="Bind host (default: 127.0.0.1)")
     p.add_argument("--port", type=int, default=cfg.api_port, help="Bind port (default: 8000)")
     p.set_defaults(func=cmd_api)
+
+    # ui (issue #243)
+    p = sub.add_parser("ui", help="Serve the read-only web dashboard")
+    p.add_argument("--host", default=cfg.api_host, help="Bind host (default: api_host)")
+    p.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765)")
+    p.add_argument("--open", action="store_true", help="Open the dashboard in a browser")
+    p.set_defaults(func=cmd_ui)
 
     # sessions
     p = sub.add_parser(
@@ -1046,6 +1054,8 @@ def main():
         "run-due", "jobs",
         # checkpoint-llm only calls the index LLM; a client host has no vault
         "checkpoint-llm",
+        # ui reads only the SQLite index and answers 503 until one exists
+        "ui",
     }
     vault_path = Path(args.vault)
     if args.command not in _skip_preflight and not vault_path.exists():
