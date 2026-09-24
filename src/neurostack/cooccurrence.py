@@ -366,62 +366,59 @@ def persist_cooccurrence(conn: sqlite3.Connection) -> int:
     return len(pair_weights)
 
 
-def upsert_cooccurrence_for_note(conn: sqlite3.Connection, note_path: str) -> int:
-    """Incrementally update co-occurrence for entities found in *note_path*.
-
-    Unlike ``persist_cooccurrence`` (which rebuilds every structural
-    weight), this function only touches pairs involving entities from the
-    given note. For each affected pair it recomputes the structural weight
-    across ALL notes so the result is always globally correct. The
-    ``reinforcement`` column is never modified, and pairs that no longer
-    co-occur structurally are deleted only when they carry no
-    reinforcement (issue #60).
-
-    Returns the number of pairs upserted.
-    """
+def note_entities(conn: sqlite3.Connection, note_path: str) -> set[str]:
+    """Every subject and object in *note_path*'s current triples."""
     rows = conn.execute(
         "SELECT subject, object FROM triples WHERE note_path = ?", (note_path,)
     ).fetchall()
+    return {r[0] for r in rows} | {r[1] for r in rows}
 
-    if not rows:
+
+def upsert_cooccurrence_for_note(
+    conn: sqlite3.Connection,
+    note_path: str,
+    old_entities: set[str] | frozenset[str] = frozenset(),
+) -> int:
+    """Incrementally update co-occurrence after *note_path*'s triples changed.
+
+    A pair's structural weight is the number of notes holding both entities,
+    so rewriting one note can only change pairs whose two entities were both
+    in that note before the rewrite or both in it after. Pass the entities the
+    note held before its triples were replaced as *old_entities*, so pairs the
+    note no longer supports get recomputed too. Only those pairs are touched;
+    each one's weight is recomputed across ALL notes, so the result stays
+    globally correct. ``reinforcement`` is never modified, and pairs that no
+    longer co-occur are deleted only when they carry no reinforcement (#60).
+
+    Widening the set to every entity already paired with the note's entities
+    turned 51 entities into 10,573 on the live vault and 55.9M pairs, all
+    computed and written inside the index write transaction.
+
+    Returns the number of pairs upserted.
+    """
+    new_entities = note_entities(conn, note_path)
+    entities = new_entities | set(old_entities)
+    if len(entities) < 2:
         return 0
-
-    entities: set[str] = set()
-    for r in rows:
-        entities.add(r["subject"])
-        entities.add(r["object"])
-
-    # Also find entities previously paired with any of our entities in
-    # co-occurrence (they may need cleanup if an entity was removed from
-    # this note).
-    if entities:
-        placeholders = ",".join("?" for _ in entities)
-        prev_rows = conn.execute(
-            f"SELECT DISTINCT entity_a, entity_b FROM entity_cooccurrence "
-            f"WHERE entity_a IN ({placeholders}) OR entity_b IN ({placeholders})",
-            list(entities) + list(entities),
-        ).fetchall()
-        for pr in prev_rows:
-            entities.add(pr["entity_a"])
-            entities.add(pr["entity_b"])
 
     entity_list = sorted(entities)
     now = datetime.now(timezone.utc).isoformat()
 
-    # Build a map of entity -> set of note_paths (single query)
-    placeholders = ",".join("?" for _ in entity_list)
-    rows = conn.execute(
-        f"SELECT DISTINCT subject, object, note_path FROM triples "
-        f"WHERE subject IN ({placeholders}) OR object IN ({placeholders})",
-        entity_list + entity_list,
-    ).fetchall()
-
+    # entity -> set of note paths holding it, in parameter-capped batches
     entity_notes: dict[str, set[str]] = defaultdict(set)
-    for r in rows:
-        if r["subject"] in entities:
-            entity_notes[r["subject"]].add(r["note_path"])
-        if r["object"] in entities:
-            entity_notes[r["object"]].add(r["note_path"])
+    for i in range(0, len(entity_list), SQL_PARAM_CHUNK // 2):
+        batch = entity_list[i : i + SQL_PARAM_CHUNK // 2]
+        placeholders = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"SELECT DISTINCT subject, object, note_path FROM triples "
+            f"WHERE subject IN ({placeholders}) OR object IN ({placeholders})",
+            batch + batch,
+        ).fetchall()
+        for r in rows:
+            if r["subject"] in entities:
+                entity_notes[r["subject"]].add(r["note_path"])
+            if r["object"] in entities:
+                entity_notes[r["object"]].add(r["note_path"])
 
     # Compute co-occurrence weights as intersection sizes
     upserts: list[tuple[str, str, float, str]] = []
