@@ -84,6 +84,22 @@ const customTools = [
 		(p) => ["memories", "forget", String(p.memory_id)],
 	),
 	tool(
+		"memory_add",
+		"Save one memory: an identifier or correction a future session will look up.",
+		Type.Object({
+			content: Type.String(),
+			entity_type: Type.Optional(Type.String({ description: "observation, decision, convention, learning, context or bug" })),
+			tags: Type.Optional(Type.String({ description: "comma-separated" })),
+			workspace: Type.Optional(Type.String()),
+		}),
+		(p) => [
+			"memories", "add", p.content,
+			"--type", p.entity_type ?? "observation",
+			...(p.tags ? ["--tags", p.tags] : []),
+			...(p.workspace ? ["--workspace", p.workspace] : []),
+		],
+	),
+	tool(
 		"graph_analysis",
 		"Structural gaps (related but unlinked note pairs) and bridge notes in the wiki-link graph, as JSON.",
 		Type.Object({ top_k: Type.Optional(Type.Integer()) }),

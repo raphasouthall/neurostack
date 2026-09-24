@@ -790,6 +790,10 @@ def main():
     p.add_argument("--model", default=None, help="Override agent_model for this run")
     p.add_argument("--cwd", default=None, help="Vault clone to work in (default vault_root)")
     p.add_argument("--timeout", type=int, default=None, help="Seconds before the run aborts")
+    p.add_argument("--transcript", default=None,
+                   help="vault-save only: session transcript (JSONL) to write into the vault")
+    p.add_argument("--format", default="omp", choices=["omp", "claude-code"],
+                   help="vault-save only: transcript format (default omp)")
     p.set_defaults(func=cmd_agent)
 
     # consolidate
