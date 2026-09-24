@@ -101,6 +101,7 @@ Models: `neurostack-search` (hybrid), `neurostack-tiered` (auto-depth), `neurost
 | `neurostack feedback` | Show accumulated implicit-feedback stats — searches, uses, ranks (issue #66) |
 | `neurostack migrate write-back` | Export qualifying memories to markdown files (issue #20). `--dry-run` to preview |
 | `neurostack agent promotion` | Run a bundled Pi agent job (#217) on OpenRouter (`agent_model`, default `anthropic/claude-sonnet-5`). Needs Node 22.19+; deps install once into `~/.cache/neurostack/agent`. `--prompt-file PATH|-` runs your own prompt, `--mode X` appends a RUN MODE line. `--model`, `--cwd`, `--timeout`. `agent_base_url` sends it through a compatible proxy (e.g. CLIProxyAPI) |
+| `neurostack agent vault-save --transcript PATH` | Run the vault-save Pi job on one whole session transcript (#268): patches notes in place, fixes stale lines, at most 3 new notes, then commits and pushes the vault. `--format omp\|claude-code`. Config `vault_save_on_checkpoint = true` runs it after each successful server checkpoint |
 | `neurostack sync` | Reconcile write-back files against the DB (DB wins on conflict) |
 
 ### Setup & Diagnostics
@@ -199,6 +200,7 @@ File: `~/.config/neurostack/config.toml`
 | `notify_command` | (none) | `NEUROSTACK_NOTIFY_COMMAND` |
 | `checkpoint_command` | (none), so the server queue workers stay off | `NEUROSTACK_CHECKPOINT_COMMAND` |
 | `checkpoint_timeout_s` | `300` | `NEUROSTACK_CHECKPOINT_TIMEOUT_S` |
+| `vault_save_on_checkpoint` | `false` | `NEUROSTACK_VAULT_SAVE_ON_CHECKPOINT` |
 | `checkpoint_max_messages` | `0` (no cap) | `NEUROSTACK_CHECKPOINT_MAX_MESSAGES` |
 | `harvest_conclusions` | `true` (one extra index-LLM call per harvested session for its verdicts, #259) | `NEUROSTACK_HARVEST_CONCLUSIONS` |
 
