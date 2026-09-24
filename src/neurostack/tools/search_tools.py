@@ -536,17 +536,13 @@ def vault_checkpoint(baseline: str = "default") -> dict:
     return save_checkpoint(get_db(DB_PATH), baseline=baseline)
 
 
-@registry.tool(tags=["search", "stats"], annotations=_READ_ONLY)
-def vault_stats() -> dict:
-    """Get index health: note count, embedding coverage, graph stats, triple stats."""
+def index_stats(conn) -> dict:
+    """Index health read from `conn`, shared by vault_stats and the dashboard."""
     from ..community import community_build_status as _community_build_status
     from ..cooccurrence import get_cooccurrence_stats
     from ..memories import get_memory_source_counts, get_memory_stats
-    from ..schema import DB_PATH, get_db
     from ..search import get_dormancy_report
     from ..triggers import trigger_stats
-
-    conn = get_db(DB_PATH)
 
     notes = conn.execute("SELECT COUNT(*) as c FROM notes").fetchone()["c"]
     chunks = conn.execute("SELECT COUNT(*) as c FROM chunks").fetchone()["c"]
@@ -620,6 +616,14 @@ def vault_stats() -> dict:
         },
     }
     return result
+
+
+@registry.tool(tags=["search", "stats"], annotations=_READ_ONLY)
+def vault_stats() -> dict:
+    """Get index health: note count, embedding coverage, graph stats, triple stats."""
+    from ..schema import DB_PATH, get_db
+
+    return index_stats(get_db(DB_PATH))
 
 
 @registry.tool(tags=["search", "usage"], annotations=_WRITE_ADDITIVE)
