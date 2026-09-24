@@ -220,7 +220,9 @@ A memory row stores its content, tags, type, workspace, source agent, embedding 
 2. **Diversity.** Results keep one chunk per note, and similar notes suppress each other, so one long note cannot fill the result list.
 3. **Tiered depth.** A client asks for triples (about 15 tokens), summaries (about 75) or full notes (about 300), or lets `auto` escalate only when the cheaper tier misses.
 4. **Context assembly.** `vault_context` splits its token budget into 40% memories, 20% triples, 30% summaries and 10% sessions, so no single source crowds out the rest.
-5. **Hard limits.** Every search returns at most `top_k` results. No retrieval path calls an LLM unless you pass `rerank=True`, which reorders whole notes with the judge model and falls back to the original order on any error.
+5. **Hard limits.** Every search returns at most `top_k` results. No retrieval path calls an LLM unless you pass `rerank=True` (see below).
+
+**Optional reranking.** `vault_search(rerank=True)` asks the judge model to score each whole-note result against your query and returns the judge's order. On 76 real search clicks it raised MRR from 0.503 to 0.652, top-1 hits from 34% to 49% and top-3 hits from 57% to 75% (paired permutation p=0.004). Each search costs about $0.0004 and adds about 0.4 s. It works with `depth="full"` or `reference_only=True` and raises an error at the other depths. If the judge fails, you get the normal order back.
 
 Usage makes a note easier to find again. It never marks a note as true.
 
@@ -230,6 +232,22 @@ Usage makes a note easier to find again. It never marks a note as true.
 - A harvested memory does not link back to the session and message it came from.
 - A forgotten memory can come back if a later session says the same thing, because the duplicate check reads only live memories.
 - Editing a memory replaces its text, and only `revision_count` shows that it changed.
+
+### External services
+
+Lite mode needs none of these. Everything below is opt-in and set in `~/.config/neurostack/config.toml`, and each one has a matching `NEUROSTACK_*` env var. When a service is missing, the feature that needs it switches off and the rest keeps working.
+
+| Service | Config keys | Default | What uses it | Without it |
+|---|---|---|---|---|
+| **Embedder**, any OpenAI-compatible `/v1/embeddings` | `embed_url`, `embed_model`, `embed_api_key`, `embed_timeout_s` | Local Ollama, `nomic-embed-text` | Semantic search, memory similarity, duplicate checks, synthesis clusters | Keyword search only. New memories get flagged for `neurostack backfill`. |
+| **Index LLM**, Ollama or any OpenAI-compatible chat API | `index_llm_url`, `index_llm_model`, `index_llm_api_key`, or `index_llm_command` for a CLI such as `claude -p` | Local Ollama, `phi3.5` | Note summaries, triples, topic labels, harvest extraction, synthesis | No summaries or triples. Harvest cannot extract memories. |
+| **Judge model**, OpenRouter decisions API | `judge_url`, `judge_model`, `judge_api_key` | `~typesafe/jev-latest` on OpenRouter, fails without a key | Harvest memory types, `rerank=True`, the promotion queue's "uncovered" check | Harvest keeps the index LLM's type, rerank returns the normal order, and uncovered memories are counted as pending. |
+| **Agent**, Pi (`@earendil-works/pi-coding-agent`) on OpenRouter or a compatible proxy | `agent_provider`, `agent_model`, `agent_api_key`, `agent_base_url` | `anthropic/claude-sonnet-5`, needs Node 22.19+ | `neurostack agent promotion`, which writes notes from the promotion queue | The promotion job shows as blocked. The queue still builds. |
+| **Checkpoint command**, any shell command that answers a prompt on stdin | `checkpoint_command` | Off | Server workers that turn queued `/save` checkpoints and harvest jobs into memories | Queued checkpoints wait. Local harvest still runs. |
+| **Notify command**, any shell command | `notify_command` | Off | Receives a failed job run as JSON, for example `ntfy publish mytopic` | Failures show only in `neurostack jobs` and the dashboard. |
+| **Git remote** on your vault | Your vault's git config | None | `vault_write_file`, `vault_delete_file` and promotion commit and push each change | A write rolls back when the push fails. Reading never needs git. |
+
+Only the embedder and the index LLM see your note text. The judge sees queries, memories and the notes being ranked or checked. Point every URL at localhost to keep all data on your machine.
 
 ---
 
