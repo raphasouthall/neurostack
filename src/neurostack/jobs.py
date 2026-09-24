@@ -301,12 +301,23 @@ def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
             else:
                 output = f"failed: {data.get('error') or 'unknown'}"
             finish(conn, job["job_id"], ok, saved=saved, output=output)
+            vault_save_code = None
+            if ok and queue == "checkpoint" and cfg.vault_save_on_checkpoint:
+                # The same transcript, whole, through the vault-save agent (#268).
+                from .cli.agent import vault_save
+                vault_save_code = vault_save(cfg, tmp, payload["format"])
         finally:
             tmp.unlink(missing_ok=True)
         if not ok:
             # n8n stopped the execution with an error here, which alerted.
             raise JobFailed([f"{queue} job {job['job_id']} ({job['key']}): {output}"])
-        return {**result, "finished_ok": 1, "job_id": job["job_id"], "saved": saved}
+        if vault_save_code:
+            raise JobFailed([f"{queue} job {job['job_id']}: vault-save agent exited "
+                             f"{vault_save_code}"])
+        result = {**result, "finished_ok": 1, "job_id": job["job_id"], "saved": saved}
+        if vault_save_code is not None:
+            result["vault_save"] = "ok"
+        return result
 
     return body
 

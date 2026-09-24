@@ -72,10 +72,24 @@ def runs(monkeypatch):
     return state
 
 
-def _server(tmp_path, command="true"):
+def _server(tmp_path, command="true", vault_save=False):
     """The server's Config, as far as the workers read it."""
     return SimpleNamespace(db_dir=tmp_path, checkpoint_command=command,
-                           checkpoint_timeout_s=300.0, checkpoint_max_messages=40)
+                           checkpoint_timeout_s=300.0, checkpoint_max_messages=40,
+                           vault_save_on_checkpoint=vault_save)
+
+
+@pytest.fixture
+def saves(monkeypatch):
+    """Replace the vault-save agent; it records the transcript it read and returns `code`."""
+    state = SimpleNamespace(code=0, seen=[])
+
+    def fake(cfg, transcript, fmt, **kw):
+        state.seen.append((transcript.read_text(), fmt))
+        return state.code
+
+    monkeypatch.setattr("neurostack.cli.agent.vault_save", fake)
+    return state
 
 
 def _row(conn, job_id):
@@ -211,6 +225,43 @@ def test_a_failed_or_busy_checkpoint_finishes_failed_and_fails_the_run(
     assert (_row(in_memory_db, job_id)["status"], _row(in_memory_db, job_id)["output"]) == (
         "failed", output)
     assert list((tmp_path / "tmp").iterdir()) == []
+
+
+def test_vault_save_runs_on_a_saved_checkpoint_only_when_turned_on(
+        in_memory_db, client, runs, saves, tmp_path):
+    add(in_memory_db, "checkpoint", "s1", {"session": "s1", "harness": "omp"}, transcript="a\n")
+    JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
+    assert saves.seen == []
+
+    add(in_memory_db, "checkpoint", "s2", {"session": "s2", "harness": "omp"}, transcript="b\n")
+    result = JOBS["checkpoint-worker"].run(_server(tmp_path, vault_save=True), in_memory_db)
+    assert saves.seen == [("b\n", "omp")]
+    assert result["vault_save"] == "ok"
+    assert list((tmp_path / "tmp").iterdir()) == []
+
+
+def test_vault_save_skips_a_failed_checkpoint_and_the_harvest_queue(
+        in_memory_db, client, runs, saves, tmp_path):
+    runs.reply = Verdict(data={"ok": False, "saved": 0, "found": 0, "error": "boom"})
+    add(in_memory_db, "checkpoint", "s1", {"session": "s1", "harness": "omp"}, transcript="a\n")
+    with pytest.raises(JobFailed):
+        JOBS["checkpoint-worker"].run(_server(tmp_path, vault_save=True), in_memory_db)
+
+    runs.reply = Verdict(data={"ok": True, "saved": 1, "found": 1})
+    add(in_memory_db, "harvest", "/x/2026_s3.jsonl", {"path": "/x/2026_s3.jsonl"},
+        transcript="c\n")
+    JOBS["harvest-worker"].run(_server(tmp_path, vault_save=True), in_memory_db)
+    assert saves.seen == []
+
+
+def test_a_failed_vault_save_fails_the_run_but_keeps_the_checkpoint_done(
+        in_memory_db, client, runs, saves, tmp_path):
+    saves.code = 1
+    job_id = add(in_memory_db, "checkpoint", "s1", {"session": "s1", "harness": "omp"},
+                 transcript="a\n")["job_id"]
+    with pytest.raises(JobFailed, match="vault-save agent exited 1"):
+        JOBS["checkpoint-worker"].run(_server(tmp_path, vault_save=True), in_memory_db)
+    assert _row(in_memory_db, job_id)["status"] == "done"
 
 
 def test_a_job_without_a_transcript_fails_without_running(in_memory_db, client, runs, tmp_path):
