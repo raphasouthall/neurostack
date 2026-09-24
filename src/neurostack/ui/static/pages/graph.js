@@ -1,28 +1,32 @@
 import { html, useState, useEffect, useRef } from '../lib.js';
 import { api, fmtAgo, fmtNum } from '../api.js';
 
-// Muted colours indexed by community id; notes outside any community are grey.
-const PALETTE = ['#7c9cbf', '#c9a26b', '#8fb28a', '#c98a8a', '#a58fc0',
-  '#6fb1ad', '#c7a0b8', '#a3a36b', '#8a9aa8', '#b8907a'];
-const NO_COMMUNITY = '#bdbdb8';
+// Canvas colours come from the theme tokens. Communities cycle through the
+// accent list; notes outside any community are stone.
+const PALETTE = ['--running', '--ok', '--warning', '--brown', '--success', '--pink', '--pending', '--failed'];
+function themeColors() {
+  const s = getComputedStyle(document.documentElement);
+  const v = (name) => s.getPropertyValue(name).trim();
+  return { palette: PALETTE.map(v), none: v('--stone'), link: v('--hairline'), ink: v('--ink') };
+}
 
 document.head.insertAdjacentHTML('beforeend', `<style>
 .graph-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .graph-bar .sub { margin-left: auto; }
 .graph-canvas, .graph-panel { height: calc(100vh - 210px); min-height: 360px; }
-.graph-canvas { overflow: hidden; border-radius: 12px; }
+.graph-canvas { overflow: hidden; border-radius: 20px; }
 .graph-stage { min-width: 0; }
 .graph-panel { display: flex; flex-direction: column; }
 .graph-panel .card-head { display: flex; justify-content: space-between; align-items: center; }
 .graph-panel .card-body { flex: 1; overflow: auto; }
-.graph-close { background: none; border: 0; cursor: pointer; font-size: 16px; color: #6b6b66; }
-.graph-title { font-size: 16px; font-weight: 500; margin: 0 0 4px; }
-.graph-path { font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
-  font-size: 11px; color: #8a8a85; word-break: break-all; margin-bottom: 12px; }
+.graph-close { background: none; border: 0; cursor: pointer; font-size: 16px; color: var(--mute); }
+.graph-title { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+.graph-path { font: 12px var(--mono); color: var(--stone); word-break: break-all; margin-bottom: 12px; }
 .graph-summary { font-size: 13px; line-height: 1.5; margin: 0 0 12px; }
 .graph-nb { margin-top: 16px; }
+.graph-nb .card-head { padding: 0 0 8px; }
 .graph-nb button { display: block; width: 100%; background: none; border: 0; padding: 4px 0;
-  text-align: left; font: inherit; font-size: 13px; color: #1a1a1a; cursor: pointer; }
+  text-align: left; font: inherit; font-size: 13px; color: var(--ink); cursor: pointer; }
 .graph-nb button:hover { text-decoration: underline; }
 </style>`);
 
@@ -56,6 +60,7 @@ export default function Page() {
   const fg = useRef();
   // The canvas callbacks are bound once, so they read live state from here.
   const view = useRef({ pending: selected });
+  view.current.colors ??= themeColors();
   view.current.query = query.trim().toLowerCase();
   view.current.selected = selected;
 
@@ -67,8 +72,8 @@ export default function Page() {
   }
 
   function color(n) {
-    const v = view.current;
-    const base = n.community == null ? NO_COMMUNITY : PALETTE[n.community % PALETTE.length];
+    const v = view.current, c = v.colors;
+    const base = n.community == null ? c.none : c.palette[n.community % c.palette.length];
     if (v.query && !n.key.includes(v.query)) return base + '26';
     return n.status === 'dormant' ? base + '59' : base;
   }
@@ -78,7 +83,7 @@ export default function Page() {
     if (n.id === v.selected) {
       ctx.beginPath();
       ctx.arc(n.x, n.y, n.r + 2 / scale, 0, 2 * Math.PI);
-      ctx.strokeStyle = '#111';
+      ctx.strokeStyle = v.colors.ink;
       ctx.lineWidth = 1.5 / scale;
       ctx.stroke();
     }
@@ -87,7 +92,7 @@ export default function Page() {
     ctx.font = `${11 / scale}px Inter, system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = '#1a1a1a';
+    ctx.fillStyle = v.colors.ink;
     ctx.fillText(n.title || n.id, n.x, n.y + n.r + 2 / scale);
   }
 
@@ -100,7 +105,7 @@ export default function Page() {
         .nodeCanvasObjectMode(() => 'after').nodeCanvasObject(decorate)
         // Lay out before the first frame so a deep-linked node is centred where it settles.
         .warmupTicks(100)
-        .linkColor(() => '#d9d9d4').linkWidth(0.5)
+        .linkColor(() => view.current.colors.link).linkWidth(0.5)
         .onNodeHover(n => { view.current.hover = n; })
         .onNodeClick(n => focus(n.id))
         .onEngineTick(() => {
@@ -115,10 +120,17 @@ export default function Page() {
     }, e => setError(e.message));
     api('communities').then(setCommunities, e => setError(e.message));
     const onHash = () => { const p = hashNote(); if (p) focus(p); };
+    // Re-setting an accessor makes force-graph redraw in the new colours.
+    const onTheme = () => {
+      view.current.colors = themeColors();
+      g?.nodeColor(color).linkColor(() => view.current.colors.link);
+    };
     addEventListener('hashchange', onHash);
+    addEventListener('ns-theme', onTheme);
     return () => {
       alive = false;
       removeEventListener('hashchange', onHash);
+      removeEventListener('ns-theme', onTheme);
       ro?.disconnect();
       g?._destructor();
       fg.current = null;

@@ -14,7 +14,8 @@ document.head.insertAdjacentHTML('beforeend', `<style>
 .mem-table th:nth-child(6) { width: 90px; }
 .mem-table td:nth-child(n+4) { white-space: nowrap; }
 .mem-tags { display: flex; flex-wrap: wrap; gap: 2px 4px; }
-.mem-tag { padding: 1px 6px; border: 1px solid #e8e8e5; border-radius: 6px; background: #f7f7f5; color: #6b6b66; font-size: 11px; white-space: nowrap; }
+.mem-tag { padding: 1px 6px; border-radius: 9999px; background: var(--surface-soft); color: var(--mute); font-size: 11px; white-space: nowrap; }
+.mem-tools { display: flex; gap: 8px; }
 </style>`);
 
 const LIMITS = [50, 100, 250, 500];
@@ -70,8 +71,8 @@ export default function Page() {
     </div>
     <div class="card">
       <div class="card-head">
-        <span>MEMORIES</span>
-        <span>
+        <span>Memories</span>
+        <span class="mem-tools">
           <input class="input" type="search" placeholder="Search memories" aria-label="Search memories"
             value=${text} onInput=${(e) => setText(e.target.value)} />
           <select class="input" aria-label="Rows to show" value=${limit}

@@ -3,10 +3,11 @@ import { api } from '../api.js';
 
 // Module code runs once per page load, so the style is injected once.
 document.head.insertAdjacentHTML('beforeend', `<style>
-.login { display: grid; place-items: center; min-height: calc(100vh - 48px); }
-.login form { width: 360px; display: flex; flex-direction: column; gap: 12px; }
-.login .logo { padding: 0 0 4px; }
-.login .input { height: 36px; }
+.login { display: grid; place-items: center; min-height: calc(100vh - 64px); }
+.login form { width: 400px; display: flex; flex-direction: column; gap: 16px; padding: 32px; }
+.login .logo { padding: 0 0 8px; font-size: 22px; }
+.login .logo-mark { width: 32px; height: 32px; }
+.login .input { height: 56px; font-size: 16px; }
 .login .btn { justify-content: center; }
 </style>`);
 
@@ -31,7 +32,7 @@ export default function Login({ onDone }) {
   return html`
     <div class="login">
       <form class="card card-body" onSubmit=${submit}>
-        <div class="logo"><span class="logo-mark" aria-hidden="true"></span>NeuroStack</div>
+        <div class="logo"><img class="logo-mark" src="logo.svg" alt="" />NeuroStack</div>
         <input class="input" name="username" placeholder="Username" aria-label="Username"
           autocomplete="username" autofocus required />
         <input class="input" name="password" type="password" placeholder="Password" aria-label="Password"
