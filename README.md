@@ -4,11 +4,11 @@
 [![npm](https://img.shields.io/npm/v/neurostack)](https://www.npmjs.com/package/neurostack)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![CI](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml/badge.svg)](https://github.com/raphasouthall/neurostack/actions/workflows/ci.yml)
-[![MCP](https://img.shields.io/badge/MCP-24%20tools-green)](https://modelcontextprotocol.io)
+[![MCP](https://img.shields.io/badge/MCP-33%20tools-green)](https://modelcontextprotocol.io)
 
 **A local retrieval layer and optimizer for the Markdown knowledge base you already have.**
 
-NeuroStack indexes a folder of `.md` files (Obsidian, Logseq, Notion exports, plain Markdown) into SQLite with FTS5, embeddings and a wiki-link graph, and exposes it to any MCP client as search, graph queries and agent memories. Retrieval returns ranked evidence and your AI does the reasoning — no model runs while you wait on a query. NeuroStack then keeps the base accurate: it flags notes that have gone stale, harvests decisions and root causes from AI sessions into memories, synthesises recurring memories into learnings, and queues proven ones for promotion into notes. Indexing never modifies your files. Optional MCP write tools let a client author or edit notes through your git history.
+NeuroStack indexes a folder of `.md` files (Obsidian, Logseq, Notion exports, plain Markdown) into one SQLite database with full-text search, embeddings and a wiki-link graph. Any MCP client can then search it, walk the graph and save memories. A query returns ranked evidence with note paths, and your AI does the reasoning, so no model runs while you wait. Between queries NeuroStack keeps the knowledge base accurate. It flags notes that have gone stale, harvests decisions and root causes from your AI sessions, merges recurring memories into learnings, and queues the proven ones to become notes. Indexing never changes your files, and optional MCP write tools let a client edit notes through your git history.
 
 Works with Claude, Cursor, Windsurf, Gemini CLI, VS Code, Codex and any other client that supports MCP.
 
@@ -152,6 +152,84 @@ To uninstall: `neurostack uninstall`
 Editable sources live in the `.drawio` files next to the images.
 
 </details>
+
+---
+
+## Design
+
+### Philosophy
+
+1. Your files stay yours. The index lives in its own database, so deleting it leaves your notes exactly as they were.
+2. NeuroStack returns evidence and your AI reasons over it. No tool answers questions, and `tests/test_no_answering.py` keeps it that way.
+3. Removing a memory moves it to an archive that search cannot reach, and you can restore it later.
+4. NeuroStack redacts secrets from text a model wrote, such as harvested summaries. It stores what you or your agent saved on purpose word for word.
+5. Ranking changes get measured first. `neurostack eval` switches off usage learning while it runs, so one pass cannot skew the next.
+
+### Mental model
+
+NeuroStack holds two layers and one loop.
+
+The **vault** is your Markdown. NeuroStack reads it, splits it into chunks, embeds them, summarises each note, extracts facts as triples and builds the link graph. Note status and tags live in NeuroStack's own `note_metadata` table, so it never needs to edit your frontmatter.
+
+The **memory layer** holds what agents learn, typed as observations, decisions, conventions, learnings, bugs or context. These rows belong to NeuroStack and carry an optional workspace and an optional expiry.
+
+The **optimizer loop** runs on a timer and connects the two. A memory usually starts in an AI session, becomes a learning when it keeps recurring, and becomes a note once no existing note covers it.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    V[/"Markdown vault<br/>never modified"/] --> IX["index<br/>chunk, embed, summarise,<br/>triples, link graph"]
+    IX --> DB[("neurostack.db<br/>SQLite + FTS5")]
+    S[/"AI session transcripts"/] --> H["harvest"]
+    A["MCP client or CLI"] -->|vault_remember| DB
+    H --> DB
+    DB --> R["search, tiered, context,<br/>graph, brief"]
+    R --> A
+    DB --> J["timer jobs<br/>synthesize, promotion,<br/>decay, communities"]
+    J --> DB
+    J -->|opt-in, git commit| V
+    DB --> UI["neurostack ui<br/>read-only dashboard"]
+```
+
+One OS timer runs `neurostack run-due` every minute, and that command runs each due job in turn. `neurostack serve` exposes 33 MCP tools over stdio or HTTP, and `neurostack api` serves the same retrieval as an OpenAI-compatible API.
+
+### Data model
+
+| Area | Tables | Purpose |
+|---|---|---|
+| Vault index | `notes`, `chunks` + `chunks_fts`, `summaries`, `triples` + `triples_fts`, `graph_edges`, `note_metadata` | Searchable copy of your notes. Deleting a note cascades to its chunks, summaries and triples. |
+| Topics | `communities`, `community_members`, `folder_summaries` | Topic clusters and folder summaries for broad questions. |
+| Memories | `memories` + `memories_fts`, `memories_archive`, `memory_sessions` | Live memories and their embeddings. The archive has no full-text index and no embedding, so search cannot reach it. |
+| Quality signals | `prediction_errors`, `trigger_log`, `memory_coverage`, `note_usage` | Stale notes, memories that drifted from the notes they cite, ignored reminders, cached coverage verdicts, and usage for hotness. |
+| Feedback and jobs | `search_log`, `search_feedback`, `job_runs`, `job_queue` | Implicit search feedback (opt-in), job history, and queued checkpoint work. |
+
+A memory row stores its content, tags, type, workspace, source agent, embedding and expiry. It also records `embed_pending` when the embedder was down, so `neurostack backfill` can embed it later, plus `revision_count` and `merged_from` for edits and merges. A second database, `sessions.db`, indexes raw session transcripts for `neurostack sessions search`.
+
+### Write mechanics
+
+1. **Deliberate saves.** `vault_remember` and `neurostack memories add` store the text as written, embed it once, then report any near-duplicate above 0.85 similarity without refusing the save. If embedding fails, the row still saves and gets flagged for backfill.
+2. **Harvest.** The index LLM reads each session message and keeps decisions, root causes, rules and facts. A second pass reads the session as a whole and saves up to 3 final conclusions tagged `session-verdict`. The judge model then picks each memory's type. Harvest redacts secrets, skips anything above 0.88 similarity to a live memory, and records how many messages of each session it has read.
+3. **Synthesis.** Observations at least 7 days old that cluster at 0.75 similarity or higher (one anchor plus 3 or more others) become one learning. The originals stay, tagged `superseded_by:<id>`.
+4. **Removal.** Forget, the losing side of a merge, expiry and prune all go through one helper that copies the row into `memories_archive` with a reason and a timestamp, then deletes it from the live table. Search checks expiry before it runs, so an expired memory never shows up.
+5. **Vault writes.** Only the opt-in tools (`vault_write_file`, `vault_delete_file`) and the promotion job touch the vault, and each one commits and pushes to git.
+
+### Read mechanics
+
+1. **Hybrid search.** NeuroStack scores each chunk as 0.3 × keyword score plus 0.7 × embedding similarity. It then adds a convergence bonus, a 1.4× boost for the caller's context, usage hotness and co-occurrence, and demotes notes flagged as stale.
+2. **Diversity.** Results keep one chunk per note, and similar notes suppress each other, so one long note cannot fill the result list.
+3. **Tiered depth.** A client asks for triples (about 15 tokens), summaries (about 75) or full notes (about 300), or lets `auto` escalate only when the cheaper tier misses.
+4. **Context assembly.** `vault_context` splits its token budget into 40% memories, 20% triples, 30% summaries and 10% sessions, so no single source crowds out the rest.
+5. **Hard limits.** Every search returns at most `top_k` results. No retrieval path calls an LLM unless you pass `rerank=True`, which reorders whole notes with the judge model and falls back to the original order on any error.
+
+Usage makes a note easier to find again. It never marks a note as true.
+
+### Known limits
+
+- Harvested memories do not record their workspace yet, so a workspace-scoped search misses them.
+- A harvested memory does not link back to the session and message it came from.
+- A forgotten memory can come back if a later session says the same thing, because the duplicate check reads only live memories.
+- Editing a memory replaces its text, and only `revision_count` shows that it changed.
 
 ---
 
