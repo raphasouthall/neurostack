@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **Hung embed calls.** A single-text embed (used by saves and memory search) now times out after `embed_timeout_s` (default 12 s, env `NEUROSTACK_EMBED_TIMEOUT_S`) and retries once on a network error, 429 or 5xx, so two tries stay under the 30 s MCP client timeout. Batch indexing keeps its 300 s timeout.
 - **vault_remember timeouts.** `save_memory` embedded the same text twice, once for the row and again for the near-duplicate check. With a remote embedder whose slow calls take 5 to 7 s, two calls in a row pushed saves past the 30 s MCP client timeout (a real save measured 30.4 s). The duplicate check now reuses the row's embedding.
 
 ### Added
