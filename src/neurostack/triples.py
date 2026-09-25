@@ -109,13 +109,44 @@ def _extract_json_blob(raw: str) -> str:
     return raw
 
 
+def _salvage_triples(raw: str) -> list[dict]:
+    """Every complete ``{s, p, o}`` object in ``raw``, in order (#280).
+
+    The model sometimes breaks one entry or stops mid-object; the triples
+    before and after the damage are still whole JSON objects.
+    """
+    decoder = json.JSONDecoder()
+    found: list[dict] = []
+    pos = raw.find("{")
+    while pos != -1:
+        try:
+            obj, end = decoder.raw_decode(raw, pos)
+        except ValueError:
+            pos = raw.find("{", pos + 1)
+            continue
+        if isinstance(obj, dict) and {"s", "p", "o"} <= obj.keys():
+            found.append(obj)
+            pos = raw.find("{", end)
+        else:
+            pos = raw.find("{", pos + 1)
+    return found
+
+
 def _parse_triples(raw: str) -> list:
     """Parse raw LLM output into a list of triple candidates.
 
     Accepts a bare JSON array, a ``{"triples": [...]}`` object, or those forms
-    embedded in surrounding prose / markdown fences. Raises on unparseable input.
+    embedded in surrounding prose / markdown fences. A reply that does not
+    parse whole keeps its complete triples. Raises when none survive.
     """
-    data = json.loads(_extract_json_blob(raw))
+    try:
+        data = json.loads(_extract_json_blob(raw))
+    except json.JSONDecodeError:
+        salvaged = _salvage_triples(raw)
+        if not salvaged:
+            raise
+        log.warning("Triple reply was malformed; kept %d complete triples", len(salvaged))
+        return salvaged
     if isinstance(data, dict):
         data = data.get("triples", data.get("facts", []))
     if not isinstance(data, list):
