@@ -1066,7 +1066,7 @@ class TestOmpSubagentTranscripts:
         import neurostack.harvest as harvest_mod
         monkeypatch.setattr(harvest_mod, "_harvest_state_path",
                             lambda: tmp_path / "state.json")
-        monkeypatch.setattr(harvest_mod, "_harvest_messages", lambda *a, **k: None)
+        monkeypatch.setattr(harvest_mod, "_harvest_messages", lambda *a, **k: True)
         monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
@@ -1555,6 +1555,26 @@ class TestHarvestTriggers:
         assert "trigger" not in report["saved"][0]
         assert report["saved"][0]["tags"] == [*_extract_tags(_CORRECTION), "session:s5"]
 
+    def test_a_failed_classify_batch_leaves_the_transcript_re_postable(
+            self, in_memory_db, tmp_path, monkeypatch):
+        import httpx
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+
+        def down(*a, **k):
+            raise httpx.ConnectError("llm down")
+
+        monkeypatch.setattr(httpx, "post", down)
+        transcript = _claude_entry("user", _CORRECTION)
+        first = harvest_transcript(transcript, session_id="s7", source_agent="claude-code")
+        # The keyword fallback still saved the correction, but the batch failed,
+        # so the same text is classified again when it is posted again.
+        assert first["saved"]
+        self._llm(monkeypatch, _keep("Use vault_update_memory for existing notes"))
+        second = harvest_transcript(transcript, session_id="s7", source_agent="claude-code")
+        assert second.get("note") != "transcript already harvested"
+        third = harvest_transcript(transcript, session_id="s7", source_agent="claude-code")
+        assert third.get("note") == "transcript already harvested"
+
     def test_posted_transcript_saves_with_workspace_and_session_pointer(
             self, in_memory_db, tmp_path, monkeypatch):
         TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
@@ -1750,7 +1770,7 @@ class TestHarvestQueueEntryPoints:
         self._wire(tmp_path, monkeypatch, sessions)
         monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [])
         monkeypatch.setattr(harvest_mod, "_harvest_messages",
-                            lambda *a, **k: None)
+                            lambda *a, **k: True)
         monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",
@@ -1772,7 +1792,7 @@ class TestHarvestQueueEntryPoints:
         sessions = self._sessions(tmp_path)
         self._wire(tmp_path, monkeypatch, sessions)
         monkeypatch.setattr(harvest_mod, "extract_messages", lambda s: [])
-        monkeypatch.setattr(harvest_mod, "_harvest_messages", lambda *a, **k: None)
+        monkeypatch.setattr(harvest_mod, "_harvest_messages", lambda *a, **k: True)
         monkeypatch.setattr("neurostack.schema.get_db", lambda path: in_memory_db)
         cfg = SimpleNamespace(embed_url="http://embed.test",
                               index_llm_url="http://llm.test", index_llm_model="m",

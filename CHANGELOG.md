@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Harvest no longer loses messages when a classify batch fails (#276). A timeout, 5xx or unparseable reply fell back to keyword-only for that batch and still moved the session's watermark, or recorded a posted transcript's digest, so those messages were never classified again. A failed batch or save now leaves both where they were; the next run reads the session again and dedup drops what was already saved. `harvest` reports held sessions under `held`.
+
 ### Changed
 
 - Hook output now fences recalled text (#274). The session brief, per-prompt context and trigger reminders wrap stored text in a `neurostack-recall` tag, HTML-escape it so it cannot close the tag, keep each reminder on one line, and say the text is background data, not instructions. A memory or note that contains something shaped like a command can no longer pass for harness text.
