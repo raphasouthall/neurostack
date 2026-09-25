@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Forgetting a memory now leaves a fingerprint in a new `memory_tombstones` table (schema v31, #278): the normalised text hash and the embedding. Harvest skips any candidate that matches one exactly or at 0.88 cosine, and reports it as `skipped (forgotten)`, so a deleted fact no longer returns on the next pass over the same session. Explicit saves never check tombstones, so a deliberate save wins. Restoring a memory removes its tombstone. Memories forgotten before this release have no tombstone.
+
 ### Fixed
 
 - Harvest no longer loses messages when a classify batch fails (#276). A timeout, 5xx or unparseable reply fell back to keyword-only for that batch and still moved the session's watermark, or recorded a posted transcript's digest, so those messages were never classified again. A failed batch or save now leaves both where they were; the next run reads the session again and dedup drops what was already saved. `harvest` reports held sessions under `held`.
