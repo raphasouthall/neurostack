@@ -1043,13 +1043,15 @@ def _llm_classify(
     candidates: list[dict],
     index_llm_url: str,
     index_llm_model: str,
+    failures: list[str] | None = None,
 ) -> list[dict]:
     """Use local LLM to classify and summarize candidate insights.
 
     Sends batches of CLASSIFY_BATCH_SIZE, JSON in and out, validated against
     the batch size; candidates the model left unanswered get ONE retry as a
     smaller batch (issue #127). Returns only those the LLM judges worth
-    remembering long-term.
+    remembering long-term. A batch the model could not answer at all is
+    appended to ``failures``, so the caller can hold its watermark (#276).
     """
     if not candidates:
         return []
@@ -1061,6 +1063,8 @@ def _llm_classify(
             verdicts = _classify_batch(batch, index_llm_url, index_llm_model)
         except Exception as exc:
             log.warning("LLM classify failed: %s - falling back to regex", exc)
+            if failures is not None:
+                failures.append(f"classify: {exc}")
             # Fallback: keep only keyword-hit candidates (issue #125 widened
             # the batch to every qualified message; without a keyword type
             # there is nothing to classify them as, and saving them all would
@@ -1272,11 +1276,15 @@ def _harvest_messages(
     counts: dict[str, int],
     workspace: str | None = None,
     session: str | None = None,
-) -> None:
+) -> bool:
     """Classify one transcript's messages and save the keepers.
 
     ``workspace`` scopes every saved memory, and ``session`` tags it
     ``session:<id>`` so it points back at the transcript it came from (#270).
+
+    Returns False when a classify batch or a save failed. The caller then
+    leaves the session's watermark where it was, so the next run reads these
+    messages again and dedup absorbs whatever this run did save (#276).
 
     The seam shared by both entry points: ``harvest_sessions`` (session files on
     this machine's disk) and ``harvest_transcript`` (a transcript posted over
@@ -1288,6 +1296,7 @@ def _harvest_messages(
     from .memories import save_memory
 
     candidates: list[dict[str, Any]] = []
+    failures: list[str] = []
 
     # The keyword prefilter gates only the regex paths. With an LLM available
     # every qualified message is a candidate: measured on a real 167-message
@@ -1317,7 +1326,8 @@ def _harvest_messages(
 
     # Tier 2: LLM classification
     if use_llm and candidates:
-        classified = _llm_classify(candidates, cfg.index_llm_url, cfg.index_llm_model)
+        classified = _llm_classify(candidates, cfg.index_llm_url, cfg.index_llm_model,
+                                   failures=failures)
     else:
         # Fallback: regex classification + naive summary
         classified = []
@@ -1392,7 +1402,12 @@ def _harvest_messages(
             except Exception as exc:
                 record["status"] = f"error: {exc}"
                 skipped.append(record)
+                failures.append(f"save: {exc}")
         counts[etype] = counts.get(etype, 0) + 1
+
+    if failures:
+        log.warning("harvest: %d failure(s), watermark held: %s", len(failures), failures[0])
+    return not failures
 
 
 # ---------------------------------------------------------------------------
@@ -1440,6 +1455,7 @@ def harvest_sessions(
     counts: dict[str, int] = {}
     state = _load_harvest_state()
     totals: dict[str, int] = {}
+    held: list[str] = []
 
     for session in sessions:
         messages = extract_messages(session)
@@ -1447,15 +1463,18 @@ def harvest_sessions(
         # Skip what a previous pass already classified: a live session file
         # grows all day, and re-reading it from the top pays the LLM twice.
         already = _harvested_messages(state, session.path)
-        _harvest_messages(
+        if not _harvest_messages(
             conn, messages[already:], session.provider,
             cfg=cfg, embed_url=url, dry_run=dry_run, use_llm=use_llm,
             saved=saved, skipped=skipped, counts=counts, session=session.path.stem,
-        )
+        ):
+            held.append(str(session.path))
 
     if not dry_run:
         harvest_state = _load_harvest_state()
         for s in sessions:
+            if str(s.path) in held:
+                continue
             harvest_state[str(s.path)] = {
                 "mtime": s.mtime, "messages": totals[str(s.path)],
             }
@@ -1464,6 +1483,7 @@ def harvest_sessions(
     return {
         "sessions_scanned": len(sessions),
         "providers": list({s.provider for s in sessions}),
+        "held": held,
         "counts": counts,
         "saved": saved,
         "skipped": skipped,
@@ -1568,13 +1588,13 @@ def harvest_session_file(
     counts: dict[str, int] = {}
     messages = extract_messages(match)
     already = _harvested_messages(_load_harvest_state(), match.path)
-    _harvest_messages(
+    complete = _harvest_messages(
         conn, messages[already:], match.provider,
         cfg=cfg, embed_url=embed_url or cfg.embed_url, dry_run=dry_run,
         use_llm=use_llm, saved=saved, skipped=skipped, counts=counts,
         session=match.path.stem,
     )
-    if not dry_run:
+    if not dry_run and complete:
         state = _load_harvest_state()
         state[str(match.path)] = {"mtime": match.mtime, "messages": len(messages)}
         _save_harvest_state(state)
@@ -1678,8 +1698,9 @@ def harvest_transcript(
     saved: list[dict] = []
     skipped: list[dict] = []
     counts: dict[str, int] = {}
+    complete = True
     if messages:
-        _harvest_messages(
+        complete = _harvest_messages(
             conn, messages, source_agent,
             cfg=cfg, embed_url=url, dry_run=dry_run, use_llm=use_llm,
             saved=saved, skipped=skipped, counts=counts,
@@ -1691,7 +1712,9 @@ def harvest_transcript(
     # simply have been unlucky — leaving it unrecorded lets a client re-post and
     # pick up what the classifier dropped, instead of the guard making that loss
     # permanent.
-    if not dry_run and (saved or skipped):
+    # A failed batch leaves the digest unrecorded too, so a re-post of the same
+    # text classifies it again (#276).
+    if not dry_run and complete and (saved or skipped):
         harvest_state[state_key] = digest
         _save_harvest_state(harvest_state)
 
