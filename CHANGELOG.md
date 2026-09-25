@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Hook output now fences recalled text (#274). The session brief, per-prompt context and trigger reminders wrap stored text in a `neurostack-recall` tag, HTML-escape it so it cannot close the tag, keep each reminder on one line, and say the text is background data, not instructions. A memory or note that contains something shaped like a command can no longer pass for harness text.
+
 ### Fixed
 
 - Harvest no longer saves an empty tag for a root-level path such as `/AGENTS.md`, and drops broad triggers such as `when-calling:bash` that fired on every shell call, matching the checkpoint path (#272).
