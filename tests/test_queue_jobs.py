@@ -207,6 +207,28 @@ def test_worker_runs_the_checkpoint_on_the_uploaded_transcript_then_drops_it(
     assert row["transcript"] is None
 
 
+def test_worker_hands_the_clients_workspace_to_the_checkpoint(
+        in_memory_db, client, runs, tmp_path):
+    add(in_memory_db, "checkpoint", "s1",
+        {"session": "s1", "harness": "omp", "workspace": "home/projects/x"}, transcript="a\n")
+    JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
+    (payload, _harness), = runs.calls
+    assert payload["workspace"] == "home/projects/x"
+
+
+def test_transcript_cwd_reads_the_omp_header_and_claude_records(tmp_path):
+    from neurostack.cli.hook import transcript_cwd
+
+    omp = tmp_path / "a.jsonl"
+    omp.write_text('{"type":"title"}\nnot json\n{"type":"session","cwd":"/home/u/p"}\n')
+    claude = tmp_path / "b.jsonl"
+    claude.write_text('{"type":"user","cwd":"/srv/q","message":{}}\n')
+    bare = tmp_path / "c.jsonl"
+    bare.write_text('{"type":"user"}\n')
+    assert [transcript_cwd(p) for p in (omp, claude, bare, tmp_path / "gone")] == [
+        "/home/u/p", "/srv/q", None, None]
+
+
 @pytest.mark.parametrize("reply, output", [
     (Verdict(data={"ok": False, "saved": 0, "found": 0, "error": "command exited 1"}),
      "failed: command exited 1"),

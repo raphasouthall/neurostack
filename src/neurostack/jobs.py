@@ -271,6 +271,10 @@ def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
                    "format": p.get("format") or ("claude-code" if harness == "claude" else "omp")}
         if p.get("transcript_offset"):
             payload["transcript_offset"] = p["transcript_offset"]
+        if p.get("workspace"):
+            # The client mapped its cwd to a workspace when it queued the job;
+            # this host's cwd says nothing about the conversation (#270).
+            payload["workspace"] = p["workspace"]
         tmp = cfg.db_dir / "tmp" / f"{queue}-{job['job_id']}.jsonl"
         try:
             if job["transcript"] is None:
