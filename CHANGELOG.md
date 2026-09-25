@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Harvested and server-checkpointed memories now keep the session's workspace and a `session:<id>` tag pointing back at their transcript (#270). The server worker used its own working directory to pick the workspace, which matched nothing, and harvest never received one, so 1,869 of the last 30 days' memories had no workspace. The client now maps the transcript's recorded `cwd` through `workspace_map` and sends it with the queued job and with `vault_harvest_transcript`, which gains a `workspace` argument.
+
 ### Added
 
 - `neurostack agent vault-save --transcript PATH` runs a bundled Pi agent job on one whole session transcript (#268). It patches the notes the session touched, rewrites stale lines in place instead of appending dated sections, creates at most 3 notes, and saves identifiers through a new `memory_add` agent tool. Setting `vault_save_on_checkpoint = true` makes the server checkpoint worker run it after each successful `/save`. Promotion stays as the backstop for memories no session save covered.

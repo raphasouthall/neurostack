@@ -250,6 +250,7 @@ def enqueue_pending(client, rows) -> dict[str, Any]:
     scan, since every later upload would wait out the same timeout.
     """
     from ..harvest import record_watermark
+    from .hook import transcript_cwd
     from .queue import upload
 
     jobs = []
@@ -260,6 +261,9 @@ def enqueue_pending(client, rows) -> dict[str, Any]:
     for row in rows:
         key = f"{row['path']}@{row['mtime']}"
         payload = {"path": row["path"], "provider": row["provider"], "mtime": row["mtime"]}
+        workspace = client.config.workspace_for(transcript_cwd(Path(row["path"])))
+        if workspace:
+            payload["workspace"] = workspace
         try:
             result = upload(client, "harvest", key, payload, Path(row["path"]), row["provider"])
         except Exception as e:

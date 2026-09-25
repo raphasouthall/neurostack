@@ -129,6 +129,7 @@ def vault_harvest_transcript(
     session_id: str,
     source_agent: str = "claude-code",
     dry_run: bool = False,
+    workspace: str | None = None,
 ) -> dict:
     """Extract insights from a session transcript you POST here, and save them.
 
@@ -150,6 +151,7 @@ def vault_harvest_transcript(
         session_id: Client-side session identifier (guards against re-posts)
         source_agent: Provider name naming the transcript format
         dry_run: If True, show what would be saved without saving
+        workspace: Vault workspace the saved memories belong to
     """
     from ..harvest import harvest_transcript
 
@@ -159,4 +161,5 @@ def vault_harvest_transcript(
         source_agent=source_agent,
         dry_run=dry_run,
         embed_url=_embed_url(),
+        workspace=workspace,
     )
