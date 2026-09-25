@@ -672,6 +672,30 @@ def _resolve_transcript(payload: dict, session: str, source: str) -> Path | None
     return max(found, key=lambda p: p.stat().st_mtime)
 
 
+def transcript_cwd(path: Path) -> str | None:
+    """The working directory a transcript records, or None (#270).
+
+    omp writes it in the `session` header near the top; Claude Code puts a
+    `cwd` field on its records. Only the first lines are read.
+    """
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for _ in range(50):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                cwd = record.get("cwd") if isinstance(record, dict) else None
+                if isinstance(cwd, str) and cwd:
+                    return cwd
+    except OSError:
+        pass
+    return None
+
+
 def _chunks(text: str) -> list[str]:
     """Split on newline boundaries so every chunk holds whole JSONL records."""
     if len(text.encode("utf-8", "replace")) <= MAX_TRANSCRIPT_BYTES:
@@ -704,14 +728,15 @@ def _event_session_end(client: McpClient, payload: dict, state: SessionState,
         print(f"neurostack hook session-end: {path} unreadable: {exc}", file=sys.stderr)
         return Verdict()
     parts = _chunks(text)
+    workspace = _workspace(cfg, payload) or cfg.workspace_for(transcript_cwd(path))
     lines: list[str] = []
     for i, part in enumerate(parts):
         session_id = path.stem if len(parts) == 1 else f"{path.stem}#{i}"
-        report = client.call_json(
-            "vault_harvest_transcript",
-            {"transcript": part, "session_id": session_id, "source_agent": source},
-            timeout_s=cfg.harvest_timeout_s,
-        )
+        args = {"transcript": part, "session_id": session_id, "source_agent": source}
+        if workspace:
+            args["workspace"] = workspace
+        report = client.call_json("vault_harvest_transcript", args,
+                                  timeout_s=cfg.harvest_timeout_s)
         if report is None:
             lines.append(f"{path.name} chunk {i + 1}/{len(parts)}: no reply")
             continue
@@ -1087,7 +1112,8 @@ def _write_last_capture(reply: str) -> None:
         print(f"neurostack hook checkpoint: capture not written: {exc}", file=sys.stderr)
 
 
-def _remember_args(item: dict, harness: str, workspace: str | None) -> dict:
+def _remember_args(item: dict, harness: str, workspace: str | None,
+                   session: str | None = None) -> dict:
     """One `vault_remember` call, redacted.
 
     A trigger is a tag, not a column (issue #131), so a well-formed `trigger`
@@ -1110,6 +1136,9 @@ def _remember_args(item: dict, harness: str, workspace: str | None) -> dict:
         trigger, _kinds = redact_secrets(trigger)
         if parse_trigger(trigger) and not is_broad_trigger(trigger) and trigger not in tags:
             tags.append(trigger)
+    if session and session != "default":
+        # Points the memory back at the conversation it came from (#270).
+        tags.append(f"session:{session}")
     if tags:
         args["tags"] = tags
     if workspace:
@@ -1120,8 +1149,14 @@ def _remember_args(item: dict, harness: str, workspace: str | None) -> dict:
 def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
                         cfg: ClientConfig | None = None,
                         client: McpClient | None = None,
-                        _locked: bool = False) -> Verdict:
-    """Save one frozen reply, recording each acknowledged item before retry."""
+                        _locked: bool = False,
+                        workspace: str | None = None) -> Verdict:
+    """Save one frozen reply, recording each acknowledged item before retry.
+
+    ``workspace`` comes from the conversation's payload when a server worker
+    runs this; without it the local cwd decides, which is only right on the
+    machine the conversation ran on (#270).
+    """
     if not _locked:
         with file_lock(_lock_path(session), blocking=False) as acquired:
             if not acquired:
@@ -1130,7 +1165,8 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
                 post_event(cfg, "checkpoint", "busy", session, harness,
                            workspace=cfg.workspace_for(os.getcwd()))
                 return Verdict("neurostack: checkpoint already running")
-            return run_checkpoint_save(reply, session, harness, cfg, client, _locked=True)
+            return run_checkpoint_save(reply, session, harness, cfg, client, _locked=True,
+                                       workspace=workspace)
     cfg = cfg or load_client_config()
     client = client or McpClient(cfg)
     state = load_state(session)
@@ -1148,12 +1184,12 @@ def run_checkpoint_save(reply: str, session: str, harness: str = "cli",
     _write_last_capture(captured_reply)
     lost = _lost_reply(reply, items)
     answered = bool(reply.strip())
-    workspace = cfg.workspace_for(os.getcwd())
+    workspace = workspace or cfg.workspace_for(os.getcwd())
     saved = 0
     duplicates = 0
     try:
         for index, item in enumerate(items):
-            args = _remember_args(item, harness, workspace)
+            args = _remember_args(item, harness, workspace, session)
             content_receipt = hashlib.sha256(args["content"].encode("utf-8")).hexdigest()
             item_receipt = f"{state.checkpoint_window}:{index}:{content_receipt}"
             if item_receipt in state.checkpoint_receipts or \
@@ -1224,6 +1260,7 @@ def run_checkpoint(payload: dict, harness: str = "cli",
     cfg = cfg or load_client_config()
     payload = _with_session(payload)
     session = _session_id(payload)
+    workspace = _workspace(cfg, payload) or cfg.workspace_for(os.getcwd())
     if harness == "omp" and _LEGACY_OMP_SESSION.match(session):
         # The adapter that minted per-process ids predates the per-conversation
         # lock and receipts (#163); left running, it re-saves the same window.
@@ -1252,7 +1289,7 @@ def run_checkpoint(payload: dict, harness: str = "cli",
                 state.save(checkpoint=True)
             if state.checkpoint_reply:
                 return run_checkpoint_save(state.checkpoint_reply, session, harness, cfg,
-                                           _locked=True)
+                                           _locked=True, workspace=workspace)
             client = McpClient(cfg)
             state = load_state(session)
             try:
@@ -1284,11 +1321,13 @@ def run_checkpoint(payload: dict, harness: str = "cli",
             items = _parse_items(proc.stdout)
             if _lost_reply(proc.stdout, items) is not None:
                 _reoffer(session)
-                return run_checkpoint_save(proc.stdout, session, harness, cfg, _locked=True)
+                return run_checkpoint_save(proc.stdout, session, harness, cfg, _locked=True,
+                                           workspace=workspace)
             state = load_state(session)
             state.checkpoint_reply = proc.stdout
             state.save(checkpoint=True)
-            return run_checkpoint_save(proc.stdout, session, harness, cfg, _locked=True)
+            return run_checkpoint_save(proc.stdout, session, harness, cfg, _locked=True,
+                                           workspace=workspace)
     except OSError as exc:
         return _run_failed(session, harness, f"lock unavailable: {exc}", cfg)
 

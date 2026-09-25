@@ -211,7 +211,7 @@ def test_save_writes_one_memory_per_item_and_advances_the_index(server):
     assert calls[0]["source_agent"] == "checkpoint/omp"
     assert calls[0]["entity_type"] == "convention"
     # A trigger is a tag, not a column (#131), so it joins the tag list.
-    assert calls[1]["tags"] == ["vault", "when-calling:vault_write_file"]
+    assert calls[1]["tags"] == ["vault", "when-calling:vault_write_file", "session:ck"]
     state = _state("ck")
     assert state["since_index"] == 40
     assert state["last_checkpoint_at"] > 0
@@ -221,7 +221,7 @@ def test_a_malformed_trigger_is_dropped_rather_than_saved(server):
     server.replies["vault_remember"] = {"saved": True, "memory_id": 2}
     reply = json.dumps([{"content": "a fact", "tags": ["x"], "trigger": "when-writing:foo"}])
     run_checkpoint_save(reply, "ck", "cli", cfg=_cfg(server))
-    assert _tool_calls(server, "vault_remember")[0]["tags"] == ["x"]
+    assert _tool_calls(server, "vault_remember")[0]["tags"] == ["x", "session:ck"]
 
 
 def test_a_failed_save_puts_the_window_back_on_offer(server):
