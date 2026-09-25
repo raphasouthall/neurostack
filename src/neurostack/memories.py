@@ -9,6 +9,7 @@ FTS5 and semantic search, tagged with [memory] to distinguish origin.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
@@ -284,6 +285,45 @@ def _archive_memories(
     return cursor.rowcount
 
 
+def tombstone_hash(content: str) -> str:
+    """Fingerprint of a memory's text: lowercased, whitespace collapsed (#278)."""
+    return hashlib.sha256(" ".join(content.lower().split()).encode("utf-8")).hexdigest()
+
+
+def _tombstone_hash_of(conn: sqlite3.Connection, memory_id: int) -> str:
+    row = conn.execute("SELECT content FROM memories WHERE memory_id = ?",
+                       (memory_id,)).fetchone()
+    return tombstone_hash(row["content"]) if row else ""
+
+
+def is_tombstoned(conn: sqlite3.Connection, content: str, threshold: float,
+                  query_emb=None) -> bool:
+    """True when ``content`` repeats a forgotten memory (#278).
+
+    An exact match on the normalised text always counts. With an embedding,
+    a forgotten memory at or above ``threshold`` cosine counts too, which
+    catches the classifier rewording the same fact.
+    """
+    if conn.execute("SELECT 1 FROM memory_tombstones WHERE content_hash = ? LIMIT 1",
+                    (tombstone_hash(content),)).fetchone():
+        return True
+    if query_emb is None:
+        return False
+    rows = conn.execute(
+        "SELECT embedding FROM memory_tombstones WHERE embedding IS NOT NULL").fetchall()
+    if not rows:
+        return False
+    import numpy as np
+
+    from .embedder import blob_to_embedding, cosine_similarity_batch
+
+    vectors = [blob_to_embedding(r["embedding"]) for r in rows]
+    vectors = [v for v in vectors if v.shape == query_emb.shape]
+    if not vectors:
+        return False
+    return float(cosine_similarity_batch(query_emb, np.stack(vectors)).max()) >= threshold
+
+
 def forget_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
     """Archive a specific memory (removed from the working set, restorable).
 
@@ -296,6 +336,12 @@ def forget_memory(conn: sqlite3.Connection, memory_id: int) -> bool:
     # on the FK also handles this; the explicit delete keeps it robust regardless
     # of the foreign_keys pragma state.
     conn.execute("DELETE FROM prediction_errors WHERE memory_id = ?", (memory_id,))
+    # The fingerprint goes in before the row leaves, while its embedding exists.
+    conn.execute(
+        "INSERT OR REPLACE INTO memory_tombstones (memory_id, content_hash, embedding)"
+        " SELECT memory_id, ?, embedding FROM memories WHERE memory_id = ?",
+        (_tombstone_hash_of(conn, memory_id), memory_id),
+    )
     archived = _archive_memories(conn, "memory_id = ?", (memory_id,), "forget")
     conn.commit()
     deleted = archived > 0
@@ -325,6 +371,7 @@ def restore_memory(conn: sqlite3.Connection, memory_id: int) -> Memory | None:
     conn.execute(
         "UPDATE memories SET file_path = NULL WHERE memory_id = ?", (memory_id,)
     )
+    conn.execute("DELETE FROM memory_tombstones WHERE memory_id = ?", (memory_id,))
     conn.execute(
         "DELETE FROM memories_archive WHERE memory_id = ?", (memory_id,)
     )

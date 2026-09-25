@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 
 # One row per queued job. The orchestrator (n8n, cron, anything) only calls
 # `neurostack queue`; dedupe, the daily cap, claiming and stale reaping live
@@ -77,6 +77,18 @@ CREATE TABLE IF NOT EXISTS memory_coverage (
 # One row per scheduled job run (issue #225). `neurostack run-due` writes a
 # `running` row before the body starts and settles it after, so a crash leaves
 # the row behind as evidence. The latest row per job decides what is due next.
+# A forgotten memory leaves its fingerprint here so harvest cannot save it
+# again (#278). Explicit saves never check it, so a deliberate save wins.
+TOMBSTONES_SQL = """
+CREATE TABLE IF NOT EXISTS memory_tombstones (
+    memory_id INTEGER PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    embedding BLOB,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_memory_tombstones_hash ON memory_tombstones(content_hash);
+"""
+
 JOB_RUNS_SQL = """
 CREATE TABLE IF NOT EXISTS job_runs (
     id INTEGER PRIMARY KEY,
@@ -477,6 +489,7 @@ CREATE INDEX IF NOT EXISTS idx_triple_failed_retry
 SCHEMA_SQL += JOB_QUEUE_SQL
 SCHEMA_SQL += COVERAGE_SQL
 SCHEMA_SQL += JOB_RUNS_SQL
+SCHEMA_SQL += TOMBSTONES_SQL
 
 # Migration from v1 to v2: add triples tables
 MIGRATION_V2 = """
@@ -1336,6 +1349,13 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (30)")
         conn.commit()
         log.info("Migration to v30 complete.")
+
+    if current < 31:
+        log.info("Migrating schema v30 -> v31: memory_tombstones (issue #278)...")
+        conn.executescript(TOMBSTONES_SQL)
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (31)")
+        conn.commit()
+        log.info("Migration to v31 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
