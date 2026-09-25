@@ -224,6 +224,9 @@ class TestExtractTags:
         assert "py" in tags
         assert "json" in tags
 
+    def test_root_level_path_adds_no_empty_tag(self):
+        assert _extract_tags("see /AGENTS.md and ./run.sh.md") == ["md"]
+
     def test_max_five_tags(self):
         text = "a.py b.ts c.js d.rs e.go f.md g.toml"
         tags = _extract_tags(text)
@@ -1367,6 +1370,11 @@ class TestTriggerTag:
 
     def test_editing_glob_kept(self):
         assert _trigger_tag("editing:src/**/*.tf") == "when-editing:src/**/*.tf"
+
+    def test_broad_trigger_dropped(self):
+        assert _trigger_tag("calling:Bash") is None
+        assert _trigger_tag("error:500") is None
+        assert _trigger_tag("calling:az rest") == "when-calling:az rest"
 
     def test_malformed_dropped(self, caplog):
         with caplog.at_level(logging.INFO, logger="neurostack"):

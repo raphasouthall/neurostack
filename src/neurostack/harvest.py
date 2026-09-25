@@ -764,9 +764,9 @@ def _extract_tags(text: str) -> list[str]:
         ext = path.rsplit(".", 1)[-1].lower()
         if ext in exts:
             tags.add(ext)
-        parts = path.split("/")
-        if len(parts) > 1:
-            tags.add(parts[-2] if parts[-2] else parts[0])
+        parent = [p for p in path.split("/")[:-1] if p.strip(".")]
+        if parent:
+            tags.add(parent[-1])
     return sorted(tags)[:5]
 
 
@@ -1230,7 +1230,7 @@ def _trigger_tag(raw) -> str | None:
     """
     if not isinstance(raw, str) or not raw.strip():
         return None
-    from .triggers import parse_trigger
+    from .triggers import is_broad_trigger, parse_trigger
 
     event, _, value = raw.strip().partition(":")
     event, value = event.strip().lower(), value.strip()
@@ -1245,6 +1245,11 @@ def _trigger_tag(raw) -> str | None:
     tag = f"when-{event}:{value}"
     if parse_trigger(tag) is None:
         log.info("harvest: dropping malformed trigger %r", raw)
+        return None
+    if is_broad_trigger(tag):
+        # when-calling:bash fires on every shell call; the checkpoint path
+        # drops these too (issue #167).
+        log.info("harvest: dropping broad trigger %r", raw)
         return None
     return tag
 
