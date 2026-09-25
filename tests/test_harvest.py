@@ -1555,6 +1555,31 @@ class TestHarvestTriggers:
         assert "trigger" not in report["saved"][0]
         assert report["saved"][0]["tags"] == [*_extract_tags(_CORRECTION), "session:s5"]
 
+    def test_forgotten_memory_is_not_harvested_again_until_restored(
+            self, in_memory_db, tmp_path, monkeypatch):
+        from neurostack.memories import forget_memory, restore_memory, save_memory
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        fact = "Use vault_update_memory for existing notes"
+        self._llm(monkeypatch, _keep(fact))
+        first = harvest_transcript(_claude_entry("user", _CORRECTION),
+                                   session_id="t1", source_agent="claude-code")
+        memory_id = first["saved"][0]["memory_id"]
+        assert forget_memory(in_memory_db, memory_id)
+
+        again = harvest_transcript(_claude_entry("user", _CORRECTION + " "),
+                                   session_id="t2", source_agent="claude-code")
+        assert again["saved"] == []
+        assert [r["status"] for r in again["skipped"]] == ["skipped (forgotten)"]
+
+        # A deliberate save is never blocked by the tombstone.
+        explicit = save_memory(in_memory_db, content=fact, entity_type="observation")
+        assert explicit.memory_id
+        forget_memory(in_memory_db, explicit.memory_id)
+
+        restore_memory(in_memory_db, memory_id)
+        restore_memory(in_memory_db, explicit.memory_id)
+        assert in_memory_db.execute("SELECT COUNT(*) FROM memory_tombstones").fetchone()[0] == 0
+
     def test_a_failed_classify_batch_leaves_the_transcript_re_postable(
             self, in_memory_db, tmp_path, monkeypatch):
         import httpx

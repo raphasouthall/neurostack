@@ -801,6 +801,24 @@ def _is_duplicate(
     return _fts_duplicate(conn, content, entity_type)
 
 
+def _is_forgotten(conn, content: str, embed_url: str | None = None) -> bool:
+    """True when ``content`` repeats a memory someone forgot (#278).
+
+    Harvest re-reads sessions, so a fact a person deleted would otherwise come
+    back on the next pass. Only harvest checks this; explicit saves do not.
+    An embedder outage falls back to the exact-text fingerprint.
+    """
+    from .memories import is_tombstoned
+
+    try:
+        from .embedder import get_embedding
+
+        emb = get_embedding(content, base_url=embed_url)
+    except Exception:
+        emb = None
+    return is_tombstoned(conn, content, DEDUP_COSINE_THRESHOLD, query_emb=emb)
+
+
 def _fts_duplicate(conn, content: str, entity_type: str) -> bool:
     """FTS5 keyword-overlap duplicate check — the pre-cosine floor."""
     words = re.findall(r"\b\w{4,}\b", content.lower())
@@ -1383,6 +1401,11 @@ def _harvest_messages(
 
         if _is_duplicate(conn, summary, etype, embed_url=embed_url):
             record["status"] = "skipped (duplicate)"
+            skipped.append(record)
+            continue
+
+        if _is_forgotten(conn, summary, embed_url=embed_url):
+            record["status"] = "skipped (forgotten)"
             skipped.append(record)
             continue
 
