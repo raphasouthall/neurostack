@@ -1265,8 +1265,13 @@ def _harvest_messages(
     saved: list[dict],
     skipped: list[dict],
     counts: dict[str, int],
+    workspace: str | None = None,
+    session: str | None = None,
 ) -> None:
     """Classify one transcript's messages and save the keepers.
+
+    ``workspace`` scopes every saved memory, and ``session`` tags it
+    ``session:<id>`` so it points back at the transcript it came from (#270).
 
     The seam shared by both entry points: ``harvest_sessions`` (session files on
     this machine's disk) and ``harvest_transcript`` (a transcript posted over
@@ -1340,6 +1345,8 @@ def _harvest_messages(
             continue
 
         tags = _extract_tags(item["text"])
+        if session:
+            tags.append(f"session:{session}")
         if item.get("session_verdict"):
             tags.append("session-verdict")
         # A model-emitted trigger becomes a when-* tag so the memory surfaces
@@ -1372,7 +1379,7 @@ def _harvest_messages(
                 mem = save_memory(
                     conn, content=summary, tags=tags, entity_type=etype,
                     source_agent=f"harvest/{provider}", ttl_hours=ttl,
-                    embed_url=embed_url,
+                    embed_url=embed_url, workspace=workspace,
                 )
                 record["memory_id"] = mem.memory_id
                 record["status"] = "saved"
@@ -1438,7 +1445,7 @@ def harvest_sessions(
         _harvest_messages(
             conn, messages[already:], session.provider,
             cfg=cfg, embed_url=url, dry_run=dry_run, use_llm=use_llm,
-            saved=saved, skipped=skipped, counts=counts,
+            saved=saved, skipped=skipped, counts=counts, session=session.path.stem,
         )
 
     if not dry_run:
@@ -1560,6 +1567,7 @@ def harvest_session_file(
         conn, messages[already:], match.provider,
         cfg=cfg, embed_url=embed_url or cfg.embed_url, dry_run=dry_run,
         use_llm=use_llm, saved=saved, skipped=skipped, counts=counts,
+        session=match.path.stem,
     )
     if not dry_run:
         state = _load_harvest_state()
@@ -1589,6 +1597,7 @@ def harvest_transcript(
     dry_run: bool = False,
     embed_url: str | None = None,
     use_llm: bool = True,
+    workspace: str | None = None,
 ) -> dict:
     """Extract insights from a POSTED transcript. Returns report dict.
 
@@ -1603,6 +1612,7 @@ def harvest_transcript(
         dry_run: If True, show what would be saved without saving.
         embed_url: Override embedding URL.
         use_llm: Use LLM for classification (falls back to regex if False).
+        workspace: Vault workspace the client mapped the session's cwd to.
     """
     import hashlib
     import tempfile
@@ -1668,6 +1678,7 @@ def harvest_transcript(
             conn, messages, source_agent,
             cfg=cfg, embed_url=url, dry_run=dry_run, use_llm=use_llm,
             saved=saved, skipped=skipped, counts=counts,
+            workspace=workspace or None, session=session_id.split("#")[0],
         )
 
     # Record the digest only if the run actually yielded something. LLM

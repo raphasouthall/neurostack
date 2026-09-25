@@ -1545,7 +1545,19 @@ class TestHarvestTriggers:
                                     session_id="s5", source_agent="claude-code")
         assert [r["status"] for r in report["saved"]] == ["saved"]
         assert "trigger" not in report["saved"][0]
-        assert report["saved"][0]["tags"] == _extract_tags(_CORRECTION)
+        assert report["saved"][0]["tags"] == [*_extract_tags(_CORRECTION), "session:s5"]
+
+    def test_posted_transcript_saves_with_workspace_and_session_pointer(
+            self, in_memory_db, tmp_path, monkeypatch):
+        TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
+        self._llm(monkeypatch, _keep("Use vault_update_memory for existing notes"))
+        report = harvest_transcript(_claude_entry("user", _CORRECTION), session_id="s6#1",
+                                    source_agent="claude-code", workspace="home/projects/x")
+        row = in_memory_db.execute(
+            "SELECT workspace, tags FROM memories WHERE memory_id = ?",
+            (report["saved"][0]["memory_id"],)).fetchone()
+        assert row["workspace"] == "home/projects/x"
+        assert "session:s6" in json.loads(row["tags"])
 
     def test_regex_fallback_emits_none(self, in_memory_db, tmp_path, monkeypatch):
         TestHarvestTranscript._setup(in_memory_db, tmp_path, monkeypatch)
