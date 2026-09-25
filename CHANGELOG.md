@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Triple extraction keeps every complete triple from a reply that does not parse whole (#280). The index LLM sometimes breaks one entry or stops mid-object (`Expecting ',' delimiter`); both attempts failed and the note got no triples at all.
+
 ### Added
 
 - Forgetting a memory now leaves a fingerprint in a new `memory_tombstones` table (schema v31, #278): the normalised text hash and the embedding. Harvest skips any candidate that matches one exactly or at 0.88 cosine, and reports it as `skipped (forgotten)`, so a deleted fact no longer returns on the next pass over the same session. Explicit saves never check tombstones, so a deliberate save wins. Restoring a memory removes its tombstone. Memories forgotten before this release have no tombstone.

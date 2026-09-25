@@ -111,6 +111,18 @@ class TestExtractTriplesJsonError:
         with pytest.raises(TripleExtractionError):
             extract_triples("Note", "content")
 
+    @patch("neurostack.triples.httpx.post")
+    def test_broken_entry_and_cut_tail_keep_the_complete_triples(self, mock_post):
+        # One entry missing its comma, then a reply cut off mid-object.
+        raw = ('{"triples": [{"s": "A", "p": "b", "o": "C"}, {"s": "D" "p": "e", "o": "F"},'
+               ' {"s": "G", "p": "h", "o": "I"}, {"s": "J", "p": "k"')
+        mock_post.return_value = _mock_response(raw)
+
+        result = extract_triples("Note", "content")
+
+        assert result == [{"s": "A", "p": "b", "o": "C"}, {"s": "G", "p": "h", "o": "I"}]
+        assert mock_post.call_count == 1
+
 
 class TestExtractTriplesRobustness:
     @patch("neurostack.triples.httpx.post")
