@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- The Overview automations tile is painted in the theme's accent, and the chart series (bars, legend dots, job history, graph communities) come from the theme's palette, so both follow a daisyUI theme change (#288). The NeuroStack themes keep their original colours.
+
 ### Added
 
 - The dashboard takes daisyUI 5 themes (#286). `vendor/daisyui-themes.css` (MIT) supplies 35 themes, and the NeuroStack light and dark looks are two more; Settings shows all 37 as tiles plus System, which follows the OS between the NeuroStack pair. Every component token maps onto the active theme's daisyUI variables, so a theme repaints the whole app, the graph included. A pre-existing light or dark choice carries over to its NeuroStack theme.
