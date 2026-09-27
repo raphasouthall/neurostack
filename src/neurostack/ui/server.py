@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import auth
+from . import auth, search
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +59,30 @@ def _ints(params: dict, *names: str) -> dict:
     return out
 
 
+def _flag(params: dict, name: str) -> bool:
+    return params.get(name, "").lower() in ("1", "true", "yes", "on")
+
+
+def _search(cfg, path: str, params: dict):
+    """The Search page's two endpoints; a bad option is a 400, not a 500."""
+    q = params.get("q", "").strip()
+    text = {k: params[k].strip() or None for k in ("workspace", "context", "type")
+            if k in params}
+    if path == "/api/search/memories":
+        return search.memories(cfg, q or None, entity_type=text.get("type"),
+                               workspace=text.get("workspace"), **_ints(params, "limit"))
+    if not q:
+        raise _Error(400, "q is required")
+    try:
+        return search.notes(
+            cfg, q, mode=params.get("mode", "hybrid"), depth=params.get("depth", "full"),
+            workspace=text.get("workspace"), context=text.get("context"),
+            rerank=_flag(params, "rerank"), reference_only=_flag(params, "reference_only"),
+            **_ints(params, "top_k", "max_tokens"))
+    except ValueError as exc:
+        raise _Error(400, str(exc)) from None
+
+
 def _route(conn, cfg, path: str, params: dict):
     from .. import dashboard
 
@@ -77,6 +101,10 @@ def _route(conn, cfg, path: str, params: dict):
         if "q" in params:
             kw["q"] = params["q"]
         return dashboard.memories(conn, **kw)
+    if path == "/api/workspaces":
+        return search.workspaces(conn)
+    if path in ("/api/search/notes", "/api/search/memories"):
+        return _search(cfg, path, params)
     if path == "/api/notes":
         if "path" not in params:
             raise _Error(400, "path is required")
