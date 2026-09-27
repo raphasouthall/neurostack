@@ -123,6 +123,58 @@ def test_unknown_things_are_404(start, calls, path):
     assert "error" in json.loads(body)
 
 
+@pytest.fixture
+def searches(monkeypatch):
+    """Record what the search endpoints hand to the search module."""
+    seen = []
+    monkeypatch.setattr(server.search, "notes",
+                        lambda cfg, q, **kw: seen.append(("notes", q, kw)) or {"results": []})
+    monkeypatch.setattr(server.search, "memories",
+                        lambda cfg, q, **kw: seen.append(("memories", q, kw)) or {"items": []})
+    return seen
+
+
+@pytest.mark.parametrize("path, call", [
+    ("/api/search/notes?q=dns+rate+limit&mode=keyword&depth=summaries&top_k=7"
+     "&workspace=home&context=+&rerank=0&reference_only=on&max_tokens=900",
+     ("notes", "dns rate limit", {"mode": "keyword", "depth": "summaries", "workspace": "home",
+                                  "context": None, "rerank": False, "reference_only": True,
+                                  "top_k": 7, "max_tokens": 900})),
+    ("/api/search/memories?q=&type=bug&workspace=work&limit=30",
+     ("memories", None, {"entity_type": "bug", "workspace": "work", "limit": 30})),
+])
+def test_search_options_reach_the_search(start, calls, searches, path, call):
+    status, _, _ = get(start() + path)
+    assert status == 200
+    assert searches == [call]
+
+
+@pytest.mark.parametrize("query, error", [
+    ("", "q is required"),
+    ("q=x&mode=fuzzy", "mode must be one of"),
+    ("q=x&depth=deep", "depth must be one of"),
+    ("q=x&depth=auto&rerank=1", "rerank needs whole notes"),
+    ("q=x&top_k=many", "top_k must be an integer"),
+])
+def test_bad_search_options_are_400(start, calls, query, error):
+    status, _, body = get(start() + "/api/search/notes?" + query)
+    assert status == 400
+    assert error in json.loads(body)["error"]
+
+
+def test_workspaces_count_notes_per_folder(start, calls, tmp_path):
+    db = sqlite3.connect(tmp_path / "neurostack.db")
+    db.executemany("INSERT INTO notes VALUES (?)", [
+        ("index.md",), ("home/a.md",), ("home/projects/x/b.md",), ("home/projects/x/y/z/c.md",)])
+    db.commit()
+    db.close()
+    status, _, body = get(start() + "/api/workspaces")
+    assert status == 200
+    assert json.loads(body) == [
+        {"path": "home", "notes": 3}, {"path": "home/projects", "notes": 2},
+        {"path": "home/projects/x", "notes": 2}]
+
+
 def test_non_get_is_405(start, calls):
     status, headers, _ = get(start() + "/api/overview", method="POST")
     assert status == 405
