@@ -14,8 +14,11 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
-  <!-- app.js renders the nav, and below 768px its menu opens in a Sheet. -->
-  <nav class="sidebar" id="nav" aria-label="Main"></nav>
-  <main id="app"></main>
+  <!-- One frame holds the sidebar rail and the page panel side by side; app.js
+       renders the nav, and below 768px its menu opens in a Sheet. -->
+  <div class="frame">
+    <nav class="sidebar" id="nav" aria-label="Main"></nav>
+    <main id="app"></main>
+  </div>
 </body>
 </html>
