@@ -19,7 +19,7 @@ document.head.insertAdjacentHTML('beforeend', `<style>
 /* A long community name must not widen the page. */
 .graph-bar .input { min-width: 0; max-width: 100%; }
 .graph-bar .sub { margin-left: auto; }
-.graph-canvas, .graph-panel { height: calc(100vh - 210px); min-height: 360px; }
+.graph-canvas, .graph-panel { height: calc(100svh - 250px); min-height: 360px; }
 .graph-canvas { overflow: hidden; border-radius: var(--radius-xl); }
 .graph-stage { min-width: 0; }
 .graph-panel { display: flex; flex-direction: column; }
