@@ -34,14 +34,14 @@
   --radius: 12px;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-xl: calc(var(--radius) + 8px);
-  /* Series colours for bars, job history and graph communities. */
-  --chart-1: #007bc2;
-  --chart-2: #00a87e;
-  --chart-3: #ec7e00;
-  --chart-4: #936d62;
-  --chart-5: #428619;
-  --chart-6: #e61e49;
-  --chart-7: #b09000;
+  /* Series colours for bars, job history and graph communities: the theme palette. */
+  --chart-1: var(--color-info);
+  --chart-2: var(--color-success);
+  --chart-3: var(--color-warning);
+  --chart-4: var(--color-secondary);
+  --chart-5: var(--color-accent);
+  --chart-6: var(--color-error);
+  --chart-7: var(--color-primary);
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Aeonik Pro", "Inter Display", "General Sans", "Inter", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
@@ -49,6 +49,14 @@
 /* The NeuroStack looks (issue #253) as two more daisyUI themes. They pin the exact
    greys that the mixes above only approximate. */
 [data-theme="neurostack"] {
+  /* The original series, kept for the NeuroStack looks. */
+  --chart-1: #007bc2;
+  --chart-2: #00a87e;
+  --chart-3: #ec7e00;
+  --chart-4: #936d62;
+  --chart-5: #428619;
+  --chart-6: #e61e49;
+  --chart-7: #b09000;
   color-scheme: light;
   --color-base-100: #ffffff;
   --color-base-200: #f4f4f4;
@@ -76,6 +84,14 @@
   --input: #c9c9cd;
 }
 [data-theme="neurostack-dark"] {
+  /* The original series, kept for the NeuroStack looks. */
+  --chart-1: #007bc2;
+  --chart-2: #00a87e;
+  --chart-3: #ec7e00;
+  --chart-4: #936d62;
+  --chart-5: #428619;
+  --chart-6: #e61e49;
+  --chart-7: #b09000;
   color-scheme: dark;
   --color-base-100: #000000;
   --color-base-200: #16181a;
@@ -267,14 +283,14 @@ main {
 .card-header + .card-content { padding-top: 8px; }
 .card-footer { display: flex; align-items: center; gap: 8px; padding: 0 24px 24px; }
 
-/* Accent card: the one cobalt surface, on the Overview automations card. It
-   re-points the tokens, so text, borders and skeletons inside follow. */
+/* Accent card: the one filled surface, the Overview automations card, in the
+   theme's accent. It re-points the tokens, so text, borders and skeletons follow. */
 .card.accent {
-  --card: var(--primary);
-  --card-foreground: var(--primary-foreground);
-  --border: color-mix(in srgb, var(--primary-foreground) 24%, transparent);
+  --card: var(--color-accent);
+  --card-foreground: var(--color-accent-content);
+  --border: color-mix(in oklab, var(--color-accent-content) 24%, transparent);
   --muted: var(--border);
-  --muted-foreground: color-mix(in srgb, var(--primary-foreground) 85%, transparent);
+  --muted-foreground: color-mix(in oklab, var(--color-accent-content) 85%, transparent);
 }
 .card.accent .card-header { padding: 32px 32px 8px; }
 .card.accent .card-content { padding: 8px 32px 32px; }
