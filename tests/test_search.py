@@ -2,6 +2,8 @@
 
 import struct
 
+import pytest
+
 from neurostack.config import Config
 from neurostack.search import (
     PREDICTION_ERROR_SIM_THRESHOLD,
@@ -1303,6 +1305,23 @@ class TestTieredAutoMerge:
             )
         finally:
             config_mod._config = original
+
+    @pytest.mark.parametrize("depth", ["auto", "triples", "summaries", "full"])
+    def test_record_false_reaches_every_inner_search(self, in_memory_db, monkeypatch, depth):
+        """The dashboard searches with record=False; no depth may prime notes anyway."""
+        import neurostack.search as search_mod
+
+        seen = []
+        triples = [TripleResult("a.md", "A", "x", "y", 0.9, "A"),
+                   TripleResult("b.md", "B", "x", "y", 0.8, "B")]
+        hits = [SearchResult("a.md", "h", "snip", 0.9, summary="A sum", title="A")]
+        monkeypatch.setattr(search_mod, "search_triples",
+                            lambda *a, **k: seen.append(k.get("record", True)) or triples)
+        monkeypatch.setattr(search_mod, "hybrid_search",
+                            lambda *a, **k: seen.append(k.get("record", True)) or hits)
+        monkeypatch.setattr(search_mod, "get_db", lambda path: in_memory_db)
+        tiered_search("q", depth=depth, embed_url="http://fake", record=False)
+        assert seen and not any(seen)
 
     def test_summary_signal_reorders_triple_ranking(self, in_memory_db, monkeypatch):
         """A note that triples rank low but summaries rank top must rise in auto.

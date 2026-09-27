@@ -10,12 +10,14 @@ const routes = {
   automations: './pages/automations.js',
   graph: './pages/graph.js',
   memories: './pages/memories.js',
+  search: './pages/search.js',
   settings: './pages/settings.js',
 };
 const icon = (body) => html`<svg viewBox="0 0 16 16" aria-hidden="true">${body}</svg>`;
 const NAV = [
   ['Vault', [
     ['', 'Overview', icon(html`<rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/>`)],
+    ['search', 'Search', icon(html`<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/>`)],
     ['graph', 'Graph', icon(html`<circle cx="4" cy="4" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="7" cy="12" r="2"/><path d="M5.8 4.3l4.3.5M5 5.8l1.4 4.4M11 6.8l-2.8 3.6"/>`)],
     ['memories', 'Memories', icon(html`<path d="M3 2.5h10v11l-5-3-5 3z"/>`)],
   ]],
