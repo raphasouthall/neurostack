@@ -8,10 +8,18 @@ import {
 // Canvas colours come from the theme tokens. Communities cycle through the
 // chart colours; notes outside any community are muted.
 const PALETTE = ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5', '--chart-6', '--chart-7', '--destructive'];
+// A token can be a color-mix() or oklch() expression, so each one is resolved
+// through a probe's computed colour into a value the canvas accepts.
+const probe = document.createElement('i');
 function themeColors() {
-  const s = getComputedStyle(document.documentElement);
-  const v = (name) => s.getPropertyValue(name).trim();
-  return { palette: PALETTE.map(v), none: v('--muted-foreground'), link: v('--border'), ink: v('--foreground') };
+  document.body.append(probe);
+  const v = (name) => {
+    probe.style.color = `var(${name})`;
+    return getComputedStyle(probe).color;
+  };
+  const colors = { palette: PALETTE.map(v), none: v('--muted-foreground'), link: v('--border'), ink: v('--foreground') };
+  probe.remove();
+  return colors;
 }
 
 document.head.insertAdjacentHTML('beforeend', `<style>
