@@ -551,6 +551,18 @@ def test_session_end_finds_an_omp_transcript_by_session_id(server, isolated_home
     assert _tool_calls(server, "vault_harvest_transcript")[0]["source_agent"] == "omp"
 
 
+def test_session_end_finds_an_omp_transcript_in_a_named_profile(server, isolated_home):
+    # `OMP_PROFILE=strake` keeps sessions under ~/.omp/profiles/strake, not ~/.omp/agent.
+    sessions = isolated_home / ".omp" / "profiles" / "strake" / "agent" / "sessions" / "-"
+    sessions.mkdir(parents=True)
+    (sessions / "20260927_sess-p.jsonl").write_text('{"role":"user"}\n')
+    server.replies["vault_harvest_transcript"] = {"messages": 1, "saved": [], "skipped": []}
+    verdict = run_event(
+        "session-end", {"session": "sess-p", "format": "omp"}, cfg=_cfg(server),
+    )
+    assert "20260927_sess-p.jsonl" in verdict.text
+
+
 def test_session_end_without_a_transcript_says_so(server, capsys):
     run_event("session-end", {"session": "nope", "format": "omp"}, cfg=_cfg(server))
     assert "no transcript found" in capsys.readouterr().err
