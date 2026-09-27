@@ -2,20 +2,17 @@ import { html, useState, useEffect, useRef } from './lib.js';
 import { Card, CardContent, CardTitle } from './components/ui.js';
 
 // Card effects ported from the React Bits MagicBento behaviour (issue #255).
-// Web Animations and CSS custom properties stand in for gsap.
+// Web Animations and CSS custom properties stand in for gsap. Their colour is the
+// daisyUI theme's accent (--effect in styles.css), so a theme change repaints them.
 export const DEFAULTS = {
   textAutoHide: true,
-  enableStars: true,
-  enableSpotlight: true,
   enableBorderGlow: true,
   enableTilt: false,
-  enableMagnetism: true,
   clickEffect: true,
   disableAnimations: false,
-  spotlightRadius: 300,
-  particleCount: 12,
-  glowColor: '73, 79, 223',
 };
+// The border glow reaches full strength within 150px of a card and fades out by 225px.
+const GLOW_RADIUS = 300;
 const KEY = 'ns_bento';
 const MOBILE = matchMedia('(max-width: 768px)');
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)');
@@ -32,7 +29,6 @@ export function getSettings() {
 }
 
 function changed() {
-  document.documentElement.style.setProperty('--glow-rgb', getSettings().glowColor);
   dispatchEvent(new Event('ns-bento'));
 }
 
@@ -44,27 +40,6 @@ export function saveSettings(s) {
 export function resetSettings() {
   localStorage.removeItem(KEY);
   changed();
-}
-
-document.documentElement.style.setProperty('--glow-rgb', getSettings().glowColor);
-
-function star(card) {
-  const p = document.createElement('div');
-  p.className = 'particle';
-  p.style.left = `${Math.random() * card.clientWidth}px`;
-  p.style.top = `${Math.random() * card.clientHeight}px`;
-  card.append(p);
-  const drift = () => `${Math.random() * 100 - 50}px`;
-  p.animate({ scale: [0, 1] }, { duration: 300, easing: 'cubic-bezier(.34, 1.56, .64, 1)', fill: 'forwards' });
-  p.animate({ translate: ['0 0', `${drift()} ${drift()}`] },
-    { duration: 2000 + Math.random() * 2000, iterations: Infinity, direction: 'alternate' });
-  p.animate({ opacity: [1, 0.3] }, { duration: 1500, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out' });
-}
-
-// A later animation overrides the running ones, so the star shrinks out from wherever it drifted.
-function fadeOut(p) {
-  p.animate({ scale: 0, opacity: 0 }, { duration: 300, easing: 'cubic-bezier(.36, 0, .66, -.56)', fill: 'forwards' })
-    .onfinish = () => p.remove();
 }
 
 function ripple(card, e) {
@@ -84,17 +59,10 @@ function ripple(card, e) {
 // later need no re-attach. Returns the cleanup.
 function attach(section, s) {
   const cards = () => [...section.children].filter((c) => c.classList.contains('magic-bento-card'));
-  const glowing = s.enableSpotlight || s.enableBorderGlow;
-  const spotlight = s.enableSpotlight
-    ? document.body.appendChild(Object.assign(document.createElement('div'), { className: 'bento-spotlight' }))
-    : null;
-  let card = null, still = false, frame = 0, last = null, timers = [];
+  let card = null, still = false, frame = 0, last = null;
 
   function leave() {
-    timers.forEach(clearTimeout);
-    timers = [];
     if (!card) return;
-    for (const p of card.querySelectorAll(':scope > .particle')) fadeOut(p);
     card.style.transform = '';
     card = null;
   }
@@ -102,28 +70,20 @@ function attach(section, s) {
   function enter(c) {
     card = c;
     still = !!c.querySelector(STILL);
-    if (!s.enableStars) return;
-    for (let i = 0; i < s.particleCount; i++) timers.push(setTimeout(() => star(c), i * 100));
   }
 
   // Proximity and fade distances follow MagicBento: full glow within half the radius.
   function glow(e) {
-    const near = s.spotlightRadius * 0.5, far = s.spotlightRadius * 0.75;
+    const near = GLOW_RADIUS * 0.5, far = GLOW_RADIUS * 0.75;
     const level = (d) => (d <= near ? 1 : d <= far ? (far - d) / (far - near) : 0);
-    let min = Infinity;
     for (const c of cards()) {
       const r = c.getBoundingClientRect();
       const d = Math.max(0, Math.hypot(e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2)
         - Math.max(r.width, r.height) / 2);
-      min = Math.min(min, d);
       c.style.setProperty('--glow-x', `${((e.clientX - r.left) / r.width) * 100}%`);
       c.style.setProperty('--glow-y', `${((e.clientY - r.top) / r.height) * 100}%`);
       c.style.setProperty('--glow-intensity', level(d));
-      c.style.setProperty('--glow-radius', `${s.spotlightRadius}px`);
     }
-    if (!spotlight) return;
-    spotlight.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -50%)`;
-    spotlight.style.opacity = level(min) * 0.8;
   }
 
   function move() {
@@ -134,14 +94,12 @@ function attach(section, s) {
       leave();
       if (hit) enter(hit);
     }
-    if (card && !still && (s.enableTilt || s.enableMagnetism)) {
+    if (card && !still && s.enableTilt) {
       const r = card.getBoundingClientRect();
       const x = last.clientX - r.left - r.width / 2, y = last.clientY - r.top - r.height / 2;
-      card.style.transform = 'perspective(1000px)'
-        + (s.enableTilt ? ` rotateX(${(-y / (r.height / 2)) * 10}deg) rotateY(${(x / (r.width / 2)) * 10}deg)` : '')
-        + (s.enableMagnetism ? ` translate(${x * 0.05}px, ${y * 0.05}px)` : '');
+      card.style.transform = `perspective(1000px) rotateX(${(-y / (r.height / 2)) * 10}deg) rotateY(${(x / (r.width / 2)) * 10}deg)`;
     }
-    if (glowing) glow(last);
+    if (s.enableBorderGlow) glow(last);
   }
 
   const onMove = (e) => {
@@ -152,7 +110,6 @@ function attach(section, s) {
     cancelAnimationFrame(frame);
     frame = 0;
     leave();
-    if (spotlight) spotlight.style.opacity = 0;
     for (const c of cards()) c.style.setProperty('--glow-intensity', 0);
   };
   const onClick = (e) => {
@@ -168,13 +125,11 @@ function attach(section, s) {
     section.removeEventListener('pointerleave', onLeave);
     section.removeEventListener('click', onClick);
     cancelAnimationFrame(frame);
-    timers.forEach(clearTimeout);
-    spotlight?.remove();
     for (const c of cards()) {
       c.style.transform = '';
       c.style.removeProperty('--glow-intensity');
     }
-    section.querySelectorAll(':scope > * > :is(.particle, .bento-ripple)').forEach((el) => el.remove());
+    section.querySelectorAll(':scope > * > .bento-ripple').forEach((el) => el.remove());
   };
 }
 

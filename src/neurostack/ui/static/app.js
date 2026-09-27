@@ -4,6 +4,7 @@ import {
   Alert, AlertDescription, AlertTitle, Button, Card, CardContent, Sheet, SheetContent, SheetHeader, SheetTitle,
 } from './components/ui.js';
 import Login from './pages/login.js';
+import { THEME_KEY } from './themes.js';
 
 const routes = {
   '': './pages/overview.js',
@@ -43,7 +44,8 @@ let seq = 0;
 let signedOut = false;
 let user = null;
 let active = '';
-const isDark = () => document.documentElement.dataset.theme === 'dark';
+// Any daisyUI theme can be dark, so ask the page rather than the theme name.
+const isDark = () => getComputedStyle(document.documentElement).colorScheme === 'dark';
 
 const initials = (name) => (name || 'local').replace(/[^A-Za-z0-9]/g, ' ').trim().slice(0, 2).toUpperCase();
 
@@ -89,7 +91,7 @@ function Sidebar({ active, user }) {
     localStorage.setItem(CLOSED_KEY, JSON.stringify([...next]));
     setClosed(next);
   };
-  const theme = () => chooseTheme(dark ? 'light' : 'dark');
+  const theme = () => chooseTheme(dark ? 'neurostack' : 'neurostack-dark');
 
   const body = (inSheet) => html`
     <div class="nav-scroll">
@@ -188,19 +190,20 @@ async function start() {
   route();
 }
 
-// index.html set the first theme. A choice is stored; 'system' clears it, so the OS decides.
+// index.html set the first theme. A choice is a daisyUI theme name and is stored;
+// 'system' clears it, so the OS picks between the two NeuroStack themes.
 const darkOS = matchMedia('(prefers-color-scheme: dark)');
+const osTheme = () => (darkOS.matches ? 'neurostack-dark' : 'neurostack');
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
   dispatchEvent(new Event('ns-theme'));
 }
 export function chooseTheme(choice) {
-  if (choice === 'system') localStorage.removeItem('ns_theme');
-  else localStorage.setItem('ns_theme', choice);
-  setTheme(choice === 'system' ? (darkOS.matches ? 'dark' : 'light') : choice);
+  if (choice === 'system') localStorage.removeItem(THEME_KEY);
+  else localStorage.setItem(THEME_KEY, choice);
+  setTheme(choice === 'system' ? osTheme() : choice);
 }
-darkOS.addEventListener('change',
-  (e) => localStorage.getItem('ns_theme') || setTheme(e.matches ? 'dark' : 'light'));
+darkOS.addEventListener('change', () => localStorage.getItem(THEME_KEY) || setTheme(osTheme()));
 
 addEventListener('ns-auth', showLogin);
 addEventListener('hashchange', route);
