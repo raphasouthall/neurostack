@@ -1595,6 +1595,7 @@ def tiered_search(
     db_path=None,
     context: str | None = None,
     workspace: str | None = None,
+    record: bool = True,
 ) -> dict:
     """Tiered search returning results at the appropriate compression level.
 
@@ -1621,7 +1622,7 @@ def tiered_search(
     if depth == "triples":
         triples = search_triples(
             query, top_k=top_k * 2, mode=mode,
-            embed_url=embed_url, db_path=db_path,
+            embed_url=embed_url, db_path=db_path, record=record,
             workspace=workspace,
             context=context,
         )
@@ -1637,7 +1638,7 @@ def tiered_search(
         # Search via chunks but return only summaries (deduplicated by note)
         chunk_results = hybrid_search(
             query, top_k=top_k, mode=mode,
-            embed_url=embed_url, db_path=db_path,
+            embed_url=embed_url, db_path=db_path, record=record,
             context=context,
             workspace=workspace,
         )
@@ -1654,7 +1655,7 @@ def tiered_search(
     if depth == "full":
         chunk_results = hybrid_search(
             query, top_k=top_k, mode=mode,
-            embed_url=embed_url, db_path=db_path,
+            embed_url=embed_url, db_path=db_path, record=record,
             context=context,
             workspace=workspace,
         )
@@ -1668,7 +1669,7 @@ def tiered_search(
     # Auto mode: start cheap, escalate if needed
     triples = search_triples(
         query, top_k=top_k * 3, mode=mode,
-        embed_url=embed_url, db_path=db_path,
+        embed_url=embed_url, db_path=db_path, record=record,
         workspace=workspace,
         context=context,
     )
@@ -1691,7 +1692,7 @@ def tiered_search(
         # Independent summary ranking for the same query (best chunk per note).
         summary_results = hybrid_search(
             query, top_k=top_k * 3, mode=mode,
-            embed_url=embed_url, db_path=db_path,
+            embed_url=embed_url, db_path=db_path, record=record,
             context=context, workspace=workspace,
         )
         summary_scores: dict[str, float] = {}
@@ -1767,7 +1768,7 @@ def tiered_search(
     # Low triple coverage — fall back to full chunk search
     chunk_results = hybrid_search(
         query, top_k=top_k, mode=mode,
-        embed_url=embed_url, db_path=db_path,
+        embed_url=embed_url, db_path=db_path, record=record,
         context=context,
         workspace=workspace,
     )

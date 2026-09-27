@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- The dashboard has a Search page (#282). Notes take every `vault_search` option (mode, depth, result count, workspace, context boost, max tokens, judge rerank, reference only) and memories every `vault_memories` option (type, workspace, count; an empty query lists the newest). Options live in the URL, so a reload or a shared link repeats the search. New endpoints `/api/search/notes`, `/api/search/memories` and `/api/workspaces`. Searches from the dashboard pass `record=False`, a new `tiered_search` argument, so browsing never primes notes or feeds hotness.
+
 ### Fixed
 
 - Triple extraction keeps every complete triple from a reply that does not parse whole (#280). The index LLM sometimes breaks one entry or stops mid-object (`Expecting ',' delimiter`); both attempts failed and the note got no triples at all.
