@@ -1,35 +1,39 @@
-/* NeuroStack dashboard shell. The colours are the Revolut-derived set of issue #253
-   under shadcn/ui token names (issue #257); components/ui.js renders the components. */
+/* NeuroStack dashboard shell. Colours come from the active daisyUI 5 theme
+   (vendor/daisyui-themes.css, MIT), picked with data-theme on <html> (issue #286).
+   This block maps daisyUI's variables onto the shadcn/ui token names the
+   components use (issue #257), so any daisyUI theme repaints the whole app. */
 :root {
-  color-scheme: light;
-  --background: #ffffff;
-  --foreground: #191c1f;
-  --card: #ffffff;
-  --card-foreground: #191c1f;
-  --popover: #ffffff;
-  --popover-foreground: #191c1f;
-  --primary: #494fdf;
-  --primary-foreground: #ffffff;
-  --secondary: #f4f4f4;
-  --secondary-foreground: #505a63;
-  --muted: #f4f4f4;
-  --muted-foreground: #8d969e;
-  --accent: #f4f4f4;
-  --accent-foreground: #191c1f;
-  --destructive: #e23b4a;
-  --destructive-foreground: #ffffff;
-  --border: #e2e2e7;
+  --background: var(--color-base-100);
+  --foreground: var(--color-base-content);
+  --card: var(--color-base-100);
+  --card-foreground: var(--color-base-content);
+  --popover: var(--color-base-100);
+  --popover-foreground: var(--color-base-content);
+  --primary: var(--color-primary);
+  --primary-foreground: var(--color-primary-content);
+  --secondary: var(--color-base-200);
+  --secondary-foreground: color-mix(in oklab, var(--color-base-content) 72%, var(--color-base-100));
+  --muted: var(--color-base-200);
+  --muted-foreground: color-mix(in oklab, var(--color-base-content) 55%, var(--color-base-100));
+  --accent: var(--color-base-200);
+  --accent-foreground: var(--color-base-content);
+  --destructive: var(--color-error);
+  --destructive-foreground: var(--color-error-content);
+  /* daisyUI themes also set --border (a width); this later rule wins on <html>. */
+  --border: color-mix(in oklab, var(--color-base-content) 12%, var(--color-base-100));
   /* The control track: switch off and slider rail. Fields keep the lighter --border. */
-  --input: #c9c9cd;
-  --ring: #494fdf;
+  --input: color-mix(in oklab, var(--color-base-content) 24%, var(--color-base-100));
+  --ring: var(--color-primary);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
   /* The shell: the frame is one step off the page panels that sit on it. */
-  --frame: #f4f4f4;
-  --nav-active: #ececef;
+  --frame: var(--color-base-200);
+  --nav-active: var(--color-base-300);
+  /* Card effects (border glow, click ripple) take the theme's accent. */
+  --effect: var(--color-accent);
   --radius: 12px;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-xl: calc(var(--radius) + 8px);
-  --success: #00a87e;
-  --warning: #ec7e00;
   /* Series colours for bars, job history and graph communities. */
   --chart-1: #007bc2;
   --chart-2: #00a87e;
@@ -38,29 +42,70 @@
   --chart-5: #428619;
   --chart-6: #e61e49;
   --chart-7: #b09000;
-  /* Card effect colour as "r, g, b"; bento.js overwrites it from the Settings page. */
-  --glow-rgb: 73, 79, 223;
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: "Aeonik Pro", "Inter Display", "General Sans", "Inter", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 }
-:root[data-theme="dark"] {
+/* The NeuroStack looks (issue #253) as two more daisyUI themes. They pin the exact
+   greys that the mixes above only approximate. */
+[data-theme="neurostack"] {
+  color-scheme: light;
+  --color-base-100: #ffffff;
+  --color-base-200: #f4f4f4;
+  --color-base-300: #ececef;
+  --color-base-content: #191c1f;
+  --color-primary: #494fdf;
+  --color-primary-content: #ffffff;
+  --color-secondary: #505a63;
+  --color-secondary-content: #ffffff;
+  --color-accent: #494fdf;
+  --color-accent-content: #ffffff;
+  --color-neutral: #191c1f;
+  --color-neutral-content: #ffffff;
+  --color-info: #007bc2;
+  --color-info-content: #ffffff;
+  --color-success: #00a87e;
+  --color-success-content: #ffffff;
+  --color-warning: #ec7e00;
+  --color-warning-content: #ffffff;
+  --color-error: #e23b4a;
+  --color-error-content: #ffffff;
+  --secondary-foreground: #505a63;
+  --muted-foreground: #8d969e;
+  --border: #e2e2e7;
+  --input: #c9c9cd;
+}
+[data-theme="neurostack-dark"] {
   color-scheme: dark;
-  --background: #000000;
-  --foreground: #ffffff;
+  --color-base-100: #000000;
+  --color-base-200: #16181a;
+  --color-base-300: #1f2224;
+  --color-base-content: #ffffff;
+  --color-primary: #494fdf;
+  --color-primary-content: #ffffff;
+  --color-secondary: #8d969e;
+  --color-secondary-content: #000000;
+  --color-accent: #494fdf;
+  --color-accent-content: #ffffff;
+  --color-neutral: #16181a;
+  --color-neutral-content: #ffffff;
+  --color-info: #007bc2;
+  --color-info-content: #ffffff;
+  --color-success: #00a87e;
+  --color-success-content: #ffffff;
+  --color-warning: #ec7e00;
+  --color-warning-content: #ffffff;
+  --color-error: #e23b4a;
+  --color-error-content: #ffffff;
   --card: #16181a;
-  --card-foreground: #ffffff;
   --popover: #16181a;
-  --popover-foreground: #ffffff;
   --secondary: #0a0a0a;
   --secondary-foreground: rgba(255, 255, 255, .72);
   --muted: #0a0a0a;
+  --muted-foreground: #8d969e;
   --accent: #0a0a0a;
-  --accent-foreground: #ffffff;
   --border: rgba(255, 255, 255, .12);
   --input: #3a3d40;
-  --frame: #16181a;
-  --nav-active: #1f2224;
 }
 
 * { box-sizing: border-box; }
@@ -443,7 +488,7 @@ input.input[type="search"] {
 .magic-bento-card { position: relative; }
 .bento-live > .magic-bento-card { transition: transform .15s ease-out, translate .3s ease-out, box-shadow .3s ease-out; }
 .bento-live > .magic-bento-card:hover { translate: 0 -2px; box-shadow: 0 8px 24px rgba(0, 0, 0, .12); }
-.bento-glow > .magic-bento-card:hover { box-shadow: 0 8px 24px rgba(0, 0, 0, .12), 0 0 30px rgba(var(--glow-rgb), .2); }
+.bento-glow > .magic-bento-card:hover { box-shadow: 0 8px 24px rgba(0, 0, 0, .12), 0 0 30px color-mix(in oklab, var(--effect) 20%, transparent); }
 /* The mask leaves only a 6px ring, so the glow lights the card edge nearest the cursor. */
 .bento-glow > .magic-bento-card::after {
   content: "";
@@ -453,42 +498,19 @@ input.input[type="search"] {
   border-radius: inherit;
   pointer-events: none;
   z-index: 1;
-  background: radial-gradient(var(--glow-radius, 300px) circle at var(--glow-x, 50%) var(--glow-y, 50%),
-    rgba(var(--glow-rgb), calc(var(--glow-intensity, 0) * .8)) 0%,
-    rgba(var(--glow-rgb), calc(var(--glow-intensity, 0) * .4)) 30%, transparent 60%);
+  background: radial-gradient(300px circle at var(--glow-x, 50%) var(--glow-y, 50%),
+    color-mix(in oklab, var(--effect) calc(var(--glow-intensity, 0) * 80%), transparent) 0%,
+    color-mix(in oklab, var(--effect) calc(var(--glow-intensity, 0) * 40%), transparent) 30%, transparent 60%);
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: exclude;
-}
-.particle {
-  position: absolute;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: rgb(var(--glow-rgb));
-  box-shadow: 0 0 6px rgba(var(--glow-rgb), .6);
-  pointer-events: none;
-  z-index: 2;
 }
 .bento-ripple {
   position: absolute;
   border-radius: 50%;
   pointer-events: none;
   z-index: 2;
-  background: radial-gradient(circle, rgba(var(--glow-rgb), .4) 0%, rgba(var(--glow-rgb), .2) 30%, transparent 70%);
-}
-.bento-spotlight {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 800px;
-  height: 800px;
-  border-radius: 50%;
-  pointer-events: none;
-  z-index: 200;
-  opacity: 0;
-  transition: opacity .3s, transform .1s;
-  background: radial-gradient(circle, rgba(var(--glow-rgb), .15) 0%, rgba(var(--glow-rgb), .08) 15%,
-    rgba(var(--glow-rgb), .04) 25%, rgba(var(--glow-rgb), .02) 40%, rgba(var(--glow-rgb), .01) 65%, transparent 70%);
+  background: radial-gradient(circle, color-mix(in oklab, var(--effect) 40%, transparent) 0%,
+    color-mix(in oklab, var(--effect) 20%, transparent) 30%, transparent 70%);
 }
 .bento-autohide .card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bento-autohide .card-description { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

@@ -6,10 +6,17 @@
   <title>NeuroStack</title>
   <link rel="icon" type="image/svg+xml" href="logo.svg">
   <script>
-    // Set the theme before the stylesheet paints, so a dark page never flashes white.
-    document.documentElement.dataset.theme = localStorage.getItem('ns_theme')
-      || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    // Set the daisyUI theme before the stylesheet paints, so a dark page never
+    // flashes white. The pre-#286 'light'/'dark' choice becomes its NeuroStack theme.
+    (() => {
+      const old = { light: 'neurostack', dark: 'neurostack-dark' }[localStorage.getItem('ns_theme')];
+      if (old && !localStorage.getItem('ns_daisy_theme')) localStorage.setItem('ns_daisy_theme', old);
+      localStorage.removeItem('ns_theme');
+      document.documentElement.dataset.theme = localStorage.getItem('ns_daisy_theme')
+        || (matchMedia('(prefers-color-scheme: dark)').matches ? 'neurostack-dark' : 'neurostack');
+    })();
   </script>
+  <link rel="stylesheet" href="vendor/daisyui-themes.css">
   <link rel="stylesheet" href="styles.css">
   <script type="module" src="app.js"></script>
 </head>
