@@ -4,6 +4,7 @@
 
 ### Added
 
+- The dashboard shell is one frame (#284). A single viewport-high box holds the sidebar and the page panel side by side, and the page panel scrolls instead of the window. The sidebar is a 64px icon rail that widens to 232px on hover, on keyboard focus and while the account menu is open, and a pin holds it wide (pinned by default, remembered). Widening pushes the page over rather than covering it. Nav groups fold, and an account row at the foot opens a menu for dark mode and sign-out. Phones keep the top bar and the sheet menu.
 - The dashboard has a Search page (#282). Notes take every `vault_search` option (mode, depth, result count, workspace, context boost, max tokens, judge rerank, reference only) and memories every `vault_memories` option (type, workspace, count; an empty query lists the newest). Options live in the URL, so a reload or a shared link repeats the search. New endpoints `/api/search/notes`, `/api/search/memories` and `/api/workspaces`. Searches from the dashboard pass `record=False`, a new `tiered_search` argument, so browsing never primes notes or feeds hotness.
 
 ### Fixed
