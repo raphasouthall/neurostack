@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 try:
     import numpy as np
@@ -698,57 +698,63 @@ ABLATABLE_SIGNALS = (
 )
 
 
+# (entity, normalized name, occurrences) for every entity in the triples graph,
+# per database file, with the triples-table stamp it was read at (issue #292).
+_ENTITY_INDEX: dict[str, tuple[tuple[int, int], list[tuple[str, str, int]]]] = {}
+
+
+def _entity_index(conn: sqlite3.Connection) -> list[tuple[str, str, int]]:
+    """Every graph entity with its normalized name and slot count, least common first.
+
+    Reading and normalizing all subjects and objects took 0.5 s to 2.7 s per
+    search on a 31k-triple index, the largest cost in a search. The list is kept
+    per database file and read again only when the triples table changes: the
+    indexer deletes and re-inserts a note's triples, so its row count and highest
+    id move whenever the graph does. An in-memory database is never cached.
+    """
+    stamp = tuple(conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(triple_id), 0) FROM triples").fetchone())
+    path = next((r[2] for r in conn.execute("PRAGMA database_list") if r[1] == "main"), "")
+    cached = _ENTITY_INDEX.get(path) if path else None
+    if cached and cached[0] == stamp:
+        return cached[1]
+    counts: dict[str, int] = {}
+    for subject, obj in conn.execute("SELECT subject, object FROM triples"):
+        counts[subject] = counts.get(subject, 0) + 1
+        counts[obj] = counts.get(obj, 0) + 1
+    index = sorted(((e, " " + e.lower().replace("-", " ").replace("_", " "), n)
+                    for e, n in counts.items()), key=lambda t: (t[2], t[0]))
+    if path:
+        _ENTITY_INDEX[path] = (stamp, index)
+    return index
+
+
 def _extract_query_entities(conn: sqlite3.Connection, query: str) -> set[str]:
     """Entities in the triples graph that the query's words name.
 
-    One statement for the whole query, not one per word: the per-word version
-    rescanned the triples table for every term and unioned the results in Python
-    (issue #120).
-
-    Matching is anchored at a word start — the entity begins with the query word,
-    or a word inside it does. The old rule was a bare ``LIKE '%word%'``,
-    substring-anywhere, so "agent" matched most of the graph ("subagent",
-    "user_agent_string"): the 4-word query "azure foundry knowledge agent" pulled
-    643 entities, which are not the query's entities, and every later stage was
-    sized by that number. Anchoring keeps the variants a user means ("agents",
-    "agentic", "Azure Foundry") and drops the accidental interior hits. Hyphens
-    and underscores normalize to spaces on both sides, so "azure-foundry" is
+    Matching is anchored at a word start: the entity begins with the query word,
+    or a word inside it does. A bare substring rule pulled in most of the graph
+    ("agent" matched "subagent", "user_agent_string"), and every later stage was
+    sized by that number (issue #120). Anchoring keeps the variants a user means
+    ("agents", "agentic", "Azure Foundry") and drops the accidental interior hits.
+    Hyphens and underscores count as spaces on both sides, so "azure-foundry" is
     still two words.
 
     Words of 2 characters or fewer are skipped (they match too much to mean
     anything) and the result is capped at MAX_QUERY_ENTITIES, least-frequent
-    first.
+    first, because an entity that fills every other triple carries no signal.
     """
-    query_words = [w.lower() for w in query.split() if len(w) > 2]
-    if not query_words:
+    words = [" " + w.lower().replace("-", " ").replace("_", " ")
+             for w in query.split() if len(w) > 2]
+    if not words:
         return set()
-
-    params: list[str] = []
-    for word in query_words:
-        # LIKE wildcards inside a query word would match everything; escape
-        # them. '_' and '-' are normalized away before escaping.
-        w = word.replace("-", " ").replace("_", " ")
-        w = w.replace("\\", r"\\").replace("%", r"\%")
-        params.extend((f"{w}%", f"% {w}%"))
-    clauses = " OR ".join(
-        r"norm LIKE ? ESCAPE '\' OR norm LIKE ? ESCAPE '\'" for _ in query_words
-    )
-    # occurrences = how many triple slots the entity fills, i.e. how common it
-    # is; ordering by it ascending means the cap keeps the selective entities.
-    rows = conn.execute(
-        "SELECT entity, COUNT(*) AS occurrences FROM ("
-        "  SELECT subject AS entity,"
-        "         REPLACE(REPLACE(LOWER(subject), '-', ' '), '_', ' ') AS norm"
-        "  FROM triples"
-        "  UNION ALL"
-        "  SELECT object AS entity,"
-        "         REPLACE(REPLACE(LOWER(object), '-', ' '), '_', ' ') AS norm"
-        "  FROM triples"
-        f") WHERE {clauses} "
-        "GROUP BY entity ORDER BY occurrences ASC, entity ASC LIMIT ?",
-        [*params, MAX_QUERY_ENTITIES],
-    ).fetchall()
-    return {r[0] for r in rows}
+    found: set[str] = set()
+    for entity, norm, _n in _entity_index(conn):
+        if any(w in norm for w in words):
+            found.add(entity)
+            if len(found) == MAX_QUERY_ENTITIES:
+                break
+    return found
 
 
 def _cooccurring_entities(
@@ -785,6 +791,26 @@ def _cooccurring_entities(
             if eb in query_entities and ea not in query_entities:
                 cooc_entities[ea] = max(cooc_entities.get(ea, 0), w)
     return cooc_entities
+
+
+def active_weights(conn: sqlite3.Connection, cfg) -> RankingWeights:
+    """The ranking weights every search uses (issue #291).
+
+    config.toml sets the base. Weights applied from the dashboard's Tuning page
+    live in the one-row ``ranking_weights`` table and win over config, field by
+    field, so an apply takes effect on the next search in every process without a
+    restart, and a revert (deleting the row) falls back to config.
+    """
+    base = RankingWeights.from_config(cfg)
+    try:
+        row = conn.execute("SELECT weights FROM ranking_weights WHERE id = 1").fetchone()
+    except sqlite3.OperationalError:
+        return base
+    if row is None:
+        return base
+    applied = json.loads(row[0])
+    fields = RankingWeights.__dataclass_fields__
+    return replace(base, **{k: float(v) for k, v in applied.items() if k in fields})
 
 
 def hybrid_search(
@@ -825,15 +851,16 @@ def hybrid_search(
     blends, lateral-inhibition threshold and strength, co-occurrence boost, link
     penalties) for this call only, without touching global config — the mechanism
     the weight-tuning sweep (issue #66) uses to score a candidate vector. Defaults
-    to :meth:`RankingWeights.from_config`, so production behaviour is unchanged.
+    to :func:`active_weights`: config.toml plus any weights applied from the
+    dashboard's Tuning page (issue #291).
     """
     from .schema import DB_PATH
 
     ablate = ablate or set()
     cfg = get_config()
-    weights = weights or RankingWeights.from_config(cfg)
     embed_url = embed_url or cfg.embed_url
     conn = get_db(db_path or DB_PATH)
+    weights = weights or active_weights(conn, cfg)
     link_section_penalty = weights.link_section_penalty
     link_density_threshold = weights.link_density_threshold
 

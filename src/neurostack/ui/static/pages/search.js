@@ -22,6 +22,8 @@ document.head.insertAdjacentHTML('beforeend', `<style>
 .srch-title { font-weight: 500; }
 .srch-path { font-size: 12px; color: var(--muted-foreground); overflow-wrap: anywhere; }
 .srch-body { margin-top: 4px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.srch-best { margin-left: auto; }
+.srch-best[aria-pressed="true"] { background: var(--color-success); color: var(--color-success-content); border-color: transparent; }
 .srch-mem { white-space: pre-wrap; overflow-wrap: anywhere; }
 .srch-table { table-layout: fixed; min-width: 760px; }
 .srch-table th:nth-child(2) { width: 120px; }
@@ -70,8 +72,35 @@ function query(o) {
 const noteLink = (path, title) => html`<a class="srch-title" href=${`#/graph?note=${encodeURIComponent(path)}`}>${title || path}</a>`;
 const score = (s) => (s == null ? '' : html`<${Badge} variant="secondary">${Number(s).toFixed(3)}<//>`);
 
-function NoteResults({ data }) {
+// "Best result" stores the query and the chosen note as an explicit label (#291),
+// which the Tuning page learns ranking weights from. Clicking again takes it back.
+function BestButton({ query, path, shown, marks, setMarks }) {
+  const id = marks[path];
+  const [busy, setBusy] = useState(false);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      if (id) {
+        await api('feedback/undo', { feedback_id: id });
+        setMarks((m) => { const n = { ...m }; delete n[path]; return n; });
+      } else {
+        const r = await api('feedback', { query, chosen_path: path, shown_paths: shown });
+        setMarks((m) => ({ ...m, [path]: r.feedback_id }));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<${Button} size="sm" variant="outline" class="srch-best" aria-pressed=${!!id} disabled=${busy}
+    title=${id ? 'Take back this label' : 'Label this note as the right answer to this search'}
+    onClick=${toggle}>${id ? '✓ Best result' : 'Best result'}<//>`;
+}
+
+function NoteResults({ data, query }) {
   const { results = [], triples = [], summaries = [], chunks = [] } = data;
+  const [marks, setMarks] = useState(data.marked || {});
+  // One entry per note, in the order shown, so the stored rank is the note's rank.
+  const shown = [...new Set([...results, ...summaries, ...chunks].map((r) => r.path || r.note))];
   if (!results.length && !triples.length && !summaries.length && !chunks.length) {
     return html`<${CardDescription} class="empty">No notes match<//>`;
   }
@@ -89,7 +118,8 @@ function NoteResults({ data }) {
     <//>`}
     ${[...results, ...summaries, ...chunks].length > 0 && html`<${CardContent}><ol class="srch-list">
       ${[...results, ...summaries, ...chunks].map((r, i) => html`<li key=${i}>
-        <div class="srch-meta">${noteLink(r.path || r.note, r.title)} ${score(r.score)}</div>
+        <div class="srch-meta">${noteLink(r.path || r.note, r.title)} ${score(r.score)}
+          <${BestButton} query=${query} path=${r.path || r.note} shown=${shown} marks=${marks} setMarks=${setMarks} /></div>
         <div class="srch-path">${r.path || r.note}${r.section ? ` · ${r.section}` : ''}</div>
         ${r.summary && html`<div class="srch-body">${r.summary}</div>`}
         ${r.snippet && html`<div class="srch-body sub">${r.snippet}</div>`}
@@ -139,7 +169,8 @@ export default function Page() {
     setBusy(true);
     setErr(null);
     api(`search/${target}?${qs}`).then(
-      (d) => live && (setData({ target, ...d }), setTook(performance.now() - t0)),
+      (d) => live && (setData({ target, q: new URLSearchParams(qs).get('q') || '', ...d }),
+        setTook(performance.now() - t0)),
       (e) => live && (setErr(e.message), setData(null)),
     ).finally(() => live && setBusy(false));
     return () => { live = false; };
@@ -212,7 +243,7 @@ export default function Page() {
       ${err ? html`<${CardContent}><${Alert} variant="destructive"><${AlertTitle}>Search failed<//><${AlertDescription}>${err}<//><//><//>`
         : busy && !data ? html`<${CardContent}><${Loading} /><//>`
         : !data ? html`<${CardDescription} class="empty">Type a query and press Search<//>`
-        : data.target === 'notes' ? html`<${NoteResults} data=${data} />`
+        : data.target === 'notes' ? html`<${NoteResults} key=${data.q} data=${data} query=${data.q} />`
         : html`<${MemoryResults} data=${data} />`}
     <//>`;
 }
