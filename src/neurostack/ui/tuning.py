@@ -31,6 +31,8 @@ K = 5
 MIN_LABELS = 10
 # Each round tries 28 settings; three keep a run on a 3 GB index near 20 minutes.
 MAX_ROUNDS = 3
+# A run takes about 20 minutes; one still running after this long has died.
+STALE_HOURS = 2
 
 
 class TuningError(ValueError):
@@ -47,8 +49,9 @@ def prepare(db_path) -> None:
     """Server start: bring the index to the current schema, then fail stale runs.
 
     The dashboard reads through read-only connections, which never migrate, and
-    the tuning tables arrived in schema v32. A run still marked running when the
-    server starts died with the old process.
+    the tuning tables arrived in schema v32. A run is a child process that
+    outlives a server restart, so only a run older than any run can last is
+    marked failed: its process died without writing its result.
     """
     from ..schema import _run_migrations
 
@@ -56,8 +59,10 @@ def prepare(db_path) -> None:
     try:
         if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'schema_version'").fetchone():
             _run_migrations(conn)
-        conn.execute("UPDATE tune_runs SET status = 'failed', error = 'server restarted',"
-                     " finished_at = datetime('now') WHERE status = 'running'")
+        conn.execute("UPDATE tune_runs SET status = 'failed',"
+                     " error = 'run stopped without a result',"
+                     " finished_at = datetime('now') WHERE status = 'running'"
+                     " AND started_at < datetime('now', ?)", (f"-{STALE_HOURS} hours",))
         conn.commit()
     except sqlite3.OperationalError:
         pass  # no index yet, or a database from before schema v32

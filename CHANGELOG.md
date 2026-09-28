@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Restarting the dashboard no longer marks a tuning run that is still going as failed (#293). The run is a separate process, so only a run started more than 2 hours ago is failed at start-up.
+
 ### Changed
 
 - Search reads the graph's entity list once per index change instead of scanning every triple on each search (#292). On the live index (31,547 triples) that scan cost 0.5 s to 2.7 s of every search. Matching is unchanged: query words anchored at a word start, least common entities first, 50 at most.
