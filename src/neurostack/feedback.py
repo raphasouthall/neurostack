@@ -264,11 +264,42 @@ def capture_read(path: str, conn=None) -> None:
 # ── harvest (called from CLI — may raise) ──────────────────────────────────
 
 
+def mark_best(conn, query: str, chosen_path: str, shown_paths: list[str]) -> int:
+    """Record a result a person picked as the right one for ``query`` (#291).
+
+    An explicit label, unlike the inferred ones `attribute_use` writes. Marking
+    the same note again for the same query keeps the one row. Returns its id.
+    """
+    query = query.strip()
+    row = conn.execute(
+        "SELECT feedback_id FROM search_feedback WHERE query = ? AND chosen_path = ? "
+        "AND source = 'explicit'", (query, chosen_path)).fetchone()
+    if row:
+        return row[0]
+    rank = shown_paths.index(chosen_path) + 1 if chosen_path in shown_paths else None
+    cur = conn.execute(
+        "INSERT INTO search_feedback (query, chosen_path, shown_paths, rank, source) "
+        "VALUES (?, ?, ?, ?, 'explicit')", (query, chosen_path, json.dumps(shown_paths), rank))
+    conn.commit()
+    return cur.lastrowid
+
+
+def unmark_best(conn, feedback_id: int) -> bool:
+    """Remove one explicit label; inferred rows are never touched."""
+    cur = conn.execute(
+        "DELETE FROM search_feedback WHERE feedback_id = ? AND source = 'explicit'", (feedback_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def feedback_labels(conn, *, min_count: int = 1, max_age_days: float | None = None):
     """Aggregate feedback events into an ``EvalQuery`` label set.
 
     One label per distinct query; its targets are the notes chosen for that query
     at least ``min_count`` times. ``max_age_days`` restricts to recent feedback.
+    A query someone marked by hand (#291) takes only its explicit targets: a
+    person's pick outranks what their later reading suggested, and an explicit
+    label always counts, whatever ``min_count`` is.
     """
     where = ""
     params: list = []
@@ -277,14 +308,18 @@ def feedback_labels(conn, *, min_count: int = 1, max_age_days: float | None = No
         params.append(f"-{float(max_age_days)} days")
 
     rows = conn.execute(
-        f"SELECT query, chosen_path, COUNT(*) AS c FROM search_feedback {where} "
-        f"GROUP BY query, chosen_path",
+        f"SELECT query, chosen_path, COUNT(*) AS c, MAX(source = 'explicit') AS x "
+        f"FROM search_feedback {where} GROUP BY query, chosen_path",
         params,
     ).fetchall()
 
+    explicit = {r[0] for r in rows if r[3]}
     by_query: dict[str, list[str]] = {}
     for r in rows:
-        if r[2] >= min_count:
+        if r[0] in explicit:
+            if r[3]:
+                by_query.setdefault(r[0], []).append(r[1])
+        elif r[2] >= min_count:
             by_query.setdefault(r[0], []).append(r[1])
 
     return [

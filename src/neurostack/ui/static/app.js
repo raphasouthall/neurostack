@@ -13,6 +13,7 @@ const routes = {
   memories: './pages/memories.js',
   search: './pages/search.js',
   settings: './pages/settings.js',
+  tuning: './pages/tuning.js',
 };
 const icon = (body) => html`<svg viewBox="0 0 16 16" aria-hidden="true">${body}</svg>`;
 const NAV = [
@@ -24,6 +25,7 @@ const NAV = [
   ]],
   ['System', [
     ['automations', 'Automations', icon(html`<circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/>`)],
+    ['tuning', 'Tuning', icon(html`<path d="M3 4h6M11 4h2M3 8h2M7 8h6M3 12h8M13 12h0"/><circle cx="10" cy="4" r="1.5"/><circle cx="6" cy="8" r="1.5"/><circle cx="12" cy="12" r="1.5"/>`)],
     ['settings', 'Settings', icon(html`<circle cx="8" cy="8" r="2"/><circle cx="8" cy="8" r="4.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>`)],
   ]],
 ];

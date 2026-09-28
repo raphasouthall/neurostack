@@ -2,12 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- Search reads the graph's entity list once per index change instead of scanning every triple on each search (#292). On the live index (31,547 triples) that scan cost 0.5 s to 2.7 s of every search. Matching is unchanged: query words anchored at a word start, least common entities first, 50 at most.
+
 ### Fixed
 
 - The Overview automations tile is painted in the theme's accent, and the chart series (bars, legend dots, job history, graph communities) come from the theme's palette, so both follow a daisyUI theme change (#288). The NeuroStack themes keep their original colours.
 
 ### Added
 
+- Search results have a Best result button, and a new Tuning page tunes ranking weights from the labels (#291). A mark is stored as an explicit label (`search_feedback.source = 'explicit'`, schema v32) and replaces the inferred labels for the same search. Run tuning starts a background run (coordinate ascent on half the labels, three rounds at most) and reports the score on the other half. Apply stores the tuned weights in a new `ranking_weights` table that every search reads over config.toml, and is refused unless the unseen half ranks better. Revert deletes that row.
 - The dashboard takes daisyUI 5 themes (#286). `vendor/daisyui-themes.css` (MIT) supplies 35 themes, and the NeuroStack light and dark looks are two more; Settings shows all 37 as tiles plus System, which follows the OS between the NeuroStack pair. Every component token maps onto the active theme's daisyUI variables, so a theme repaints the whole app, the graph included. A pre-existing light or dark choice carries over to its NeuroStack theme.
 - The dashboard shell is one frame (#284). A single viewport-high box holds the sidebar and the page panel side by side, and the page panel scrolls instead of the window. The sidebar is a 64px icon rail that widens to 232px on hover, on keyboard focus and while the account menu is open, and a pin holds it wide (pinned by default, remembered). Widening pushes the page over rather than covering it. Nav groups fold, and an account row at the foot opens a menu for dark mode and sign-out. Phones keep the top bar and the sheet menu.
 - The dashboard has a Search page (#282). Notes take every `vault_search` option (mode, depth, result count, workspace, context boost, max tokens, judge rerank, reference only) and memories every `vault_memories` option (type, workspace, count; an empty query lists the newest). Options live in the URL, so a reload or a shared link repeats the search. New endpoints `/api/search/notes`, `/api/search/memories` and `/api/workspaces`. Searches from the dashboard pass `record=False`, a new `tiered_search` argument, so browsing never primes notes or feeds hotness.

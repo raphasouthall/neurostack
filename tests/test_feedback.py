@@ -155,3 +155,65 @@ def test_stats_empty_db(fb_db):
     assert s["searches_logged"] == 0
     assert s["feedback_events"] == 0
     assert s["avg_chosen_rank"] is None
+
+
+# ── explicit labels and applied weights (issue #291) ────────────────────────
+
+
+def test_a_marked_best_result_replaces_inferred_labels_for_that_query(fb_db):
+    _event(fb_db, "dns limit", ["a.md", "b.md"], "a.md")
+    _event(fb_db, "dns limit", ["a.md", "b.md"], "a.md")
+    _event(fb_db, "other", ["c.md"], "c.md")
+    first = fb.mark_best(fb_db, "dns limit ", "b.md", ["a.md", "b.md"])
+    assert fb.mark_best(fb_db, "dns limit", "b.md", ["a.md", "b.md"]) == first
+
+    labels = {q.query: q.targets for q in fb.feedback_labels(fb_db, min_count=2)}
+    # The hand-picked note wins for its query; min_count never drops an explicit label.
+    assert labels == {"dns limit": ["b.md"]}
+    row = fb_db.execute("SELECT rank, source FROM search_feedback WHERE feedback_id = ?",
+                        (first,)).fetchone()
+    assert tuple(row) == (2, "explicit")
+
+    assert fb.unmark_best(fb_db, first)
+    assert {q.query: q.targets for q in fb.feedback_labels(fb_db)} == {
+        "dns limit": ["a.md"], "other": ["c.md"]}
+
+
+def test_unmark_never_deletes_an_inferred_label(fb_db):
+    _event(fb_db, "q", ["a.md"], "a.md")
+    inferred = fb_db.execute("SELECT feedback_id FROM search_feedback").fetchone()[0]
+    assert not fb.unmark_best(fb_db, inferred)
+    assert fb.feedback_labels(fb_db)
+
+
+def test_applied_weights_win_over_config_until_reverted(fb_db):
+    from neurostack.config import Config, RankingWeights
+    from neurostack.search import active_weights
+
+    cfg = Config()
+    assert active_weights(fb_db, cfg) == RankingWeights.from_config(cfg)
+    fb_db.execute("INSERT INTO ranking_weights (id, weights) VALUES (1, ?)",
+                  (json.dumps({"hotness_weight": 0.4, "not_a_weight": 9}),))
+    applied = active_weights(fb_db, cfg)
+    assert applied.hotness_weight == 0.4
+    assert applied.convergence_weight == cfg.convergence_weight
+    fb_db.execute("DELETE FROM ranking_weights")
+    assert active_weights(fb_db, cfg) == RankingWeights.from_config(cfg)
+
+
+def test_migration_31_to_32_adds_source_and_tuning_tables(tmp_path):
+    import sqlite3
+
+    from neurostack.schema import _run_migrations
+
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+    conn.execute("INSERT INTO schema_version VALUES (31)")
+    conn.execute("CREATE TABLE search_feedback (feedback_id INTEGER PRIMARY KEY, query TEXT,"
+                 " chosen_path TEXT, shown_paths JSON, rank INTEGER, created_at TEXT)")
+    conn.execute("INSERT INTO search_feedback (query, chosen_path, shown_paths) VALUES"
+                 " ('q', 'a.md', '[]')")
+    _run_migrations(conn)
+    assert conn.execute("SELECT source FROM search_feedback").fetchone()[0] == "inferred"
+    assert _table_exists(conn, "ranking_weights") and _table_exists(conn, "tune_runs")

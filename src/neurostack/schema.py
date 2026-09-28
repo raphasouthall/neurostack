@@ -32,7 +32,7 @@ def __getattr__(name: str):
         return _db_path()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 
 # One row per queued job. The orchestrator (n8n, cron, anything) only calls
 # `neurostack queue`; dedupe, the daily cap, claiming and stale reaping live
@@ -77,6 +77,33 @@ CREATE TABLE IF NOT EXISTS memory_coverage (
 # One row per scheduled job run (issue #225). `neurostack run-due` writes a
 # `running` row before the body starts and settles it after, so a crash leaves
 # the row behind as evidence. The latest row per job decides what is due next.
+# Weight tuning from the dashboard (#291). One row of applied ranking weights
+# that every search reads on top of config.toml, and one row per tuning run.
+TUNING_SQL = """
+CREATE TABLE IF NOT EXISTS ranking_weights (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    weights JSON NOT NULL,
+    run_id INTEGER,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS tune_runs (
+    run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    labels INTEGER,
+    explicit_labels INTEGER,
+    train_baseline REAL,
+    train_tuned REAL,
+    holdout_baseline REAL,
+    holdout_tuned REAL,
+    baseline_weights JSON,
+    tuned_weights JSON,
+    error TEXT,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT
+);
+"""
+
 # A forgotten memory leaves its fingerprint here so harvest cannot save it
 # again (#278). Explicit saves never check it, so a deliberate save wins.
 TOMBSTONES_SQL = """
@@ -299,7 +326,8 @@ CREATE TABLE IF NOT EXISTS search_feedback (
     chosen_path TEXT NOT NULL,
     shown_paths JSON NOT NULL,
     rank INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    source TEXT NOT NULL DEFAULT 'inferred'
 );
 CREATE INDEX IF NOT EXISTS idx_search_feedback_query ON search_feedback(query);
 CREATE INDEX IF NOT EXISTS idx_search_feedback_time ON search_feedback(created_at);
@@ -490,6 +518,7 @@ SCHEMA_SQL += JOB_QUEUE_SQL
 SCHEMA_SQL += COVERAGE_SQL
 SCHEMA_SQL += JOB_RUNS_SQL
 SCHEMA_SQL += TOMBSTONES_SQL
+SCHEMA_SQL += TUNING_SQL
 
 # Migration from v1 to v2: add triples tables
 MIGRATION_V2 = """
@@ -775,7 +804,8 @@ CREATE TABLE IF NOT EXISTS search_feedback (
     chosen_path TEXT NOT NULL,
     shown_paths JSON NOT NULL,
     rank INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    source TEXT NOT NULL DEFAULT 'inferred'
 );
 CREATE INDEX IF NOT EXISTS idx_search_feedback_query ON search_feedback(query);
 CREATE INDEX IF NOT EXISTS idx_search_feedback_time ON search_feedback(created_at);
@@ -1356,6 +1386,17 @@ def _run_migrations(conn: sqlite3.Connection):
         conn.execute("INSERT OR REPLACE INTO schema_version VALUES (31)")
         conn.commit()
         log.info("Migration to v31 complete.")
+
+    if current < 32:
+        log.info("Migrating schema v31 -> v32: explicit feedback + weight tuning (issue #291)...")
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(search_feedback)")}
+        if cols and "source" not in cols:
+            conn.execute("ALTER TABLE search_feedback"
+                         " ADD COLUMN source TEXT NOT NULL DEFAULT 'inferred'")
+        conn.executescript(TUNING_SQL)
+        conn.execute("INSERT OR REPLACE INTO schema_version VALUES (32)")
+        conn.commit()
+        log.info("Migration to v32 complete.")
 
 
 def get_db(db_path: Path | None = None) -> sqlite3.Connection:
