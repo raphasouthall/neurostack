@@ -15,6 +15,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 import neurostack
+from neurostack.schema import TUNING_SQL
 from neurostack.ui import auth, server
 from neurostack.ui.server import make_server
 
@@ -57,7 +58,13 @@ def start(tmp_path, monkeypatch):
     # A file beside the static dir that traversal would reach.
     (tmp_path / "pyproject.toml").write_text("secret")
     db = tmp_path / "neurostack.db"
-    sqlite3.connect(db).execute("CREATE TABLE notes (path TEXT)").connection.close()
+    setup = sqlite3.connect(db)
+    setup.execute("CREATE TABLE notes (path TEXT)")
+    setup.execute("CREATE TABLE search_feedback (feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                  " query TEXT, chosen_path TEXT, shown_paths JSON, rank INTEGER,"
+                  " created_at TEXT DEFAULT (datetime('now')), source TEXT DEFAULT 'inferred')")
+    setup.executescript(TUNING_SQL)
+    setup.close()
     servers = []
 
     def run(host="127.0.0.1", db_path=db):
@@ -255,6 +262,72 @@ def test_oversized_login_is_413(start, cfg):
     assert get(base + "/api/login", "POST", data=b"x" * 5000)[0] == 413
 
 
+def post(url, body, headers=None):
+    return get(url, "POST", {"Content-Type": "application/json", **(headers or {})},
+               json.dumps(body).encode())
+
+
+def test_best_result_marks_show_on_the_next_search_and_undo(start, calls, searches):
+    base = start()
+    status, _, body = post(base + "/api/feedback", {
+        "query": "dns limit", "chosen_path": "b.md", "shown_paths": ["a.md", "b.md"]})
+    assert status == 200
+    fid = json.loads(body)["feedback_id"]
+    found = json.loads(get(base + "/api/search/notes?q=dns+limit")[2])
+    assert found["marked"] == {"b.md": fid}
+
+    undo = post(base + "/api/feedback/undo", {"feedback_id": fid})
+    assert json.loads(undo[2]) == {"removed": True}
+    assert json.loads(get(base + "/api/search/notes?q=dns+limit")[2])["marked"] == {}
+
+
+@pytest.mark.parametrize("body", [{}, {"query": "q"}, {"query": "q", "chosen_path": "a.md",
+                                                      "shown_paths": "a.md"}])
+def test_a_malformed_mark_is_400(start, calls, body):
+    assert post(start() + "/api/feedback", body)[0] == 400
+
+
+def test_apply_needs_a_holdout_gain_and_revert_restores_config(start, calls, tmp_path):
+    base = start()
+    db = sqlite3.connect(tmp_path / "neurostack.db")
+    for tuned in (0.5, 0.7):
+        db.execute("INSERT INTO tune_runs (status, metric, holdout_baseline, holdout_tuned,"
+                   " tuned_weights) VALUES ('done', 'ndcg', 0.6, ?, '{\"hotness_weight\": 0.3}')",
+                   (tuned,))
+    db.commit()
+
+    status, _, body = post(base + "/api/tune/apply", {"run_id": 1})
+    assert (status, "did not beat" in json.loads(body)["error"]) == (409, True)
+    assert post(base + "/api/tune/apply", {"run_id": 9})[0] == 404
+    assert post(base + "/api/tune/apply", {"run_id": 2})[0] == 200
+    assert db.execute("SELECT run_id FROM ranking_weights").fetchone() == (2,)
+    assert post(base + "/api/tune/revert", {})[0] == 200
+    assert db.execute("SELECT COUNT(*) FROM ranking_weights").fetchone() == (0,)
+
+
+def test_tuning_refuses_too_few_labels_and_a_second_run(start, calls, tmp_path):
+    base = start()
+    db = sqlite3.connect(tmp_path / "neurostack.db")
+    status, _, body = post(base + "/api/tune", {})
+    assert (status, "needs at least" in json.loads(body)["error"]) == (409, True)
+    db.executemany("INSERT INTO search_feedback (query, chosen_path, shown_paths)"
+                   " VALUES (?, ?, '[]')",
+                   [(f"q{i}", f"n{i}.md") for i in range(12)])
+    db.execute("INSERT INTO tune_runs (status, metric) VALUES ('running', 'ndcg')")
+    db.commit()
+    status, _, body = post(base + "/api/tune", {})
+    assert (status, json.loads(body)["error"]) == (409, "a tuning run is already going")
+
+
+def test_a_run_left_running_by_a_dead_server_is_marked_failed(start, tmp_path):
+    db = sqlite3.connect(tmp_path / "neurostack.db")
+    db.execute("INSERT INTO tune_runs (status, metric) VALUES ('running', 'ndcg')")
+    db.commit()
+    start()
+    assert db.execute("SELECT status, error FROM tune_runs").fetchone() == (
+        "failed", "server restarted")
+
+
 def test_login_cookie_opens_the_api(start, calls, cfg):
     base = start(host="0.0.0.0")
     status, headers, body = login(base)
@@ -265,6 +338,8 @@ def test_login_cookie_opens_the_api(start, calls, cfg):
     assert get(base + "/api/overview")[0] == 401
     assert get(base + "/api/me")[0] == 401
     assert get(base + "/api/overview", headers=session(headers))[0] == 200
+    assert post(base + "/api/tune/revert", {})[0] == 401
+    assert post(base + "/api/tune/revert", {}, session(headers))[0] == 200
     assert json.loads(get(base + "/api/me", headers=session(headers))[2]) == {"user": "ada"}
     assert get(base + "/")[0] == 200
 
