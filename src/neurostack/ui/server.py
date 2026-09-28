@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import auth, search
+from . import auth, search, tuning
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +31,10 @@ LOOPBACK = ("127.0.0.1", "::1", "localhost")
 _TYPES = {".js": "text/javascript", ".mjs": "text/javascript"}
 COOKIE = "ns_session"
 _MAX_BODY = 4096
+# A Best result mark carries the list shown, up to 50 note paths.
+_MAX_WRITE_BODY = 65536
+_WRITES = ("/api/feedback", "/api/feedback/undo", "/api/tune", "/api/tune/apply",
+           "/api/tune/revert")
 # Seconds a failed login waits before answering, to slow password guessing.
 _FAIL_DELAY = 1.0
 
@@ -63,7 +67,7 @@ def _flag(params: dict, name: str) -> bool:
     return params.get(name, "").lower() in ("1", "true", "yes", "on")
 
 
-def _search(cfg, path: str, params: dict):
+def _search(conn, cfg, path: str, params: dict):
     """The Search page's two endpoints; a bad option is a 400, not a 500."""
     q = params.get("q", "").strip()
     text = {k: params[k].strip() or None for k in ("workspace", "context", "type")
@@ -74,13 +78,47 @@ def _search(cfg, path: str, params: dict):
     if not q:
         raise _Error(400, "q is required")
     try:
-        return search.notes(
+        found = search.notes(
             cfg, q, mode=params.get("mode", "hybrid"), depth=params.get("depth", "full"),
             workspace=text.get("workspace"), context=text.get("context"),
             rerank=_flag(params, "rerank"), reference_only=_flag(params, "reference_only"),
             **_ints(params, "top_k", "max_tokens"))
     except ValueError as exc:
         raise _Error(400, str(exc)) from None
+    # The notes already marked Best result for this query, so the page shows them (#291).
+    found["marked"] = {r["chosen_path"]: r["feedback_id"] for r in conn.execute(
+        "SELECT chosen_path, feedback_id FROM search_feedback"
+        " WHERE query = ? AND source = 'explicit'", (q,))}
+    return found
+
+
+def _write(conn, cfg, path: str, body: dict):
+    """One write request. A malformed body is a 400; a refused tuning step a 409."""
+    from .. import feedback
+
+    def field(name, kind):
+        value = body.get(name)
+        if not isinstance(value, kind) or (kind is str and not value.strip()):
+            raise _Error(400, f"{name} is required")
+        return value
+
+    if path == "/api/feedback":
+        shown = body.get("shown_paths") or []
+        if not isinstance(shown, list) or not all(isinstance(p, str) for p in shown):
+            raise _Error(400, "shown_paths must be a list of note paths")
+        fid = feedback.mark_best(conn, field("query", str), field("chosen_path", str), shown)
+        return {"feedback_id": fid}
+    if path == "/api/feedback/undo":
+        return {"removed": feedback.unmark_best(conn, field("feedback_id", int))}
+    if path == "/api/tune":
+        return {"run_id": tuning.start(cfg)}
+    if path == "/api/tune/apply":
+        try:
+            tuning.apply(conn, field("run_id", int))
+        except KeyError:
+            raise _Error(404, f"unknown run: {body['run_id']}") from None
+        return {"applied": body["run_id"]}
+    return {"reverted": tuning.revert(conn)}
 
 
 def _route(conn, cfg, path: str, params: dict):
@@ -101,10 +139,12 @@ def _route(conn, cfg, path: str, params: dict):
         if "q" in params:
             kw["q"] = params["q"]
         return dashboard.memories(conn, **kw)
+    if path == "/api/tune":
+        return tuning.status(conn, cfg)
     if path == "/api/workspaces":
         return search.workspaces(conn)
     if path in ("/api/search/notes", "/api/search/memories"):
-        return _search(cfg, path, params)
+        return _search(conn, cfg, path, params)
     if path == "/api/notes":
         if "path" not in params:
             raise _Error(400, "path is required")
@@ -145,11 +185,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        if path not in ("/api/login", "/api/logout"):
+        if path not in ("/api/login", "/api/logout") and path not in _WRITES:
             return self._not_allowed()
         try:
             if path == "/api/logout":
                 self._json(200, {"user": None}, [("Set-Cookie", _cookie("", 0))])
+                return
+            if path in _WRITES:
+                self._json(200, self._write(path))
                 return
             name = self._login()
             token = auth.make_session(self.server.cfg, name)
@@ -160,26 +203,54 @@ class _Handler(BaseHTTPRequestHandler):
             log.exception("ui request failed: %s", self.path)
             self._json(500, {"error": str(exc)})
 
-    def _login(self) -> str:
+    def _body(self, limit: int = _MAX_BODY) -> dict:
         try:
             size = int(self.headers.get("Content-Length", 0))
             if size < 0:
                 raise ValueError
         except ValueError:
             raise _Error(400, "bad Content-Length") from None
-        if size > _MAX_BODY:
+        if size > limit:
             raise _Error(413, "body too large")
         try:
-            body = json.loads(self.rfile.read(size))
-            name, password = body["username"], body["password"]
-            if not isinstance(name, str) or not isinstance(password, str):
-                raise TypeError
-        except (ValueError, KeyError, TypeError):
-            raise _Error(400, "body must be JSON {username, password}") from None
+            body = json.loads(self.rfile.read(size) or b"{}")
+        except ValueError:
+            raise _Error(400, "body must be JSON") from None
+        if not isinstance(body, dict):
+            raise _Error(400, "body must be a JSON object")
+        return body
+
+    def _login(self) -> str:
+        body = self._body()
+        name, password = body.get("username"), body.get("password")
+        if not isinstance(name, str) or not isinstance(password, str):
+            raise _Error(400, "body must be JSON {username, password}")
         if not auth.verify(self.server.cfg, name, password):
             time.sleep(_FAIL_DELAY)
             raise _Error(401, "wrong username or password")
         return name
+
+    def _write(self, path: str):
+        """The dashboard's only writes (#291): search labels and weight tuning."""
+        self._signed_in()
+        db = Path(self.server.cfg.db_path)
+        if not db.exists():
+            raise _Error(503, "no index yet, run neurostack index")
+        body = self._body(_MAX_WRITE_BODY)
+        conn = tuning._connect(db)
+        try:
+            return _write(conn, self.server.cfg, path, body)
+        except tuning.TuningError as exc:
+            raise _Error(409, str(exc)) from None
+        finally:
+            conn.close()
+
+    def _signed_in(self):
+        srv = self.server
+        user = None if srv.loopback else self._user()
+        if not srv.loopback and not user:
+            raise _Error(401, "sign in first")
+        return user
 
     def _user(self):
         """The user the request's session cookie signs in, or None."""
@@ -193,9 +264,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _api(self, url):
         srv = self.server
-        user = None if srv.loopback else self._user()
-        if not srv.loopback and not user:
-            raise _Error(401, "sign in first")
+        user = self._signed_in()
         if url.path == "/api/me":
             return {"user": user}
         db = Path(srv.cfg.db_path)
@@ -255,6 +324,8 @@ def make_server(cfg, host: str, port: int, static_dir=None) -> ThreadingHTTPServ
     httpd.cfg = cfg
     httpd.loopback = loopback
     httpd.static_dir = Path(static_dir or STATIC_DIR).resolve()
+    if Path(cfg.db_path).exists():
+        tuning.prepare(cfg.db_path)
     return httpd
 
 

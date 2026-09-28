@@ -1008,19 +1008,23 @@ class TestQueryEntityExtraction:
             "a term appearing everywhere carries no ranking signal"
         )
 
-    def test_extraction_is_one_query_regardless_of_word_count(self, in_memory_db):
-        """Query count does not scale with the number of query words."""
+    def test_the_entity_list_is_read_once_until_the_graph_changes(self, tmp_path):
+        """A search reads the graph's entities once, then only a one-row stamp,
+        until an index run changes the triples (issue #292)."""
+        from neurostack.schema import get_db
         from neurostack.search import _extract_query_entities
 
-        conn = in_memory_db
-        self._seed(conn, ["azure foundry", "knowledge base", "agent registry"])
+        conn = get_db(tmp_path / "e.db")
+        self._seed(conn, ["azure foundry", "knowledge base"])
+        assert _extract_query_entities(conn, "azure") == {"azure foundry"}
+        counting = _CountingConn(conn)
+        assert _extract_query_entities(counting, "azure foundry knowledge base") == {
+            "azure foundry", "knowledge base"}
+        assert counting.executes == 2  # the stamp and the database path, nothing else
 
-        one = _CountingConn(conn)
-        _extract_query_entities(one, "azure")
-        many = _CountingConn(conn)
-        _extract_query_entities(many, "azure foundry knowledge agent registry base")
-        assert one.executes == 1
-        assert many.executes == 1
+        conn.execute("DELETE FROM triples WHERE subject = 'azure foundry'")
+        self._seed(conn, ["azure hosting"], note="m.md")
+        assert _extract_query_entities(conn, "azure") == {"azure hosting"}
 
     def test_wildcards_in_query_word_are_literal(self, in_memory_db):
         """A '%' in a query word must not match everything."""
