@@ -319,13 +319,15 @@ def test_tuning_refuses_too_few_labels_and_a_second_run(start, calls, tmp_path):
     assert (status, json.loads(body)["error"]) == (409, "a tuning run is already going")
 
 
-def test_a_run_left_running_by_a_dead_server_is_marked_failed(start, tmp_path):
+def test_server_start_fails_only_runs_too_old_to_be_alive(start, tmp_path):
     db = sqlite3.connect(tmp_path / "neurostack.db")
+    db.execute("INSERT INTO tune_runs (status, metric, started_at) VALUES"
+               " ('running', 'ndcg', datetime('now', '-3 hours'))")
     db.execute("INSERT INTO tune_runs (status, metric) VALUES ('running', 'ndcg')")
     db.commit()
     start()
-    assert db.execute("SELECT status, error FROM tune_runs").fetchone() == (
-        "failed", "server restarted")
+    assert db.execute("SELECT status FROM tune_runs ORDER BY run_id").fetchall() == [
+        ("failed",), ("running",)]
 
 
 def test_login_cookie_opens_the_api(start, calls, cfg):
