@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Harvest finds omp named-profile sessions (`~/.omp/profiles/<name>/agent/sessions`) and checks every transcript against its watermark before capping the batch (#295). It used to take the 50 newest files first, so an older unharvested transcript never became pending, and it never looked in profile folders. On pop-os that left 513 of 796 transcripts unharvested, 128 of them in the `strake` profile.
+
+### Fixed
+
 - Restarting the dashboard no longer marks a tuning run that is still going as failed (#293). The run is a separate process, so only a run started more than 2 hours ago is failed at start-up.
 
 ### Changed

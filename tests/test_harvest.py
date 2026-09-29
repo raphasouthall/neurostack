@@ -1074,6 +1074,33 @@ class TestOmpSubagentTranscripts:
                               harvest_judge_types=False)
         monkeypatch.setattr("neurostack.config.get_config", lambda: cfg)
 
+    def test_named_profile_sessions_are_found(self, tmp_path, monkeypatch):
+        """OMP_PROFILE=<name> sessions live under ~/.omp/profiles (#295)."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        parent, scout, builder = self._build_tree(tmp_path)
+        proj = tmp_path / ".omp" / "profiles" / "strake" / "agent" / "sessions" / "-strake"
+        proj.mkdir(parents=True)
+        (proj / "2026-02-02T00-00-00Z_def.jsonl").write_text(_omp_message_line())
+        (proj / "2026-02-02T00-00-00Z_def").mkdir()
+        (proj / "2026-02-02T00-00-00Z_def" / "Scout.jsonl").write_text(_omp_message_line())
+        found = {s.path for s in OmpProvider().find_sessions(None)}
+        assert found == {parent, scout, builder, proj / "2026-02-02T00-00-00Z_def.jsonl",
+                         proj / "2026-02-02T00-00-00Z_def" / "Scout.jsonl"}
+
+    def test_an_old_transcript_stays_pending_behind_newer_harvested_ones(
+            self, tmp_path, monkeypatch, in_memory_db):
+        """The cap applies to pending transcripts, not to the newest files (#295)."""
+        import os
+
+        from neurostack.harvest import pending_sessions, record_watermark
+        monkeypatch.setenv("HOME", str(tmp_path))
+        self._wire_harvest(tmp_path, monkeypatch, in_memory_db)
+        parent, scout, builder = self._build_tree(tmp_path)
+        os.utime(parent, (1_000, 1_000))
+        for f in (scout, builder):
+            record_watermark(str(f), f.stat().st_mtime, 1)
+        assert [r["path"] for r in pending_sessions(1)] == [str(parent)]
+
     def test_pending_lists_all_three_transcripts_with_distinct_ids(
             self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))

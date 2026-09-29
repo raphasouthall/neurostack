@@ -521,9 +521,20 @@ def _extract_gemini_content(content) -> str | None:
     return None
 
 
+def omp_session_roots() -> list[Path]:
+    """omp's default sessions directory and every named profile's (#295).
+
+    `OMP_PROFILE=<name>` keeps that profile's sessions under
+    ``~/.omp/profiles/<name>/agent/sessions``.
+    """
+    omp = Path.home() / ".omp"
+    return [omp / "agent" / "sessions", *sorted((omp / "profiles").glob("*/agent/sessions"))]
+
+
 class OmpProvider:
-    """Oh My Pi — ~/.omp/agent/sessions/*/*.jsonl, plus subagent transcripts
-    nested one level deeper: ~/.omp/agent/sessions/*/<session-stem>/*.jsonl.
+    """Oh My Pi — <root>/*/*.jsonl, plus subagent transcripts nested one level
+    deeper: <root>/*/<session-stem>/*.jsonl, for every root in
+    :func:`omp_session_roots`.
 
     One JSONL per session, under a per-project subdirectory. omp also writes
     each subagent's own transcript into a directory named after the parent
@@ -541,18 +552,16 @@ class OmpProvider:
 
     name = "omp"
 
-    def find_sessions(self, n: int) -> list[SessionFile]:
-        sessions_dir = Path.home() / ".omp" / "agent" / "sessions"
-        if not sessions_dir.exists():
-            return []
+    def find_sessions(self, n: int | None) -> list[SessionFile]:
         sessions = []
-        for f in sessions_dir.glob("*/*.jsonl"):
+        roots = [r for r in omp_session_roots() if r.is_dir()]
+        for f in (f for r in roots for f in r.glob("*/*.jsonl")):
             try:
                 st = f.stat()
                 sessions.append(SessionFile(path=f, mtime=st.st_mtime, provider=self.name))
             except OSError:
                 continue
-        for f in sessions_dir.glob("*/*/*.jsonl"):
+        for f in (f for r in roots for f in r.glob("*/*/*.jsonl")):
             try:
                 st = f.stat()
             except OSError:
@@ -624,10 +633,13 @@ def get_provider_names() -> list[str]:
 
 
 def find_recent_sessions(
-    n: int = 1,
+    n: int | None = 1,
     provider: str | None = None,
 ) -> list[SessionFile]:
-    """Return the N most recent session files across all (or one) provider(s)."""
+    """Return the N most recent session files across all (or one) provider(s).
+
+    ``n=None`` returns every session file the providers find.
+    """
     providers = [_PROVIDER_MAP[provider]] if provider else _PROVIDERS
     all_sessions: list[SessionFile] = []
     for p in providers:
@@ -1547,9 +1559,11 @@ def pending_sessions(n_sessions: int = 50, provider: str | None = None) -> list[
     """Transcripts waiting to be harvested, newest first (issue #180).
 
     A queue scheduler enqueues these. Pending is decided by the message
-    watermark where one exists (issue #209), else by mtime. Each pending
-    transcript is then read in full for `messages`, the count
-    `record_watermark` stores once the transcript is queued.
+    watermark where one exists (issue #209), else by mtime. Every transcript
+    is checked, and ``n_sessions`` caps the pending ones returned (#295): taking
+    the newest N files first left any older unharvested transcript pending
+    forever. Each returned transcript is then read in full for `messages`,
+    the count `record_watermark` stores once the transcript is queued.
     """
     return [
         {
@@ -1559,7 +1573,7 @@ def pending_sessions(n_sessions: int = 50, provider: str | None = None) -> list[
             "session_id": s.session_id or s.path.stem,
             "messages": len(extract_messages(s)),
         }
-        for s in _unharvested(find_recent_sessions(n_sessions, provider=provider))
+        for s in _unharvested(find_recent_sessions(None, provider=provider))[:n_sessions]
     ]
 
 
