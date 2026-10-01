@@ -662,12 +662,21 @@ def _event_tool_result(client: McpClient, payload: dict, state: SessionState,
     )
 
 
-def _transcript_roots() -> dict[str, Path]:
+def _transcript_roots() -> dict[str, list[Path]]:
+    """Every directory a harness may keep session transcripts in.
+
+    omp named profiles (`OMP_PROFILE`) keep their own sessions under
+    `~/.omp/profiles/<name>/agent/sessions`, and Claude Code follows
+    `CLAUDE_CONFIG_DIR`, so the default root alone misses those sessions.
+    """
     home = Path.home()
-    return {
-        "claude-code": home / ".claude" / "projects",
-        "omp": home / ".omp" / "agent" / "sessions",
-    }
+    claude = [home / ".claude" / "projects"]
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if config_dir:
+        claude.insert(0, Path(os.path.expanduser(config_dir)) / "projects")
+    omp = [home / ".omp" / "agent" / "sessions"]
+    omp += sorted((home / ".omp" / "profiles").glob("*/agent/sessions"))
+    return {"claude-code": claude, "omp": omp}
 
 
 def _resolve_transcript(payload: dict, session: str, source: str) -> Path | None:
@@ -681,7 +690,7 @@ def _resolve_transcript(payload: dict, session: str, source: str) -> Path | None
         path = Path(os.path.expanduser(given))
         return path if path.is_file() else None
     roots = _transcript_roots()
-    candidates = [roots[source]] if source in roots else list(roots.values())
+    candidates = roots[source] if source in roots else [r for rs in roots.values() for r in rs]
     found: list[Path] = []
     for root in candidates:
         if root.is_dir():
