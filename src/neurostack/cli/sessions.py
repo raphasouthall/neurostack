@@ -249,42 +249,58 @@ def enqueue_pending(client, rows) -> dict[str, Any]:
     bad row is recorded and skipped; a server that does not answer ends the
     scan, since every later upload would wait out the same timeout.
     """
-    from ..harvest import record_watermark
+    from ..harvest import record_watermark, uploaded_lines
     from .hook import transcript_cwd
-    from .queue import upload
+    from .queue import split_parts, upload_text
 
     jobs = []
     queued = 0
     duplicates = 0
     errors = 0
 
+    stop = False
     for row in rows:
-        key = f"{row['path']}@{row['mtime']}"
-        payload = {"path": row["path"], "provider": row["provider"], "mtime": row["mtime"]}
+        base = {"path": row["path"], "provider": row["provider"], "mtime": row["mtime"]}
         workspace = client.config.workspace_for(transcript_cwd(Path(row["path"])))
         if workspace:
-            payload["workspace"] = workspace
+            base["workspace"] = workspace
         try:
-            result = upload(client, "harvest", key, payload, Path(row["path"]), row["provider"])
+            text = Path(row["path"]).read_text(errors="replace")
+            # Every line not yet uploaded, in parts that each fit one request and
+            # one job (#299). The watermark moves part by part, so a failed
+            # upload resumes at the first part the server does not hold.
+            parts = split_parts(text, row["provider"], uploaded_lines(row["path"]))
         except Exception as e:
             errors += 1
-            jobs.append({"key": key, "error": str(e)})
+            jobs.append({"key": row["path"], "error": str(e)})
             continue
-        if result is None:
-            errors += 1
-            jobs.append({"key": key, "error": client.errors[-1] if client.errors else "no reply"})
+        for part in parts:
+            key = f"{row['path']}@{row['mtime']}#{part['start']}"
+            payload = {**base, "part_start": part["start"]}
+            if part["offset"]:
+                payload["transcript_offset"] = part["offset"]
+            result = upload_text(client, "harvest", key, payload, part["text"])
+            if result is None:
+                errors += 1
+                reason = client.errors[-1] if client.errors else "no reply"
+                jobs.append({"key": key, "error": reason})
+                stop = True
+                break
+            if result.get("ok") is not True:
+                errors += 1
+                jobs.append({"key": key, "error": result.get("reason") or "refused"})
+                break
+            done = part["end"] == len(text.splitlines())
+            record_watermark(row["path"], row["mtime"],
+                             row["messages"] if done else 0, lines=part["end"])
+            if result.get("duplicate"):
+                duplicates += 1
+            else:
+                queued += 1
+            jobs.append({"key": key, "job_id": result.get("job_id"),
+                         "duplicate": result.get("duplicate", False)})
+        if stop:
             break
-        if result.get("ok") is not True:
-            errors += 1
-            jobs.append({"key": key, "error": result.get("reason") or "refused"})
-            continue
-        record_watermark(row["path"], row["mtime"], row["messages"])
-        if result.get("duplicate"):
-            duplicates += 1
-        else:
-            queued += 1
-        jobs.append({"key": key, "job_id": result.get("job_id"),
-                     "duplicate": result.get("duplicate", False)})
 
     summary = {"queued": queued, "duplicates": duplicates, "total": len(rows), "jobs": jobs}
     if errors:

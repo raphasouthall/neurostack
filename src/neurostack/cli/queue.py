@@ -35,6 +35,64 @@ _UPLOAD_TIMEOUT_S = 30.0
 UPLOAD_BLOB_CAP = 3_500_000
 
 
+# A harvest part holds at most this many messages, so its job (one model call
+# per checkpoint window) finishes well inside the queue's stale timeout (#299).
+PART_MESSAGES = 400
+
+
+def _encode(text: str) -> str:
+    return base64.b64encode(gzip.compress(text.encode("utf-8", "replace"))).decode("ascii")
+
+
+def split_parts(text: str, source: str, start_line: int = 0) -> list[dict[str, Any]]:
+    """The transcript from ``start_line`` on, as upload-sized parts, oldest first (#299).
+
+    Each part is whole JSONL lines whose encoded size fits the server's body
+    limit and that hold at most PART_MESSAGES messages. ``offset`` is how many
+    messages come before the part, so the worker's saved index lines up;
+    ``start``/``end`` are line numbers. A transcript is append-only, so the next
+    scan starts where the last part ended.
+    """
+    from .hook import parse_transcript
+
+    lines = text.splitlines(keepends=True)
+    parts: list[dict[str, Any]] = []
+    offset = len(parse_transcript("".join(lines[:start_line]), source))
+    start = start_line
+    while start < len(lines):
+        end, size = start, 0
+        # Grow by raw size first; gzip+base64 is checked once the part is cut.
+        budget = UPLOAD_BLOB_CAP * 3
+        while end < len(lines) and (end == start or size + len(lines[end]) <= budget):
+            size += len(lines[end])
+            end += 1
+        while True:
+            chunk = "".join(lines[start:end])
+            count = len(parse_transcript(chunk, source))
+            fits = len(_encode(chunk)) <= UPLOAD_BLOB_CAP and count <= PART_MESSAGES
+            if fits or end - start == 1:
+                break
+            # Cut in proportion to whichever limit is over, so a part lands near
+            # the limit in a step or two instead of shrinking line by line.
+            ratio = min(UPLOAD_BLOB_CAP / max(len(_encode(chunk)), 1),
+                        PART_MESSAGES / max(count, 1))
+            end = start + max(1, min(int((end - start) * ratio), end - start - 1))
+        parts.append({"start": start, "end": end, "offset": offset, "text": chunk})
+        offset += count
+        start = end
+    return parts
+
+
+def upload_text(client: McpClient, queue: str, key: str, payload: dict[str, Any],
+                text: str) -> dict[str, Any] | None:
+    """Queue one job carrying ``text`` as its transcript."""
+    return client.call_json(
+        "queue_add",
+        {"queue": queue, "key": key, "payload": payload, "transcript_gz_b64": _encode(text)},
+        timeout_s=_UPLOAD_TIMEOUT_S,
+    )
+
+
 def _tail(text: str, cap: int = TRANSCRIPT_CAP_BYTES) -> str:
     """The newest whole JSONL records that fit in cap bytes."""
     kept: list[str] = []
@@ -61,7 +119,7 @@ def upload(client: McpClient, queue: str, key: str, payload: dict[str, Any], pat
     while True:
         if len(text.encode("utf-8", "replace")) > cap:
             text = _tail(text, cap)
-        blob = base64.b64encode(gzip.compress(text.encode("utf-8", "replace"))).decode("ascii")
+        blob = _encode(text)
         if len(blob) <= UPLOAD_BLOB_CAP or not text:
             break
         # Shrink by the overshoot, with a margin, so a dense transcript fits in
@@ -72,11 +130,7 @@ def upload(client: McpClient, queue: str, key: str, payload: dict[str, Any], pat
         # saved index still points at the same message.
         dropped = len(parse_transcript(full, source)) - len(parse_transcript(text, source))
         payload = {**payload, "transcript_offset": max(dropped, 0)}
-    return client.call_json(
-        "queue_add",
-        {"queue": queue, "key": key, "payload": payload, "transcript_gz_b64": blob},
-        timeout_s=_UPLOAD_TIMEOUT_S,
-    )
+    return upload_text(client, queue, key, payload, text)
 
 
 def enqueue(cfg: ClientConfig, session: str, harness: str, workspace: str | None,
