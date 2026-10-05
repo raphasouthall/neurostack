@@ -1577,15 +1577,26 @@ def pending_sessions(n_sessions: int = 50, provider: str | None = None) -> list[
     ]
 
 
-def record_watermark(path: str, mtime: float, messages: int) -> None:
+def record_watermark(path: str, mtime: float, messages: int, lines: int | None = None) -> None:
     """Mark a transcript handled up to `messages`, so it stops showing as pending.
 
     `harvest --pending --enqueue` calls this once the server has the
     transcript (issue #232); the harvest itself then runs on the server.
+    ``lines`` is how many JSONL lines have been uploaded, so the next upload of
+    a growing transcript starts after them (#299).
     """
     state = _load_harvest_state()
     state[path] = {"mtime": mtime, "messages": messages}
+    if lines is not None:
+        state[path]["lines"] = lines
     _save_harvest_state(state)
+
+
+def uploaded_lines(path: str) -> int:
+    """JSONL lines of ``path`` already uploaded to the harvest queue (#299)."""
+    seen = _load_harvest_state().get(path)
+    lines = seen.get("lines") if isinstance(seen, dict) else None
+    return lines if isinstance(lines, int) and not isinstance(lines, bool) else 0
 
 
 def harvest_session_file(
