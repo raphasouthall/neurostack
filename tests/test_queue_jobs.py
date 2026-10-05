@@ -177,6 +177,31 @@ def test_an_oversize_transcript_uploads_its_newest_records_with_the_offset(
     assert job["payload"]["transcript_offset"] == 7
 
 
+def test_a_transcript_under_the_raw_cap_still_fits_the_servers_body_limit(
+        queue_server, queue_db, client, tmp_path, monkeypatch):
+    """Random text barely compresses, so its encoded upload can pass the server's
+    body limit while the raw text is under the cap; it is trimmed further (#297)."""
+    import base64
+    import gzip
+    import random
+
+    monkeypatch.setattr("neurostack.cli.queue.UPLOAD_BLOB_CAP", 6000)
+    rng = random.Random(7)
+    path = tmp_path / "dense.jsonl"
+    noise = lambda: "".join(rng.choice("abcdefghij0123456789") for _ in range(400))  # noqa: E731
+    path.write_text("".join(
+        f'{{"type":"message","message":{{"role":"user","content":'
+        f'[{{"type":"text","text":"m{i} {noise()}"}}]}}}}\n' for i in range(60)))
+
+    assert enqueue(client, "dense", "omp", None, path, "omp")[0] == 0
+
+    job = claim(queue_db, "checkpoint")["job"]
+    sent = base64.b64encode(gzip.compress(job["transcript"].encode())).decode()
+    assert 0 < len(sent) <= 6000
+    assert path.read_text().endswith(job["transcript"])
+    assert job["payload"]["transcript_offset"] > 0
+
+
 def test_an_offset_keeps_the_saved_index_on_the_same_message(isolated_home, tmp_path):
     path = tmp_path / "tail.jsonl"
     path.write_text("".join(OMP_LINE % i for i in (8, 9, 10)))

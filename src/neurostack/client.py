@@ -290,6 +290,10 @@ class McpClient:
         headers = {"mcp-session-id": sid} if sid else None
         remaining = max(_MIN_REQUEST_TIMEOUT, deadline - time.monotonic())
         response = http.post(url, json=body, headers=headers, timeout=remaining)
+        if response.status_code >= 400:
+            # A refusal (413 body too large, 401) is an answer with a reason; parsing
+            # its text as JSON returned None and lost the reason (#297).
+            raise RuntimeError(f"HTTP {response.status_code}: {response.text.strip()[:200]}")
         new_sid = response.headers.get("mcp-session-id") or sid
         if rpc_id is None:
             return new_sid, None

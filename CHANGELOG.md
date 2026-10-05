@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- A large transcript no longer blocks the harvest scan (#297). The MCP server refuses request bodies over 4 MiB, and an upload capped only by its raw size (10 MiB) could exceed that once encoded. The 413 was read as no reply, and the scan stops at the first unanswered upload, so from 2026-09-29 each scan queued one transcript. Uploads now trim older records until the encoded transcript fits, and the client records an HTTP refusal with its reason.
+
+### Fixed
+
 - Harvest finds omp named-profile sessions (`~/.omp/profiles/<name>/agent/sessions`) and checks every transcript against its watermark before capping the batch (#295). It used to take the 50 newest files first, so an older unharvested transcript never became pending, and it never looked in profile folders. On pop-os that left 513 of 796 transcripts unharvested, 128 of them in the `strake` profile.
 
 ### Fixed
