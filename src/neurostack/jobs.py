@@ -235,10 +235,54 @@ def _checkpoint_payload(queue: str, job: dict[str, Any]) -> tuple[str, str]:
         return p.get("session", ""), p.get("harness", "")
     # A transcript file is <stamp>_<session-id>.jsonl in omp and <session-id>.jsonl
     # in Claude Code. The runner resolves the file from the id, so pass the id.
-    stem = str(p.get("path") or job["key"]).split("/")[-1].removesuffix(".jsonl")
+    path = str(p.get("path") or job["key"].split("@")[0])
+    stem = path.split("/")[-1].removesuffix(".jsonl")
+    parent = path.split("/")[-2] if "/" in path else ""
     omp = p.get("provider") == "omp" and "_" in stem
     session = stem[stem.rindex("_") + 1:] if omp else stem
+    if p.get("provider") == "omp" and not omp and "_" in parent:
+        # A subagent transcript is named after its agent ("Scout"), which repeats
+        # across sessions; its saved index belongs to its parent session (#299).
+        session = f"{parent[parent.rindex('_') + 1:]}/{stem}"
     return session, "claude" if p.get("provider") == "claude-code" else "omp"
+
+
+# Budget for reading one harvest part, under the queue's 45-minute stale reap.
+_PART_BUDGET_S = 30 * 60
+
+
+def _read_whole_part(run: dict, harness: str, client_cfg, transcript: str):
+    """Checkpoint windows over one uploaded part until it is read to the end (#299).
+
+    One checkpoint covers at most ``checkpoint_max_messages`` messages; a single
+    call per job left the rest of every long transcript unread. Stops when the
+    saved index reaches the part's end, stops moving, a window fails, or the
+    budget runs out. Returns the summed payload and the last verdict's text.
+    """
+    import time
+
+    from .cli.hook import load_state, parse_transcript, run_checkpoint
+
+    end = (run.get("transcript_offset") or 0) + len(parse_transcript(transcript, run["format"]))
+    deadline = time.monotonic() + _PART_BUDGET_S
+    total = {"ok": True, "saved": 0, "found": 0, "windows": 0}
+    text = ""
+    while time.monotonic() < deadline:
+        before = load_state(run["session"]).since_index
+        if before >= end:
+            break
+        verdict = run_checkpoint(run, harness, client_cfg)
+        data, text = verdict.data, verdict.text
+        if data is None:
+            return (total if total["windows"] else None), text
+        total["saved"] += data.get("saved", 0)
+        total["found"] += data.get("found", 0)
+        total["windows"] += 1
+        if not data.get("ok"):
+            return {**total, "ok": False, "error": data.get("error")}, text
+        if load_state(run["session"]).since_index <= before:
+            break
+    return total, text
 
 
 def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
@@ -289,9 +333,13 @@ def _work_queue(queue: str, limits) -> Callable[..., dict[str, Any]]:
                         checkpoint_timeout_s=cfg.checkpoint_timeout_s,
                         checkpoint_max_messages=cfg.checkpoint_max_messages,
                     )
-                    verdict = run_checkpoint({**payload, "transcript_path": str(tmp)},
-                                             harness or "cli", client_cfg)
-                    data, text = verdict.data, verdict.text
+                    run = {**payload, "transcript_path": str(tmp)}
+                    if queue == "harvest":
+                        data, text = _read_whole_part(run, harness or "cli", client_cfg,
+                                                      job["transcript"])
+                    else:
+                        verdict = run_checkpoint(run, harness or "cli", client_cfg)
+                        data, text = verdict.data, verdict.text
                 except Exception as exc:  # cmd_hook would print this and leave no payload
                     data, text = None, f"{type(exc).__name__}: {exc}"
             # The n8n `Build Finish` mapping: success is the payload's ok field, and

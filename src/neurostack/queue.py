@@ -156,6 +156,10 @@ def claim(conn: sqlite3.Connection, queue: str,
     payload with no mtime (e.g. the checkpoint queue) falls back to job_id
     without ever losing priority to an mtime-bearing row. Reaps first, so
     one crashed runner cannot wedge the queue until a human notices.
+
+    A transcript uploaded in parts (#299) is read in order: once the freshest
+    job is chosen, the earliest queued part of the same transcript runs first,
+    because the worker's saved index only moves forward.
     """
     limits = limits or QueueLimits()
     reaped = reap(conn, queue, limits)
@@ -181,12 +185,18 @@ def claim(conn: sqlite3.Connection, queue: str,
     started = _iso(_now())
     cur = conn.execute(
         "UPDATE job_queue SET status = 'running', started_at = ?"
-        " WHERE job_id = (SELECT job_id FROM job_queue WHERE queue = ?"
-        "   AND status = 'queued'"
-        "   ORDER BY (json_extract(payload, '$.mtime') IS NULL) ASC,"
-        "            json_extract(payload, '$.mtime') DESC,"
-        "            job_id DESC LIMIT 1)",
-        (started, queue),
+        " WHERE job_id = (SELECT j.job_id FROM job_queue j,"
+        "   (SELECT job_id, json_extract(payload, '$.path') AS path FROM job_queue"
+        "    WHERE queue = ? AND status = 'queued'"
+        "    ORDER BY (json_extract(payload, '$.mtime') IS NULL) ASC,"
+        "             json_extract(payload, '$.mtime') DESC,"
+        "             job_id DESC LIMIT 1) AS fresh"
+        "   WHERE j.queue = ? AND j.status = 'queued'"
+        "   AND (j.job_id = fresh.job_id OR (fresh.path IS NOT NULL"
+        "        AND json_extract(j.payload, '$.path') = fresh.path))"
+        "   ORDER BY COALESCE(json_extract(j.payload, '$.part_start'), 0) ASC,"
+        "            j.job_id ASC LIMIT 1)",
+        (started, queue, queue),
     )
     conn.commit()
     if not cur.rowcount:
