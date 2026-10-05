@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- A harvest window that the model proxy refuses is tried twice more, 20 s apart, before the job fails (#301). CLIProxyAPI drops the odd request with a 400 in a few milliseconds, and one drop used to fail a whole part.
+
 - Harvest reads whole transcripts (#299). A harvest job ran one checkpoint window (at most `checkpoint_max_messages`, 40 on the live server) and the scan then marked the transcript done, so on 2026-10-05 3,256 of 7,971 messages in 98 omp sessions had never been read. A transcript now uploads as ordered parts that each fit the server's 4 MiB request limit and hold at most 400 messages, starting after the lines already uploaded; the worker reads each part window by window to its end; and the queue runs a transcript's parts in order. Subagent transcripts keep their saved index under their parent session, so two agents called `Scout` no longer share one.
 
 ### Fixed
