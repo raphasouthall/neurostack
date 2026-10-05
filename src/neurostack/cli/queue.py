@@ -29,13 +29,19 @@ from ..queue import TRANSCRIPT_CAP_BYTES
 _UPLOAD_TIMEOUT_S = 30.0
 
 
-def _tail(text: str) -> str:
-    """The newest whole JSONL records that fit the upload cap."""
+# The MCP server refuses request bodies over 4 MiB (mcp 2.0's default), and the
+# transcript travels gzipped and base64-encoded inside one, so the encoded
+# transcript must stay below this (#297).
+UPLOAD_BLOB_CAP = 3_500_000
+
+
+def _tail(text: str, cap: int = TRANSCRIPT_CAP_BYTES) -> str:
+    """The newest whole JSONL records that fit in cap bytes."""
     kept: list[str] = []
     size = 0
     for line in reversed(text.splitlines(keepends=True)):
         size += len(line.encode("utf-8", "replace"))
-        if size > TRANSCRIPT_CAP_BYTES:
+        if size > cap:
             break
         kept.append(line)
     return "".join(reversed(kept))
@@ -50,15 +56,22 @@ def upload(client: McpClient, queue: str, key: str, payload: dict[str, Any], pat
     """
     from .hook import parse_transcript
 
-    text = path.read_text(errors="replace")
-    if len(text.encode("utf-8", "replace")) > TRANSCRIPT_CAP_BYTES:
-        tail = _tail(text)
+    full = path.read_text(errors="replace")
+    text, cap = full, TRANSCRIPT_CAP_BYTES
+    while True:
+        if len(text.encode("utf-8", "replace")) > cap:
+            text = _tail(text, cap)
+        blob = base64.b64encode(gzip.compress(text.encode("utf-8", "replace"))).decode("ascii")
+        if len(blob) <= UPLOAD_BLOB_CAP or not text:
+            break
+        # Shrink by the overshoot, with a margin, so a dense transcript fits in
+        # a step or two rather than one record at a time.
+        cap = int(len(text.encode("utf-8", "replace")) * UPLOAD_BLOB_CAP / len(blob) * 0.9)
+    if text is not full:
         # Tell the worker how many messages the trim dropped, so the session's
         # saved index still points at the same message.
-        dropped = len(parse_transcript(text, source)) - len(parse_transcript(tail, source))
+        dropped = len(parse_transcript(full, source)) - len(parse_transcript(text, source))
         payload = {**payload, "transcript_offset": max(dropped, 0)}
-        text = tail
-    blob = base64.b64encode(gzip.compress(text.encode("utf-8", "replace"))).decode("ascii")
     return client.call_json(
         "queue_add",
         {"queue": queue, "key": key, "payload": payload, "transcript_gz_b64": blob},
