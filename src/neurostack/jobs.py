@@ -249,6 +249,10 @@ def _checkpoint_payload(queue: str, job: dict[str, Any]) -> tuple[str, str]:
 
 # Budget for reading one harvest part, under the queue's 45-minute stale reap.
 _PART_BUDGET_S = 30 * 60
+# A failed window is tried again this many times, this far apart, before the
+# job fails: the model proxy drops the odd request in milliseconds (#301).
+_WINDOW_RETRIES = 2
+_WINDOW_RETRY_WAIT_S = 20.0
 
 
 def _read_whole_part(run: dict, harness: str, client_cfg, transcript: str):
@@ -271,8 +275,13 @@ def _read_whole_part(run: dict, harness: str, client_cfg, transcript: str):
         before = load_state(run["session"]).since_index
         if before >= end:
             break
-        verdict = run_checkpoint(run, harness, client_cfg)
-        data, text = verdict.data, verdict.text
+        for attempt in range(_WINDOW_RETRIES + 1):
+            verdict = run_checkpoint(run, harness, client_cfg)
+            data, text = verdict.data, verdict.text
+            if data is None or data.get("ok") or attempt == _WINDOW_RETRIES:
+                break
+            log.warning("harvest window failed (%s); retrying", data.get("error"))
+            time.sleep(_WINDOW_RETRY_WAIT_S)
         if data is None:
             return (total if total["windows"] else None), text
         total["saved"] += data.get("saved", 0)

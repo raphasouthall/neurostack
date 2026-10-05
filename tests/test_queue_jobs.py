@@ -514,3 +514,26 @@ def test_split_parts_fit_the_body_limit_and_keep_message_offsets(monkeypatch):
     assert all(len(parse_transcript(p["text"], "omp")) <= 30 for p in parts)
     later = q.split_parts(text, "omp", start_line=95)
     assert [(p["start"], p["offset"]) for p in later] == [(95, 95)]
+
+
+def test_a_failed_window_is_retried_before_the_job_fails(
+        in_memory_db, client, runs, tmp_path, monkeypatch, isolated_home):
+    from neurostack.cli import hook
+
+    monkeypatch.setattr("neurostack.jobs._WINDOW_RETRY_WAIT_S", 0)
+    replies = [False, True]
+
+    def fake(payload, harness="cli", cfg=None):
+        ok = replies.pop(0)
+        if ok:
+            state = hook.load_state(payload["session"])
+            state.since_index = 1
+            state.save(checkpoint=True)
+        return Verdict(data={"ok": ok, "saved": int(ok), "found": int(ok), "error": "400"})
+
+    monkeypatch.setattr("neurostack.cli.hook.run_checkpoint", fake)
+    add(in_memory_db, "harvest", "/t/2026_s8.jsonl@1#0",
+        {"path": "/t/2026_s8.jsonl", "provider": "omp", "mtime": 1, "part_start": 0},
+        transcript=OMP_LINE % 1)
+    result = JOBS["harvest-worker"].run(_server(tmp_path), in_memory_db)
+    assert (result["finished_ok"], result["saved"], replies) == (1, 1, [])
