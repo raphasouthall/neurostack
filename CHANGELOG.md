@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Harvest reads whole transcripts (#299). A harvest job ran one checkpoint window (at most `checkpoint_max_messages`, 40 on the live server) and the scan then marked the transcript done, so on 2026-10-05 3,256 of 7,971 messages in 98 omp sessions had never been read. A transcript now uploads as ordered parts that each fit the server's 4 MiB request limit and hold at most 400 messages, starting after the lines already uploaded; the worker reads each part window by window to its end; and the queue runs a transcript's parts in order. Subagent transcripts keep their saved index under their parent session, so two agents called `Scout` no longer share one.
+
+### Fixed
+
 - A large transcript no longer blocks the harvest scan (#297). The MCP server refuses request bodies over 4 MiB, and an upload capped only by its raw size (10 MiB) could exceed that once encoded. The 413 was read as no reply, and the scan stops at the first unanswered upload, so from 2026-09-29 each scan queued one transcript. Uploads now trim older records until the encoded transcript fits, and the client records an HTTP refusal with its reason.
 
 ### Fixed

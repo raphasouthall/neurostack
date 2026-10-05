@@ -1946,11 +1946,12 @@ class TestHarvestEnqueue:
         rows = db.execute(
             "SELECT queue, key, payload, transcript FROM job_queue ORDER BY key").fetchall()
         assert [(r["queue"], r["key"]) for r in rows] == [
-            ("harvest", f"{tmp_path / 'new.jsonl'}@200.0"),
-            ("harvest", f"{tmp_path / 'old.jsonl'}@100.0"),
+            ("harvest", f"{tmp_path / 'new.jsonl'}@200.0#0"),
+            ("harvest", f"{tmp_path / 'old.jsonl'}@100.0#0"),
         ]
         assert json.loads(rows[0]["payload"]) == {
-            "path": str(tmp_path / "new.jsonl"), "provider": "omp", "mtime": 200.0}
+            "path": str(tmp_path / "new.jsonl"), "provider": "omp", "mtime": 200.0,
+            "part_start": 0}
         assert rows[0]["transcript"] == (tmp_path / "new.jsonl").read_text()
 
     def test_an_uploaded_transcript_stops_showing_as_pending(

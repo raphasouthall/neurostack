@@ -16,7 +16,7 @@ from neurostack.cli.hook import Verdict, _checkpoint_window, load_state
 from neurostack.cli.queue import enqueue
 from neurostack.client import ClientConfig
 from neurostack.jobs import JOBS, JobFailed, blocked
-from neurostack.queue import add, claim, finish, listing
+from neurostack.queue import QueueLimits, add, claim, finish, listing
 from neurostack.schema import get_db
 from neurostack.tools import queue_tools
 
@@ -318,13 +318,22 @@ def test_a_job_without_a_transcript_fails_without_running(in_memory_db, client, 
     assert runs.calls == []
 
 
+CLAUDE_LINE = '{"type":"user","message":{"role":"user","content":"m%d"}}\n'
+
+
 @pytest.mark.parametrize("payload, session, harness", [
     ({"path": "/t/2026-09-23T10-00_abc-123.jsonl", "provider": "omp"}, "abc-123", "omp"),
     ({"path": "/t/0f1e-uuid.jsonl", "provider": "claude-code"}, "0f1e-uuid", "claude"),
+    # A subagent's transcript is keyed under its parent session, so two "Scout"
+    # agents in different sessions never share a saved index (#299).
+    ({"path": "/t/2026-09-23T10-00_abc-123/Scout.jsonl", "provider": "omp"},
+     "abc-123/Scout", "omp"),
 ])
 def test_harvest_worker_derives_the_session_from_the_transcript_path(
         in_memory_db, client, runs, tmp_path, payload, session, harness):
-    add(in_memory_db, "harvest", f"{payload['path']}@1", {**payload, "mtime": 1}, transcript="t\n")
+    line = OMP_LINE if payload["provider"] == "omp" else CLAUDE_LINE
+    add(in_memory_db, "harvest", f"{payload['path']}@1", {**payload, "mtime": 1},
+        transcript=line % 1)
     JOBS["harvest-worker"].run(_server(tmp_path), in_memory_db)
     (sent, used), = runs.calls
     assert (sent["session"], used) == (session, harness)
@@ -453,3 +462,55 @@ def test_the_server_keys_load_from_config_toml_and_env(tmp_path, monkeypatch):
     monkeypatch.setenv("NEUROSTACK_CHECKPOINT_TIMEOUT_S", "30")
     cfg = load_config()
     assert (cfg.checkpoint_command, cfg.checkpoint_timeout_s) == ("proxy-model", 30.0)
+
+
+def test_a_harvest_job_reads_its_part_window_by_window_to_the_end(
+        in_memory_db, client, runs, tmp_path, monkeypatch, isolated_home):
+    """One checkpoint covers 40 messages; a harvest job keeps going until its
+    whole part is read, not one window and done (#299)."""
+    from neurostack.cli import hook
+
+    def fake(payload, harness="cli", cfg=None):
+        state = hook.load_state(payload["session"])
+        start = max(state.since_index, payload.get("transcript_offset", 0))
+        state.since_index = min(start + 40, payload.get("transcript_offset", 0) + 100)
+        state.save(checkpoint=True)
+        runs.calls.append(start)
+        return Verdict(data={"ok": True, "saved": 1, "found": 1})
+
+    monkeypatch.setattr("neurostack.cli.hook.run_checkpoint", fake)
+    add(in_memory_db, "harvest", "/t/2026_s9.jsonl@1#0",
+        {"path": "/t/2026_s9.jsonl", "provider": "omp", "mtime": 1, "part_start": 0},
+        transcript="".join(OMP_LINE % i for i in range(100)))
+    result = JOBS["harvest-worker"].run(_server(tmp_path), in_memory_db)
+    assert runs.calls == [0, 40, 80]
+    assert result["saved"] == 3
+
+
+def test_parts_of_one_transcript_are_claimed_in_order(queue_db):
+    """The freshest transcript goes first, but its earliest part leads (#299)."""
+    for start, mtime in ((50, 9), (0, 5), (20, 5)):
+        add(queue_db, "harvest", f"/t/a.jsonl@{mtime}#{start}",
+            {"path": "/t/a.jsonl", "mtime": mtime, "part_start": start}, transcript="x\n")
+    add(queue_db, "harvest", "/t/b.jsonl@7#0",
+        {"path": "/t/b.jsonl", "mtime": 7, "part_start": 0}, transcript="x\n")
+    order = []
+    for _ in range(4):
+        job = claim(queue_db, "harvest", QueueLimits(concurrency=9))["job"]
+        order.append(job["key"])
+        finish(queue_db, job["job_id"], True)
+    assert order == ["/t/a.jsonl@5#0", "/t/a.jsonl@5#20", "/t/a.jsonl@9#50", "/t/b.jsonl@7#0"]
+
+
+def test_split_parts_fit_the_body_limit_and_keep_message_offsets(monkeypatch):
+    from neurostack.cli import queue as q
+    from neurostack.cli.hook import parse_transcript
+
+    monkeypatch.setattr(q, "PART_MESSAGES", 30)
+    text = "".join(OMP_LINE % i for i in range(100))
+    parts = q.split_parts(text, "omp")
+    assert "".join(p["text"] for p in parts) == text
+    assert [p["offset"] for p in parts] == [0, 30, 60, 90]
+    assert all(len(parse_transcript(p["text"], "omp")) <= 30 for p in parts)
+    later = q.split_parts(text, "omp", start_line=95)
+    assert [(p["start"], p["offset"]) for p in later] == [(95, 95)]
