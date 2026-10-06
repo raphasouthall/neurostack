@@ -70,6 +70,11 @@ MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024
 CHECKPOINT_MIN_MESSAGES = 5
 CHECKPOINT_MIN_USER_CHARS = 200
 CHECKPOINT_CLIP_CHARS = 500
+# A window's transcript body stays under this many characters (about 60k tokens),
+# whatever its message count, and one message's text under the second limit:
+# 40 messages with big pastes reached 212k tokens, past the model's 200k (#303).
+CHECKPOINT_MAX_BODY_CHARS = 240_000
+CHECKPOINT_MAX_TEXT_CHARS = 60_000
 # `neurostack status` only counts a session as behind while it could still be
 # checkpointed; an older state file belongs to a session that is over.
 BEHIND_WINDOW_S = 7 * 86400
@@ -997,6 +1002,19 @@ transcript.
 """
 
 
+def _fit_window(window: list[dict]) -> list[dict]:
+    """The longest leading slice whose body fits CHECKPOINT_MAX_BODY_CHARS (#303).
+
+    Always at least one message, which _checkpoint_body clips on its own.
+    """
+    size = 0
+    for i, message in enumerate(window):
+        size += len(_checkpoint_body([message])) + 1
+        if size > CHECKPOINT_MAX_BODY_CHARS and i > 0:
+            return window[:i]
+    return window
+
+
 def _checkpoint_body(window: list[dict]) -> str:
     """The window as a flat transcript.
 
@@ -1007,6 +1025,10 @@ def _checkpoint_body(window: list[dict]) -> str:
     lines: list[str] = []
     for message in window:
         text = message["text"].strip()
+        if len(text) > CHECKPOINT_MAX_TEXT_CHARS:
+            # A pasted log or file: keep its start and end, where the point usually is.
+            keep = CHECKPOINT_MAX_TEXT_CHARS // 2
+            text = f"{text[:keep]}\n[... {len(text) - 2 * keep} characters cut ...]\n{text[-keep:]}"
         if text:
             lines.append(f"[{message['role']}] {text}")
         for name in message["tools"]:
@@ -1024,13 +1046,16 @@ def _event_checkpoint(client: McpClient, payload: dict, state: SessionState,
     if payload.get("stop_hook_active") is True:
         return Verdict()
     start, window = _checkpoint_window(payload, state)
+    whole = len(window)
     if cfg.checkpoint_max_messages > 0:
         # A backlog transcript can exceed the model's context in one bite;
         # cut it and let the advancing cursor bring the next slice (issue #182).
         window = window[:cfg.checkpoint_max_messages]
+    window = _fit_window(window)
+    capped = len(window) < whole
     end = start + len(window)
     if end <= state.offered_index or _checkpoint_skip(window):
-        if cfg.checkpoint_max_messages > 0 and end > state.since_index and window:
+        if capped and end > state.since_index and window:
             # A capped slice that is not worth a model call still has to be
             # consumed, or the cursor never reaches the rest of the transcript.
             state.since_index = end
