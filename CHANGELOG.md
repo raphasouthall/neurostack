@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- A checkpoint window is cut by size as well as message count (#303). Its transcript body stays under 240,000 characters (about 60k tokens), and one message's text over 60,000 characters keeps its start and end. Forty messages with large pastes had reached 212k tokens, past the model's 200k, or run past the 300 s timeout, and a failed harvest part skips its messages.
+
 - A harvest window that the model proxy refuses is tried twice more, 20 s apart, before the job fails (#301). CLIProxyAPI drops the odd request with a 400 in a few milliseconds, and one drop used to fail a whole part.
 
 - Harvest reads whole transcripts (#299). A harvest job ran one checkpoint window (at most `checkpoint_max_messages`, 40 on the live server) and the scan then marked the transcript done, so on 2026-10-05 3,256 of 7,971 messages in 98 omp sessions had never been read. A transcript now uploads as ordered parts that each fit the server's 4 MiB request limit and hold at most 400 messages, starting after the lines already uploaded; the worker reads each part window by window to its end; and the queue runs a transcript's parts in order. Subagent transcripts keep their saved index under their parent session, so two agents called `Scout` no longer share one.
