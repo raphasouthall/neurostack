@@ -981,3 +981,23 @@ def test_nothing_to_save_is_reported_as_success(server, tmp_path):
     assert verdict.data["ok"] is True
     assert verdict.data["saved"] == 0
     assert verdict.data["error"] == ""
+
+
+def test_a_window_is_cut_by_size_and_a_huge_paste_is_clipped(server, tmp_path, monkeypatch):
+    """Message count alone let a window outgrow the model's context (#303)."""
+    from neurostack.cli import hook
+
+    monkeypatch.setattr(hook, "CHECKPOINT_MAX_BODY_CHARS", 6000)
+    monkeypatch.setattr(hook, "CHECKPOINT_MAX_TEXT_CHARS", 1000)
+    records = [{"type": "message", "message": {"role": "user", "content": [
+        {"type": "text", "text": f"paste {i} " + ("x" * 5000 if i == 0 else "y" * 600)}]}}
+        for i in range(12)]
+    path = tmp_path / "2026-09-08T00-00-00-000Z_sess-big.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records))
+    payload = {"session": "sess-big", "format": "omp", "transcript_path": str(path)}
+
+    verdict = run_event("checkpoint", payload, cfg=_cfg(server, checkpoint_max_messages=40))
+    assert "characters cut" in verdict.text
+    count = int(verdict.text.split(" messages have gone by")[0].split()[-1])
+    assert 1 < count < 12
+    assert len(hook._checkpoint_body(hook.load_state("sess-big").checkpoint_messages)) <= 6000
