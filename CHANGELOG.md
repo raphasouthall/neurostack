@@ -4,7 +4,7 @@
 
 ### Added
 
-- A daily `reconcile` job (06:15, before promotion) runs a Pi agent over the memories saved since its last run, 60 at a time and up to 240 a day (#305). It finds the notes and older memories each new fact makes stale (a replaced host, an upgraded server, a closed open item), rewrites the stale lines in place, fixes project status sections that agents read first, and rewrites contradicted memories with a `(corrected ...)` note. Its run reports memories reviewed, notes and memories corrected, the vault commit and the backlog. The cursor only moves past batches that finished.
+- A daily `reconcile` job (06:15, before promotion) runs a Pi agent over the memories saved since its last run, 60 at a time and up to 600 a day (#305). It finds the notes and older memories each new fact makes stale (a replaced host, an upgraded server, a closed open item), rewrites the stale lines in place, fixes project status sections that agents read first, and rewrites contradicted memories with a `(corrected ...)` note. Its run reports memories reviewed, notes and memories corrected, the vault commit and the backlog. The cursor only moves past batches that finished.
 
 ### Fixed
 
