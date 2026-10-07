@@ -21,6 +21,7 @@ AGENT_DIR = Path(__file__).resolve().parent.parent / "agent"
 JOBS = {
     "promotion": {"timeout_s": 2700, "thinking": "medium"},
     "vault-save": {"timeout_s": 1800, "thinking": "medium"},
+    "reconcile": {"timeout_s": 2700, "thinking": "medium"},
 }
 # A prompt file you supply runs with these limits; the job name only picks a
 # bundled prompt, so personal jobs stay out of the package.

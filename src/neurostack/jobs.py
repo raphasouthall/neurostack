@@ -158,6 +158,81 @@ def _promotion(cfg, conn) -> dict[str, Any]:
     }
 
 
+# Memories one reconcile agent run reviews, and runs per job (#305).
+RECONCILE_BATCH = 60
+RECONCILE_MAX_BATCHES = 4
+# Harvest also saves chat fragments; these types carry state changes.
+_RECONCILE_TYPES = ("decision", "learning", "bug", "convention", "observation", "context")
+
+
+def _reconcile_cursor(conn) -> int:
+    """The highest memory id a reconcile run has reviewed, or where to start."""
+    row = conn.execute(
+        "SELECT result FROM job_runs WHERE job = 'reconcile' AND status = 'ok'"
+        " ORDER BY started_at DESC LIMIT 1").fetchone()
+    if row and row[0]:
+        cursor = json.loads(row[0]).get("cursor")
+        if isinstance(cursor, int):
+            return cursor
+    # First run: the last day's memories, not the whole history.
+    row = conn.execute("SELECT MIN(memory_id) FROM memories"
+                       " WHERE created_at >= datetime('now', '-1 day')").fetchone()
+    return (row[0] or 1) - 1
+
+
+def _reconcile(cfg, conn) -> dict[str, Any]:
+    """Pi agent fixes notes and older memories that newer memories made stale (#305).
+
+    Harvest and promotion add knowledge but never correct what it contradicts, so
+    a session read a project note that still showed the old host. This walks the
+    memories saved since the last run, in batches, and each batch's agent run
+    rewrites the stale note lines and memories it finds. The cursor only moves
+    past batches that finished, so a failed run is retried from the same place.
+    """
+    from .cli.agent import JOBS as AGENT_JOBS
+    from .cli.agent import job_prompt, run_agent
+
+    cursor = start = _reconcile_cursor(conn)
+    began = conn.execute("SELECT datetime('now')").fetchone()[0]
+    head_before = _git(cfg.vault_root, "rev-parse", "HEAD")
+    reviewed = batches = 0
+    marks = ",".join("?" * len(_RECONCILE_TYPES))
+    for _ in range(RECONCILE_MAX_BATCHES):
+        rows = conn.execute(
+            "SELECT memory_id AS id, created_at, entity_type AS type, workspace, tags, content"
+            f" FROM memories WHERE memory_id > ? AND entity_type IN ({marks})"
+            " ORDER BY memory_id LIMIT ?",
+            (cursor, *_RECONCILE_TYPES, RECONCILE_BATCH)).fetchall()
+        if not rows:
+            break
+        batch = [{**dict(r), "tags": json.loads(r["tags"] or "[]")} for r in rows]
+        path = cfg.db_dir / "tmp" / f"reconcile-{batch[0]['id']}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(batch, indent=1), encoding="utf-8")
+        try:
+            prompt = job_prompt("reconcile") + f"\n\nMemories file: {path}\n"
+            code = run_agent(cfg, prompt, AGENT_JOBS["reconcile"], cwd=str(cfg.vault_root))
+        finally:
+            path.unlink(missing_ok=True)
+        if code:
+            raise RuntimeError(f"Pi agent exited {code} on memories {batch[0]['id']}-"
+                               f"{batch[-1]['id']}; cursor stays at {cursor}")
+        cursor = batch[-1]["id"]
+        reviewed += len(batch)
+        batches += 1
+    head = _git(cfg.vault_root, "rev-parse", "HEAD")
+    changes = _git(cfg.vault_root, "diff", "--name-only", head_before, head).splitlines()
+    corrected = conn.execute(
+        "SELECT COUNT(*) FROM memories WHERE updated_at >= ? AND content LIKE '%(corrected %'",
+        (began,)).fetchone()[0]
+    backlog = conn.execute(
+        f"SELECT COUNT(*) FROM memories WHERE memory_id > ? AND entity_type IN ({marks})",
+        (cursor, *_RECONCILE_TYPES)).fetchone()[0]
+    return {"reviewed": reviewed, "batches": batches, "from": start + 1, "cursor": cursor,
+            "notes_corrected": len(changes), "memories_corrected": corrected,
+            "commit": head if head != head_before else None, "backlog": backlog}
+
+
 def _pct(value: str) -> int:
     return int(value.rstrip("%"))
 
@@ -477,6 +552,8 @@ for _job in (
         "Sync note dormancy with hotness"),
     Job("synthesize", Daily("05:30"), _synthesize, _needs_index,
         "Fold aged observation heaps into learnings"),
+    Job("reconcile", Daily("06:15"), _reconcile, _needs_agent,
+        "Pi agent fixes notes and memories that newer memories made stale"),
     Job("promotion", Daily("06:45"), _promotion, _needs_agent,
         "Pi agent writes promotion-queue memories into vault notes"),
     Job("health", Daily("07:15"), _health, _needs_vault,
