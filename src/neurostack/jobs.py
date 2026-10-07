@@ -158,9 +158,10 @@ def _promotion(cfg, conn) -> dict[str, Any]:
     }
 
 
-# Memories one reconcile agent run reviews, and runs per job (#305).
+# Memories one reconcile agent run reviews, and runs per job (#305). A batch
+# takes about 3 minutes live, so 10 batches (600 memories) fit a 30-minute run.
 RECONCILE_BATCH = 60
-RECONCILE_MAX_BATCHES = 4
+RECONCILE_MAX_BATCHES = 10
 # Harvest also saves chat fragments; these types carry state changes.
 _RECONCILE_TYPES = ("decision", "learning", "bug", "convention", "observation", "context")
 
