@@ -193,3 +193,62 @@ def test_migration_28_to_29_creates_job_runs(in_memory_db):
     assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == SCHEMA_VERSION
     cols = {r[1] for r in conn.execute("PRAGMA table_info(job_runs)")}
     assert cols == {"id", "job", "started_at", "finished_at", "status", "result", "error"}
+
+
+# -- reconcile (#305) ---------------------------------------------------------
+
+def _reconcile_env(tmp_path, monkeypatch, in_memory_db, codes):
+    """A vault git repo, memories 1-7, and a fake agent that records its batches."""
+    import json
+    import subprocess
+    from types import SimpleNamespace
+
+    from neurostack import jobs
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    subprocess.run(["git", "init", "-q", str(vault)], check=True)
+    subprocess.run(["git", "-C", str(vault), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-q", "--allow-empty", "-m", "start"], check=True)
+    for i in range(1, 8):
+        in_memory_db.execute(
+            "INSERT INTO memories (memory_id, content, entity_type, tags) VALUES (?, ?, ?, '[]')",
+            (i, f"fact {i}", "chat" if i == 4 else "decision"))
+    in_memory_db.commit()
+    monkeypatch.setattr(jobs, "RECONCILE_BATCH", 3)
+    seen = []
+
+    def agent(cfg, prompt, spec, cwd):
+        path = prompt.rsplit("Memories file: ", 1)[1].strip()
+        seen.append([m["id"] for m in json.load(open(path))])
+        return codes.pop(0)
+
+    monkeypatch.setattr("neurostack.cli.agent.run_agent", agent)
+    return SimpleNamespace(vault_root=vault, db_dir=tmp_path), seen
+
+
+def test_reconcile_walks_new_memories_in_batches_and_keeps_its_cursor(
+        tmp_path, monkeypatch, in_memory_db):
+    from neurostack import jobs
+
+    cfg, seen = _reconcile_env(tmp_path, monkeypatch, in_memory_db, [0, 0, 0])
+    in_memory_db.execute("INSERT INTO job_runs (job, started_at, status, result) VALUES"
+                         " ('reconcile', '2026-01-01T00:00:00', 'ok', '{\"cursor\": 1}')")
+    out = jobs._reconcile(cfg, in_memory_db)
+    # Memory 4 is a chat fragment: not a state change, never handed over.
+    assert seen == [[2, 3, 5], [6, 7]]
+    assert (out["from"], out["cursor"], out["reviewed"], out["backlog"]) == (2, 7, 5, 0)
+
+
+def test_a_failed_reconcile_batch_leaves_the_cursor_where_it_was(
+        tmp_path, monkeypatch, in_memory_db):
+    import pytest
+
+    from neurostack import jobs
+
+    cfg, seen = _reconcile_env(tmp_path, monkeypatch, in_memory_db, [0, 3])
+    in_memory_db.execute("INSERT INTO job_runs (job, started_at, status, result) VALUES"
+                         " ('reconcile', '2026-01-01T00:00:00', 'ok', '{\"cursor\": 1}')")
+    with pytest.raises(RuntimeError, match="cursor stays at 5"):
+        jobs._reconcile(cfg, in_memory_db)
+    assert seen == [[2, 3, 5], [6, 7]]
