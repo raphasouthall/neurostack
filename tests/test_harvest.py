@@ -1077,6 +1077,7 @@ class TestOmpSubagentTranscripts:
     def test_named_profile_sessions_are_found(self, tmp_path, monkeypatch):
         """OMP_PROFILE=<name> sessions live under ~/.omp/profiles (#295)."""
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         parent, scout, builder = self._build_tree(tmp_path)
         proj = tmp_path / ".omp" / "profiles" / "strake" / "agent" / "sessions" / "-strake"
         proj.mkdir(parents=True)
@@ -1094,6 +1095,7 @@ class TestOmpSubagentTranscripts:
 
         from neurostack.harvest import pending_sessions, record_watermark
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         self._wire_harvest(tmp_path, monkeypatch, in_memory_db)
         parent, scout, builder = self._build_tree(tmp_path)
         os.utime(parent, (1_000, 1_000))
