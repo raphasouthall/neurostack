@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- A daily `reconcile` job (06:15, before promotion) runs a Pi agent over the memories saved since its last run, 60 at a time and up to 240 a day (#305). It finds the notes and older memories each new fact makes stale (a replaced host, an upgraded server, a closed open item), rewrites the stale lines in place, fixes project status sections that agents read first, and rewrites contradicted memories with a `(corrected ...)` note. Its run reports memories reviewed, notes and memories corrected, the vault commit and the backlog. The cursor only moves past batches that finished.
+
 ### Fixed
 
 - A checkpoint window is cut by size as well as message count (#303). Its transcript body stays under 240,000 characters (about 60k tokens), and one message's text over 60,000 characters keeps its start and end. Forty messages with large pastes had reached 212k tokens, past the model's 200k, or run past the 300 s timeout, and a failed harvest part skips its messages.
