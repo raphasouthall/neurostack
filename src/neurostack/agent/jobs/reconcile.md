@@ -25,6 +25,13 @@ a list of {id, created_at, type, workspace, tags, content}, oldest first. Read i
 4. A project or overview note is what an agent reads first. If a newer fact changes a
    project's state, fix that note's status or summary section even when the detail lives
    in another note, and link to the detail with a [[wiki-link]].
+   When you correct a project's main note (`projects/<slug>/<slug>.md`, or `index.md`
+   in that folder), it must end the run with a `## Status` section, because search
+   shows that section first. If the note has none, add one right after the H1 title:
+   3 to 6 bullets of current state, each starting with its date (`- 2026-09-30: ...`),
+   built only from facts already in the note or in the memories you were given. If it
+   has one, keep it current: replace bullets the newer facts overtake. This is the one
+   section you may add.
 5. An older memory that a newer one contradicts gets rewritten with memory_update to the
    correct fact, keeping its identifiers, ending with "(corrected <today> from memory
    <newer id>)". Never forget a memory.

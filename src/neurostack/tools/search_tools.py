@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from datetime import datetime, timezone
 
 from .registry import ToolAnnotationHints as Hints
 from .registry import registry
@@ -20,6 +22,21 @@ log = logging.getLogger("neurostack.tools.search")
 # the largest triples + summaries + merged ranking measured was 1,843, so 2,000
 # keeps every note and fact whole and trims the trailing memories first.
 DEFAULT_TIERED_MAX_TOKENS = 2000
+
+# Issue #322: a reply that hits notes inside projects/<slug>/ carries the
+# project note's status, because sibling notes and memories go stale while the
+# project note moves on. Two projects at ~800 chars each stay well inside the
+# 2,000-token default.
+MAX_PROJECTS = 2
+_STATUS_CHARS = 800
+_LEAD_CHARS = 600
+_HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+_FENCE = re.compile(r"^```.*?^```", re.MULTILINE | re.DOTALL)
+_STATUS_HEADING = re.compile(
+    r"(?:project\s+)?(?:status|state|current|progress)\b", re.IGNORECASE
+)
+_OPEN_HEADING = re.compile(r"(?:open|next|to-?do)\b", re.IGNORECASE)
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _cfg():
@@ -95,6 +112,109 @@ def _search_memories_for_results(
         return []
 
 
+def _hit_paths(result: dict):
+    """Note paths in the order the reply ranks them, best first."""
+    for key in ("results", "merged_ranking", "summaries", "chunks", "triples"):
+        for item in result.get(key) or []:
+            yield item.get("path") or item["note"]
+
+
+def _sections(body: str) -> list[tuple[str, str]]:
+    """(heading, text) per heading, each running to the next of its level or above.
+
+    Lines that look like headings inside code fences are shell comments, not
+    headings, so they neither open nor close a section.
+    """
+    fences = [m.span() for m in _FENCE.finditer(body)]
+    heads = [
+        h for h in _HEADING.finditer(body)
+        if not any(a <= h.start() < b for a, b in fences)
+    ]
+    sections = []
+    for n, h in enumerate(heads):
+        level = len(h.group(1))
+        end = next(
+            (x.start() for x in heads[n + 1:] if len(x.group(1)) <= level), len(body)
+        )
+        sections.append((h.group(2), body[h.end():end].strip()))
+    return sections
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+def _status_text(body: str) -> str:
+    """The part of a project note that says where the project stands (#322).
+
+    The first section headed status, state, current or progress. Most project
+    notes have none, so next comes the section whose heading carries the newest
+    ISO date plus the open, next or todo section, sharing the budget. The
+    opening of the body only when neither exists.
+    """
+    sections = _sections(body)
+    status = next((t for h, t in sections if _STATUS_HEADING.match(h)), None)
+    if status is not None:
+        return _clip(status, _STATUS_CHARS)
+    dated = [(max(_ISO_DATE.findall(h)), h, t) for h, t in sections if _ISO_DATE.search(h)]
+    picks = [max(dated)[1:]] if dated else []
+    picks += [(h, t) for h, t in sections if _OPEN_HEADING.match(h)][:1]
+    picks = list(dict.fromkeys(picks))
+    if not picks:
+        return _clip(body.strip(), _LEAD_CHARS)
+    share = _STATUS_CHARS // len(picks)
+    return "\n\n".join(_clip(f"**{h}**\n{t}", share) for h, t in picks)
+
+
+def _project_status(result: dict) -> list[dict]:
+    """Status of the projects whose folders hold the hits, best hit first (#322).
+
+    The project note is ``projects/<slug>/<slug>.md``, else ``index.md`` in the
+    same folder; `_status_text` picks the part of it to show.
+    """
+    from .file_tools import _FRONTMATTER_RE, PathSafetyError, _safe_path, _vault_root
+
+    root = _vault_root()
+    projects: list[dict] = []
+    seen: set[str] = set()
+    for path in _hit_paths(result):
+        parts = path.split("/")
+        if "projects" not in parts:
+            continue
+        i = parts.index("projects")
+        if len(parts) < i + 3:  # projects/<note>.md sits in no project folder
+            continue
+        folder, slug = "/".join(parts[: i + 2]), parts[i + 1]
+        if folder in seen:
+            continue
+        seen.add(folder)
+        for name in (f"{slug}.md", "index.md"):
+            try:
+                abs_path = _safe_path(f"{folder}/{name}", root)
+                text = abs_path.read_text(encoding="utf-8")
+            except (PathSafetyError, OSError, UnicodeDecodeError):
+                continue
+            break
+        else:
+            continue
+
+        fm = _FRONTMATTER_RE.match(text)
+        body = text[fm.end():] if fm else text
+        h1 = re.match(r"\s*# (.+)\n?", body)
+        title = h1.group(1).strip() if h1 else slug
+        status = _status_text(body[h1.end():] if h1 else body)
+        mtime = abs_path.stat().st_mtime
+        projects.append({
+            "path": f"{folder}/{name}",
+            "title": title,
+            "updated": datetime.fromtimestamp(mtime, timezone.utc).date().isoformat(),
+            "status": status,
+        })
+        if len(projects) == MAX_PROJECTS:
+            break
+    return projects
+
+
 @registry.tool(tags=["search", "retrieval"], annotations=_READ_ONLY)
 def vault_search(
     query: str,
@@ -152,7 +272,9 @@ def vault_search(
 
     The response shape follows the depth. "full" and reference_only return
     `results`. "triples", "summaries" and "auto" return `depth_used` plus
-    whichever of `triples`, `summaries`, `chunks` was served.
+    whichever of `triples`, `summaries`, `chunks` was served. When a hit sits
+    in a projects/<slug>/ folder, `projects` carries up to two project notes'
+    current status, which outranks older sibling notes and memories.
 
     After reading a result, call vault_record_usage([path]) once with every
     path that actually informed the answer. That is what teaches ranking.
@@ -195,6 +317,8 @@ def vault_search(
             result["reranked"] = True
         if truncated:
             result["truncated"] = True
+        if projects := _project_status(result):
+            result["projects"] = projects
         return result
 
     if depth in ("triples", "summaries", "auto"):
@@ -217,6 +341,11 @@ def vault_search(
                 result["memories"] = memories
             if max_tokens is None:
                 max_tokens = DEFAULT_TIERED_MAX_TOKENS
+
+        # Counted in the budget below but never trimmed, since the project
+        # note is the freshest source in the reply (#322).
+        if projects := _project_status(result):
+            result["projects"] = projects
 
         if max_tokens is not None:
             # Keep the budget meaningful whatever the depth (issue #62): one
@@ -276,6 +405,8 @@ def vault_search(
     memories = _search_memories_for_results(query, workspace, limit=3)
     if memories:
         result["memories"] = memories
+    if projects := _project_status(result):
+        result["projects"] = projects
 
     return result
 

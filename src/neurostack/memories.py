@@ -56,6 +56,13 @@ class Memory:
 _BOOKKEEPING_TAG = re.compile(r"^(superseded_by|session|when-[^:]*):|^promoted")
 _FILE_EXTS = frozenset({"py", "ts", "js", "rs", "go", "md", "toml", "yaml", "yml", "json"})
 
+# Fused memory order halves a memory's weight every 90 days since it was last
+# written (issue #322). Measured live on "AVD licensing RDS CALs", any half-life
+# from 30 to 180 days lifts the Server 2025 licence-server memories from 3rd and
+# 7th to 2nd and 3rd over month-old CAL plans. Fused scores are flat (the top 14
+# sit within 15%), so decay dominates fast and the gentler 90 days is enough.
+_RECENCY_HALF_LIFE_DAYS = 90.0
+
 
 def _content_supports(tag: str, content: str) -> bool:
     """True when ``content`` itself names ``tag``.
@@ -884,7 +891,8 @@ def _hybrid_memory_search(
 
     FTS5 needs every query term, so a long query matches few memories. The
     semantic channel brings in memories that share meaning but not words, as
-    note search does. Results follow the fused rank, but ``score`` is the cosine
+    note search does. The fused rank decays with age since the last write, and
+    memories tagged ``superseded_by:`` go last (#322). ``score`` is the cosine
     similarity times the context boost, so callers' absolute and relative
     floors keep their meaning. Without embeddings the FTS order stands, unscored.
     """
@@ -904,7 +912,8 @@ def _hybrid_memory_search(
         "m.memory_id, m.content, m.tags, m.entity_type, m.source_agent,"
         " m.workspace, m.created_at, m.expires_at, m.embedding, m.session_id,"
         " m.updated_at, m.revision_count, m.merge_count, m.merged_from, m.uuid,"
-        " m.file_path"
+        " m.file_path,"
+        " julianday('now') - julianday(COALESCE(m.updated_at, m.created_at)) AS age_days"
     )
 
     safe_query = " ".join(
@@ -962,7 +971,13 @@ def _hybrid_memory_search(
     for r in ranked:
         r["score"] = fused[r["memory_id"]]
     _boost_memories_by_context(ranked, context)
-    ranked.sort(key=lambda r: r["score"], reverse=True)
+
+    def rank(r: dict) -> tuple[bool, float]:
+        # A rewrite refreshes updated_at, so a corrected memory counts as new.
+        decay = 0.5 ** (max(r["age_days"] or 0.0, 0.0) / _RECENCY_HALF_LIFE_DAYS)
+        return ("superseded_by:" in (r["tags"] or ""), -r["score"] * decay)
+
+    ranked.sort(key=rank)
     # Report cosine, scaled by whatever context boost the fused score took.
     return [
         _row_to_memory(
