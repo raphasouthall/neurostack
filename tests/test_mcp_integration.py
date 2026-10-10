@@ -82,6 +82,23 @@ def test_mcp_server_exposes_registry_tools(mcp_vault):
     assert tool_names == registry_names
 
 
+def test_tool_reply_reaches_the_client_once(mcp_vault):
+    # Issue #310: a `-> dict` tool also came back as structuredContent, so the
+    # client showed the same reply twice.
+    from mcp import Client
+
+    from neurostack.tools.mcp_adapter import create_mcp_server
+
+    async def call():
+        async with Client(create_mcp_server()) as client:
+            return await client.call_tool("vault_stats", {})
+
+    reply = asyncio.run(call())
+    assert reply.structured_content is None
+    assert len(reply.content) == 1
+    assert json.loads(reply.content[0].text)["notes"] == 4
+
+
 def test_vault_search_keyword(mcp_vault):
     result = _registry().call(
         "vault_search", query="prediction", mode="keyword", depth="full",
@@ -158,6 +175,59 @@ def test_vault_search_max_tokens_applies_to_tiered_depth(mcp_vault):
     total = sum(len(capped.get(k, [])) for k in ("triples", "summaries", "chunks"))
     assert total == 1
     json.dumps(capped)
+
+
+def _oversized_tiered(monkeypatch):
+    """Stub a tiered result shaped like a live reply, 2,100-2,700 tokens uncapped."""
+    from neurostack.tools import search_tools
+
+    triples = [
+        {"note": f"n{i}.md", "title": "T", "s": "s" * 40, "p": "p", "o": "o" * 40,
+         "score": 0.6}
+        for i in range(15)
+    ]
+    summaries = [
+        {"note": f"n{i}.md", "title": "T", "summary": "x" * 700, "score": 0.9}
+        for i in range(5)
+    ]
+    memories = [{"memory_id": i, "content": "m" * 1500} for i in range(3)]
+
+    def tiered(*_a, depth, **_k):
+        return {"triples": list(triples) if depth == "auto" else [],
+                "summaries": list(summaries), "chunks": [], "depth_used": depth}
+
+    monkeypatch.setattr("neurostack.search.tiered_search", tiered)
+    monkeypatch.setattr(
+        search_tools, "_search_memories_for_results", lambda *a, **k: list(memories)
+    )
+    return summaries, memories
+
+
+@pytest.mark.parametrize("depth", ["auto", "summaries"])
+def test_vault_search_tiered_default_budget(mcp_vault, monkeypatch, depth):
+    # Issue #310: auto and summaries replies ran past 10 kB with no max_tokens.
+    from neurostack.budget import estimate_tokens
+    from neurostack.tools.search_tools import DEFAULT_TIERED_MAX_TOKENS
+
+    summaries, memories = _oversized_tiered(monkeypatch)
+    result = _registry().call("vault_search", query="q", depth=depth)
+
+    assert estimate_tokens(result) <= DEFAULT_TIERED_MAX_TOKENS
+    assert result["truncated"] is True
+    # Memories go first, so the ranked notes survive whole.
+    assert result["summaries"] == summaries
+    assert len(result["memories"]) < len(memories)
+
+
+def test_vault_search_explicit_max_tokens_beats_default(mcp_vault, monkeypatch):
+    summaries, memories = _oversized_tiered(monkeypatch)
+    result = _registry().call(
+        "vault_search", query="q", depth="auto", max_tokens=100_000,
+    )
+    assert "truncated" not in result
+    assert result["summaries"] == summaries
+    assert result["memories"] == memories
+
 
 
 def test_vault_diff_and_checkpoint(mcp_vault):

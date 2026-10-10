@@ -15,6 +15,12 @@ _WRITE_ADDITIVE = Hints(read_only=False, destructive=False, idempotent=True, ope
 
 log = logging.getLogger("neurostack.tools.search")
 
+# Ceiling for depth "auto" and "summaries" when the caller passes no max_tokens
+# (issue #310). Uncapped live replies ran 1,700 to 3,000 tokens per copy, and
+# the largest triples + summaries + merged ranking measured was 1,843, so 2,000
+# keeps every note and fact whole and trims the trailing memories first.
+DEFAULT_TIERED_MAX_TOKENS = 2000
+
 
 def _cfg():
     from ..config import get_config
@@ -130,6 +136,10 @@ def vault_search(
         max_tokens: Size ceiling (~4 chars/token). Trims on top of `depth`
             across every depth and the reference list, so an explicit budget
             is never a silent no-op. The response carries "truncated": True.
+            Depth "auto" and "summaries" default to 2000 tokens over the whole
+            reply, memories included, cutting memories first, then chunks,
+            summaries and triples from the tail. Pass a larger max_tokens to
+            get more when the reply says "truncated".
         reference_only: Return {path, score, snippet} only, no bodies, plus a
             hint to fetch detail with vault_read_file(path, offset, limit).
             Ignores `depth`. Cheapest way to scan then commit to one read.
@@ -153,7 +163,7 @@ def vault_search(
             f"depth must be one of {', '.join(VALID_DEPTHS)}, got {depth!r}"
         )
 
-    from ..budget import trim_to_budget
+    from ..budget import estimate_tokens, trim_to_budget
 
     _, embed_url = _cfg()
 
@@ -201,27 +211,30 @@ def vault_search(
             workspace=workspace,
         )
 
-        if max_tokens is not None:
-            # Keep the budget meaningful whatever the depth (issue #62): trim the
-            # content lists against one shared ceiling so an explicit max_tokens
-            # never silently no-ops on the default depth="auto".
-            remaining = max_tokens
-            dropped = False
-            for key in ("triples", "summaries", "chunks"):
-                items = result.get(key)
-                if not items:
-                    continue
-                kept, used, trunc = trim_to_budget(items, remaining)
-                result[key] = kept
-                remaining = max(0, remaining - used)
-                dropped = dropped or trunc
-            if dropped:
-                result["truncated"] = True
-
         if depth in ("auto", "summaries"):
             memories = _search_memories_for_results(query, workspace, limit=3)
             if memories:
                 result["memories"] = memories
+            if max_tokens is None:
+                max_tokens = DEFAULT_TIERED_MAX_TOKENS
+
+        if max_tokens is not None:
+            # Keep the budget meaningful whatever the depth (issue #62): one
+            # ceiling over the whole reply, so an explicit max_tokens never
+            # silently no-ops on the default depth="auto". Entries drop from the
+            # tail, memories first, until the reply as sent fits (issue #310);
+            # summing per-entry estimates ran a few percent over. At least one
+            # entry always stays.
+            lists = [
+                k for k in ("memories", "chunks", "summaries", "triples")
+                if result.get(k)
+            ]
+            while (
+                estimate_tokens(result) > max_tokens
+                and sum(len(result[k]) for k in lists) > 1
+            ):
+                result[next(k for k in lists if result[k])].pop()
+                result["truncated"] = True
 
         return result
 
