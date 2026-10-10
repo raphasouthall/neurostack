@@ -261,6 +261,25 @@ class TestSearchTriplesRecordGate:
         assert rows and all(r["tier"] == "primed" for r in rows)
         assert all(r["source"] == "search" for r in rows)
 
+    def test_repeated_fact_takes_one_slot(self, in_memory_db, monkeypatch):
+        # The index held one fact five times for a note (#320); the repeats
+        # must not crowd a distinct fact out of top_k.
+        conn = in_memory_db
+        _add_note(conn, "a.md", with_chunk=False)
+        rows = [("a.md", "usetoken", "p", "o", "usetoken o", _emb_blob())] * 5
+        rows.append(("a.md", "usetoken", "p", "other", "usetoken other", _emb_blob()))
+        conn.executemany(
+            "INSERT INTO triples (note_path, subject, predicate, object, "
+            "triple_text, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        conn.commit()
+        _patch_search(monkeypatch, conn)
+
+        results = search_triples("usetoken", top_k=2, embed_url="http://fake", record=False)
+
+        assert sorted(r.object for r in results) == ["o", "other"]
+
 
 class TestFeedbackStatsTiers:
     def test_stats_expose_both_tiers(self, in_memory_db):

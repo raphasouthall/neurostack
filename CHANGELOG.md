@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Memory search fuses keyword and semantic hits by reciprocal rank (#320). Keyword search needs every word, and semantic search only reranked those hits, so "AVD Azure Virtual Desktop session host" returned 1 unrelated memory. It now returns 20, mostly AVD host pool and RemoteApp memories. `score` stays cosine similarity, so the context floor and the 0.35 cut behave as before.
+- Repeated triples no longer fill search results (#320). Extraction stores each (subject, predicate, object) once per note, and triple search drops repeats before cutting to `top_k`. The live AVD query went from 14 to 20 distinct facts in its top 20. Existing copies are not deleted; they go when the note is next extracted.
+- `vault_read_file` over MCP returns the note as Markdown under a one-line header, not as an escaped JSON string (#320).
+
 ### Changed
 
 - MCP replies from `vault_search`, `vault_memories`, `vault_triples`, `vault_summary`, `vault_related`, `vault_graph`, `vault_communities`, `vault_remember` and `vault_update_memory` are Markdown instead of indented JSON (#318). Facts and summaries sit under one heading per note, memories take one header line without bookkeeping tags, and scores, `merged_ranking` and `depth_used` are left out. On fixtures replies are about 63% shorter. The NeuroStack hook client (`neurostack-hook`), the CLI `--json` and the HTTP API still get JSON.
