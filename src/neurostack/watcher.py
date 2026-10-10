@@ -246,6 +246,11 @@ def _clear_triple_failure(conn, note_path: str) -> None:
         pass
 
 
+def _unique_triples(triples: list[dict]) -> list[dict]:
+    """Each (s, p, o) once. The LLM can loop and emit one fact five times (#320)."""
+    return list({(t["s"], t["p"], t["o"]): t for t in triples}.values())
+
+
 def _extract_triples_for_note(
     title: str, content: str, embed_url: str, summarize_url: str, note_path: str = "",
 ) -> tuple[list[dict], list[str], list]:
@@ -255,7 +260,7 @@ def _extract_triples_for_note(
     Raises TripleExtractionError on a hard parse failure so the caller can
     queue the note for retry.
     """
-    triples = extract_triples(title, content, base_url=summarize_url)
+    triples = _unique_triples(extract_triples(title, content, base_url=summarize_url))
     if not triples:
         return [], [], []
 
@@ -396,7 +401,9 @@ def _prepare_note(
     triple_attempted = not skip_triples and bool(full_content)
     if triple_attempted:
         try:
-            triples = extract_triples(parsed.title, full_content, base_url=summarize_url)
+            triples = _unique_triples(
+                extract_triples(parsed.title, full_content, base_url=summarize_url)
+            )
         except TripleExtractionError as e:
             triple_error = str(e)
         except Exception as e:
