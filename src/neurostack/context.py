@@ -8,8 +8,25 @@ import logging
 import sqlite3
 
 from .budget import estimate_tokens
+from .memories import _BOOKKEEPING_TAG
 
 log = logging.getLogger("neurostack")
+
+# Weak hits read as noise next to good ones (#316). A memory or triple scoring
+# under this fraction of the best hit in its own list is left out. Relative,
+# because an embedder change moves absolute scores. On 5 real prompts, 0.9
+# cut the injected triples from 46 to 19, among them an outreach firm and
+# YouTube personas; memory scores bunch within 10% of the best, so it rarely
+# trims them.
+_RELEVANCE_FLOOR = 0.9
+
+
+def _relevant(items: list) -> list:
+    """``items`` scoring within the floor of the best; all when none was scored."""
+    best = max((i.score for i in items), default=0.0)
+    if best <= 0:
+        return items
+    return [i for i in items if i.score >= best * _RELEVANCE_FLOOR]
 
 
 def build_vault_context(
@@ -57,15 +74,15 @@ def build_vault_context(
             from .memory_drift import check_memory_drift
             check_memory_drift(conn, memories)
             mem_entries = []
-            for m in memories:
-                if m.score and m.score < 0.3:
-                    continue
+            for m in _relevant(memories):
                 entry = {
                     "memory_id": m.memory_id,
                     "content": m.content,
                     "entity_type": m.entity_type,
-                    "tags": m.tags,
-                    "created_at": m.created_at,
+                    # Bookkeeping tags and clock times are noise to the
+                    # reader of an injected prompt context (#316).
+                    "tags": [t for t in m.tags if not _BOOKKEEPING_TAG.search(t)],
+                    "created_at": m.created_at[:10],
                 }
                 entry_tokens = estimate_tokens(entry)
                 if tokens_used + entry_tokens > token_budget:
@@ -91,7 +108,7 @@ def build_vault_context(
                 record=False,
             )
             triple_entries = []
-            for t in triples:
+            for t in _relevant(triples):
                 entry = {
                     "s": t.subject,
                     "p": t.predicate,
@@ -150,7 +167,7 @@ def build_vault_context(
             for s in sessions:
                 entry = {
                     "session_id": s["session_id"],
-                    "started_at": s["started_at"],
+                    "started_at": s["started_at"][:10],
                     "summary": s.get("summary") or f"{s['memory_count']} memories",
                     "memory_count": s["memory_count"],
                 }

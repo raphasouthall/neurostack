@@ -575,6 +575,19 @@ def test_prompt_skips_short_prompts_and_slash_commands(server):
     assert server.calls == []
 
 
+def test_prompt_searches_the_question_not_injected_blocks(server):
+    """A harness reminder or a pasted brief is not the topic (#316)."""
+    server.replies["vault_context"] = {"text": "context"}
+    reminder = "<system-reminder>\nADHD MODE: first line is the next action.\n</system-reminder>"
+    question = "How can we improve the search results ranking for vault notes?"
+    run_event("prompt", {"session": "s31", "prompt": question + reminder}, cfg=_cfg(server))
+    assert _tool_calls(server, "vault_context")[0]["task"] == question
+    # A short answer plus a long reminder carries no topic of its own.
+    pasted = "1,2 and 5" + reminder + "<neurostack-recall>Session Brief ...</neurostack-recall>"
+    run_event("prompt", {"session": "s31", "prompt": pasted}, cfg=_cfg(server))
+    assert len(_tool_calls(server, "vault_context")) == 1
+
+
 def test_workspace_map_scopes_the_lookup(server):
     server.replies["session_brief"] = {"brief": "scoped"}
     cfg = _cfg(server, workspace_map={"/home/u/projects/neurostack": "home/projects/neurostack"})
