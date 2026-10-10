@@ -634,9 +634,14 @@ def index_stats(conn) -> dict:
 @registry.tool(tags=["search", "stats"], annotations=_READ_ONLY)
 def vault_stats() -> dict:
     """Get index health: note count, embedding coverage, graph stats, triple stats."""
+    from ..queue import learn_status
     from ..schema import DB_PATH, get_db
 
-    return index_stats(get_db(DB_PATH))
+    conn = get_db(DB_PATH)
+    stats = index_stats(conn)
+    # `neurostack status` builds its LEARN line from this, as the brief does (#309).
+    stats["learn"] = learn_status(conn)
+    return stats
 
 
 @registry.tool(tags=["search", "usage"], annotations=_WRITE_ADDITIVE)

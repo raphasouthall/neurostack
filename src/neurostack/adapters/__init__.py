@@ -28,12 +28,17 @@ _BIN_PLACEHOLDER = "__NEUROSTACK_BIN__"
 # now (issue #176), so `/save` is the only thing that ever runs one — see
 # `claude_save_command`. There is no SessionEnd entry either: the transcript
 # harvest it used to run re-read the whole conversation on every exit and
-# duplicated what the checkpoints had already saved.
+# duplicated what the checkpoints had already saved. Claude Code fires
+# PostToolUseFailure instead of PostToolUse for a failed call, so both run
+# tool-result; a reminder a failing call matched still reaches the model. The
+# context events wait 20 s so the client's 15 s `context_timeout_s` runs out
+# before Claude Code kills the hook (issue #309).
 _CLAUDE_EVENTS = (
-    ("SessionStart", "session-start", 15),
-    ("UserPromptSubmit", "prompt", 15),
+    ("SessionStart", "session-start", 20),
+    ("UserPromptSubmit", "prompt", 20),
     ("PreToolUse", "tool-call", 10),
     ("PostToolUse", "tool-result", 10),
+    ("PostToolUseFailure", "tool-result", 10),
 )
 # Every event we ever wrote, so reinstall and remove also clear the retired
 # Stop checkpoint trigger and SessionEnd harvest entry from older installs.

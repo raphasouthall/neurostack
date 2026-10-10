@@ -393,6 +393,8 @@ url = "http://my-server:8001/mcp"
 checkpoint_command = "claude -p --model haiku"
 ```
 
+The hook waits up to `context_timeout_s` (15 s) for the session brief and per-prompt context, and up to `timeout_s` (5 s) on each tool call, so a server that is down never stalls every tool call.
+
 On the server, `~/.config/neurostack/config.toml` holds the command the workers pipe each checkpoint prompt through. Any command that reads the prompt on stdin and prints the model's reply works, so it can call an OpenAI-compatible endpoint or a local proxy:
 
 ```toml

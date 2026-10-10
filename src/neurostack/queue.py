@@ -252,3 +252,38 @@ def listing(conn: sqlite3.Connection, queue: str | None = None,
         ).fetchall()
     }
     return {"counts": counts, "jobs": [_row(r) for r in rows]}
+
+
+def learn_status(conn: sqlite3.Connection) -> dict:
+    """How the checkpoint and harvest queues are saving, for the LEARN line (#309).
+
+    Saves run here now, so the client's own health file stopped hearing about
+    them and kept showing its last local error. This answers in that file's
+    shape, so the client compares the two and renders whichever is newer.
+    """
+    def last(status: str):
+        return conn.execute(
+            "SELECT finished_at, output FROM job_queue"
+            " WHERE queue IN ('checkpoint', 'harvest') AND status = ?"
+            " AND finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1",
+            (status,),
+        ).fetchone()
+
+    done, failed = last("done"), last("failed")
+    # Stamps are to the second, so a tie goes to the success. One missed
+    # failure costs less than a false alarm on every brief.
+    if failed and done and failed["finished_at"] <= done["finished_at"]:
+        failed = None
+    midnight = _now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    saved = conn.execute(
+        "SELECT COALESCE(SUM(saved), 0) FROM job_queue"
+        " WHERE queue IN ('checkpoint', 'harvest') AND status = 'done'"
+        " AND finished_at >= ?",
+        (_iso(midnight.astimezone(timezone.utc)),),
+    ).fetchone()[0]
+    return {
+        "last_ok_at": done["finished_at"] if done else None,
+        "last_error_at": failed["finished_at"] if failed else None,
+        "last_error": (failed["output"] or "job failed") if failed else None,
+        "saved_today": saved,
+    }

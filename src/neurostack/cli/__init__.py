@@ -910,7 +910,7 @@ def main():
     # hook (issue #141): one harness event in on stdin, context or a block out
     p = sub.add_parser(
         "hook",
-        help="Handle one harness event (JSON on stdin; exit 2 blocks the call)",
+        help="Handle one harness event (JSON on stdin, text to inject on stdout)",
     )
     p.add_argument("event", choices=list(HOOK_EVENTS), help="Harness event name")
     p.add_argument("--harness", default=None, choices=["claude", "omp"],
