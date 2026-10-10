@@ -45,14 +45,15 @@ def _entry(item: dict) -> str:
 
 
 def _triples(triples: list[dict]) -> list[str]:
-    """One block per note, its facts listed under a single heading."""
+    """One block per note, its facts listed once under a single heading."""
     by_note: dict[str, list[dict]] = {}
     for t in triples:
         by_note.setdefault(t["note"], []).append(t)
+    # The index can hold one fact several times over, so drop repeats (#320).
     return [
-        _heading(facts[0]) + "\n" + "\n".join(
+        _heading(facts[0]) + "\n" + "\n".join(dict.fromkeys(
             f"- {t['s']} → {t['p']} → {t['o']}" for t in facts
-        )
+        ))
         for facts in by_note.values()
     ]
 
@@ -164,6 +165,16 @@ def _update(r: dict) -> str:
     return f"Updated memory #{r['memory_id']} ({fields})."
 
 
+def _read_file(r: dict) -> str:
+    """The note as it sits on disk under one line naming it (#320)."""
+    if not r["exists"]:
+        return f"Not found: {r['path']}"
+    head = f"{r['path']} · {r['size_bytes']} bytes"
+    if r.get("truncated"):
+        head += f" · truncated, next offset {r['offset'] + len(r['content'])}"
+    return f"{head}\n{r['content']}"
+
+
 RENDERERS: dict[str, Callable[[dict], str]] = {
     "vault_search": _search,
     "vault_memories": _memories,
@@ -174,6 +185,7 @@ RENDERERS: dict[str, Callable[[dict], str]] = {
     "vault_communities": _communities,
     "vault_remember": _remember,
     "vault_update_memory": _update,
+    "vault_read_file": _read_file,
 }
 
 

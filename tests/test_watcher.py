@@ -210,6 +210,19 @@ class TestTripleRetryQueue:
             "SELECT COUNT(*) c FROM triples WHERE note_path=?", ("notes/a.md",)
         ).fetchone()["c"] == 1
 
+    def test_backfill_stores_a_looped_fact_once(self, in_memory_db, monkeypatch):
+        # The LLM emitted one pair of facts five times over for one note (#320).
+        import neurostack.watcher as watcher_mod
+        conn = in_memory_db
+        self._note(conn)
+        looped = [{"s": "A", "p": "b", "o": "C"}, {"s": "A", "p": "b", "o": "D"}] * 5
+        monkeypatch.setattr(watcher_mod, "extract_triples", lambda *a, **k: looped)
+        self._backfill(conn, monkeypatch)
+        rows = conn.execute(
+            "SELECT object FROM triples WHERE note_path=? ORDER BY object", ("notes/a.md",)
+        ).fetchall()
+        assert [r["object"] for r in rows] == ["C", "D"]
+
     def test_backfill_workers_extract_concurrently_and_store_in_order(
         self, in_memory_db, monkeypatch,
     ):

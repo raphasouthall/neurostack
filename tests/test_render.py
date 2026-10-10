@@ -23,6 +23,30 @@ def test_triples_are_grouped_under_one_heading_per_note():
     assert "0.91234" not in text
 
 
+def test_repeated_fact_renders_once():
+    # The live index held one fact five times over for one note (#320).
+    reply = {"triples": [_triple("a.md", "s1")] * 5 + [_triple("a.md", "s2")]}
+    text = render("vault_triples", reply)
+    assert text.count("- s1 → uses → x") == 1
+    assert "- s2 → uses → x" in text
+
+
+def test_read_file_sends_the_note_as_markdown():
+    note = "---\ntitle: \"A\"\n---\n# A\n\nBody.\n"
+    reply = {"path": "a.md", "exists": True, "size_bytes": len(note), "content": note}
+    head, body = render("vault_read_file", reply).split("\n", 1)
+    assert "a.md" in head and str(len(note)) in head
+    assert body == note
+
+
+def test_read_file_page_names_the_next_offset():
+    reply = {"path": "a.md", "exists": True, "size_bytes": 10, "size_chars": 10,
+             "offset": 2, "content": "234", "truncated": True}
+    head, body = render("vault_read_file", reply).split("\n", 1)
+    assert "next offset 5" in head
+    assert body == "234"
+
+
 def test_memory_drops_bookkeeping_tags_and_keeps_topics():
     reply = {"memories": [{
         "memory_id": 8252, "content": "Picked SQLite.", "entity_type": "decision",
