@@ -602,9 +602,21 @@ def _event_session_start(client: McpClient, payload: dict, state: SessionState,
     )
 
 
+# Harness-injected blocks ride inside the prompt text. Searching on them finds
+# the reminder's topic instead of the question (#316), and a pasted session
+# brief would search on itself.
+_INJECTED = re.compile(
+    r"<(system-reminder|neurostack-recall)>.*?(</\1>|\Z)", re.DOTALL)
+
+
+def _question(prompt: str) -> str:
+    """What the user typed, without blocks a harness or hook injected."""
+    return _INJECTED.sub(" ", prompt).strip()
+
+
 def _event_prompt(client: McpClient, payload: dict, state: SessionState,
                   cfg: ClientConfig) -> Verdict:
-    prompt = _first_str(payload, "prompt").strip()
+    prompt = _question(_first_str(payload, "prompt"))
     # Slash commands, bash passthroughs, and one-liners carry no topic.
     if len(prompt) < MIN_PROMPT_LEN or prompt.startswith(("/", "!", "#")):
         return Verdict()
