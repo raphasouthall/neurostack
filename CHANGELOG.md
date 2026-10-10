@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- MCP replies from `vault_search`, `vault_memories`, `vault_triples`, `vault_summary`, `vault_related`, `vault_graph`, `vault_communities`, `vault_remember` and `vault_update_memory` are Markdown instead of indented JSON (#318). Facts and summaries sit under one heading per note, memories take one header line without bookkeeping tags, and scores, `merged_ranking` and `depth_used` are left out. On fixtures replies are about 63% shorter. The NeuroStack hook client (`neurostack-hook`), the CLI `--json` and the HTTP API still get JSON.
+
 ### Fixed
 
 - The prompt hook searches on the question only (#316). Harness `<system-reminder>` blocks and pasted `<neurostack-recall>` briefs are removed first, so the lookup no longer matches the reminder's topic. A prompt with no text of its own left after that is skipped.

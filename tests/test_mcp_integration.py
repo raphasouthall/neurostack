@@ -99,6 +99,40 @@ def test_tool_reply_reaches_the_client_once(mcp_vault):
     assert json.loads(reply.content[0].text)["notes"] == 4
 
 
+def test_read_replies_are_markdown_except_for_the_hook_client(mcp_vault):
+    # Issue #318: a model reads vault_search and vault_memories, so they go out
+    # as Markdown; the hook client parses them as JSON and keeps getting JSON.
+    from mcp import Client
+    from mcp.types import Implementation
+
+    from neurostack.client import CLIENT_NAME
+    from neurostack.tools.mcp_adapter import create_mcp_server
+
+    _registry().call("vault_remember", content="Predictive coding uses priors.",
+                     tags=["coding", "session:7"], entity_type="decision")
+    calls = [
+        ("vault_search", {"query": "prediction", "mode": "keyword", "depth": "full"}),
+        ("vault_memories", {}),
+    ]
+
+    async def replies(client_name):
+        info = Implementation(name=client_name, version="1")
+        async with Client(create_mcp_server(), client_info=info) as client:
+            return [(await client.call_tool(n, a)).content[0].text for n, a in calls]
+
+    search_md, memories_md = asyncio.run(replies("claude-code"))
+    search_json, memories_json = asyncio.run(replies(CLIENT_NAME))
+
+    assert "### " in search_md and "predictive-coding" in search_md
+    assert len(search_md) < len(search_json)
+    assert json.loads(search_json)["results"]
+    assert memories_md.startswith("#")
+    assert "tags: coding" in memories_md and "session:7" not in memories_md
+    assert len(memories_md) < len(memories_json)
+    assert json.loads(memories_json)["memories"][0]["tags"] == ["coding", "session:7"]
+
+
+
 def test_vault_search_keyword(mcp_vault):
     result = _registry().call(
         "vault_search", query="prediction", mode="keyword", depth="full",
