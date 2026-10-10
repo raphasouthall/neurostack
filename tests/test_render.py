@@ -69,6 +69,32 @@ def test_truncated_reply_ends_by_pointing_at_max_tokens():
     assert "max_tokens" in text.splitlines()[-1]
 
 
+def test_project_status_renders_before_everything_else():
+    # Issue #322: the project note's status outranks older hits and memories.
+    reply = {
+        "results": [{"path": "p/avd/runbook.md", "title": "Runbook", "score": 0.5,
+                     "snippet": "Licensing is still open."}],
+        "reranked": True,
+        "memories": [{"memory_id": 1, "content": "Licensing pending."}],
+        "projects": [{"path": "p/avd/avd.md", "title": "AVD", "updated": "2026-10-07",
+                      "status": "Licensing bought."}],
+    }
+    text = render("vault_search", reply)
+    block = text.split("\n\n")[1]  # first block under the leading section heading
+    assert "p/avd/avd.md" in block and "2026-10-07" in block and "Licensing bought." in block
+    assert text.index("Licensing bought.") < text.index("Reranked")
+    assert text.index("Licensing bought.") < text.index("Licensing is still open.")
+    assert text.index("Licensing bought.") < text.index("Licensing pending.")
+
+
+def test_truncated_memories_reply_ends_with_a_hint():
+    reply = {"memories": [{"memory_id": 1, "content": "Kept."}], "truncated": True}
+    lines = render("vault_memories", reply).splitlines()
+    assert "Kept." in lines
+    assert "max_tokens" in lines[-1]
+    assert "max_tokens" not in render("vault_memories", {"memories": reply["memories"]})
+
+
 def test_error_reply_is_one_line():
     assert render("vault_summary", {"error": "Note not found"}) == "Error: Note not found"
 

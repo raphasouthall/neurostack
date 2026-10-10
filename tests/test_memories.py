@@ -203,12 +203,21 @@ class TestSearchMemories:
 class TestHybridMemorySearch:
     """FTS and semantic channels fused by reciprocal rank (#320)."""
 
-    def _add(self, conn, content, vec):
+    def _add(self, conn, content, vec, age_days=0, tags="[]"):
         import numpy as np
         conn.execute(
-            "INSERT INTO memories (content, tags, embedding) VALUES (?, '[]', ?)",
-            (content, np.array(vec, dtype=np.float32).tobytes()),
+            "INSERT INTO memories (content, tags, embedding, created_at)"
+            " VALUES (?, ?, ?, datetime('now', ?))",
+            (content, tags, np.array(vec, dtype=np.float32).tobytes(), f"-{age_days} days"),
         )
+
+    def _search(self, conn, monkeypatch, query):
+        import numpy as np
+
+        import neurostack.embedder as embedder_mod
+        monkeypatch.setattr(embedder_mod, "get_embedding",
+                            lambda q, base_url=None: np.array([1.0, 0.0, 0.0], dtype=np.float32))
+        return search_memories(conn, query=query, embed_url="http://fake")
 
     def test_meaning_match_joins_the_keyword_hit(self, in_memory_db, monkeypatch):
         import numpy as np
@@ -235,6 +244,42 @@ class TestHybridMemorySearch:
         # near zero so callers' score floors still drop them.
         by_content = {m.content: m.score for m in results}
         assert by_content.get("Grafana dashboard colour palette", 0.0) < 0.1
+
+    def test_newer_memory_outranks_an_equally_relevant_older_one(self, in_memory_db,
+                                                                monkeypatch):
+        # #322: inserted first, the old one wins every tie on rank alone.
+        self._add(in_memory_db, "AVD licensing needs RDS CALs", [1.0, 0.0, 0.0], age_days=60)
+        self._add(in_memory_db, "AVD licensing done, CALs installed", [1.0, 0.0, 0.0])
+        in_memory_db.commit()
+
+        results = self._search(in_memory_db, monkeypatch, "AVD licensing")
+
+        assert results[0].content == "AVD licensing done, CALs installed"
+        # Order changes, score does not.
+        assert results[0].score == pytest.approx(results[1].score)
+
+    def test_a_rewrite_counts_as_new(self, in_memory_db, monkeypatch):
+        # Inserted first, the stale fact wins every tie on rank alone.
+        self._add(in_memory_db, "AVD hosts run Server 2022", [1.0, 0.0, 0.0], age_days=30)
+        self._add(in_memory_db, "AVD hosts run Server 2025", [1.0, 0.0, 0.0], age_days=60)
+        in_memory_db.execute("UPDATE memories SET updated_at = datetime('now')"
+                             " WHERE content = 'AVD hosts run Server 2025'")
+        in_memory_db.commit()
+
+        results = self._search(in_memory_db, monkeypatch, "AVD hosts")
+
+        assert results[0].content == "AVD hosts run Server 2025"
+
+    def test_superseded_memory_drops_below_its_replacement(self, in_memory_db, monkeypatch):
+        # The original matches the query better and is just as new.
+        self._add(in_memory_db, "AVD licensing plan: buy RDS CALs", [1.0, 0.0, 0.0],
+                  tags='["superseded_by:2"]')
+        self._add(in_memory_db, "Licensing settled for the session hosts", [0.7, 0.7, 0.0])
+        in_memory_db.commit()
+
+        results = self._search(in_memory_db, monkeypatch, "AVD licensing plan RDS CALs")
+
+        assert [m.memory_id for m in results] == [2, 1]
 
 
 
