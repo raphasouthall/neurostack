@@ -193,7 +193,10 @@ def learn_report(client=None, cfg=None) -> dict:
     }
     client = client or McpClient(resolved_cfg)
     try:
-        stats = client.call_json("vault_stats", {})
+        # vault_stats counts in SQL and can run past the 5 s tool-hook budget,
+        # which left the stale local line on show (#309).
+        stats = client.call_json("vault_stats", {},
+                                 timeout_s=resolved_cfg.context_timeout_s)
     finally:
         client.close()
     if stats is None:

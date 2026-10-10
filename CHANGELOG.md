@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+
 ### Changed
 
 - A trigger reminder no longer holds the tool call (#309). The call runs, and the reminder arrives once with that call's result. Claude Code receives it as `additionalContext`, and failed calls are covered through `PostToolUseFailure`. Run `neurostack hooks install` again to pick this up. A reminder whose result never arrives expires after 20 calls.
@@ -9,6 +10,7 @@
 
 ### Fixed
 
+- `neurostack status` waits `context_timeout_s` for `vault_stats` (#309). At the 5 s tool-hook budget it timed out and kept showing the stale local LEARN error.
 - The LEARN line in the session brief and in `neurostack status` reflects the server's checkpoint and harvest queues (#309). Saves moved there, so the local status file stopped updating and every session read "LEARN: FAILING since 2026-09-23". `session_brief` and `vault_stats` now return `learn`, and the client shows whichever of the two is newer.
 - Each MCP tool reply reaches the client once (#310). Tools are typed `-> dict`, so the MCP server also sent every reply as structured content, and clients showed it twice. They now register with `structured_output=False`.
 - `vault_search` at depth `auto` or `summaries` caps the whole reply at 2,000 tokens unless the caller passes `max_tokens` (#310). It drops trailing memories first, then chunks, summaries and triples, and marks the reply `truncated`. Live replies were 1,700 to 3,000 tokens per copy; every note and fact still fits.
