@@ -378,6 +378,38 @@ def test_at_most_two_projects_best_hit_first(mcp_vault, monkeypatch):
     assert "Project b opening." in projects[0]["status"]
 
 
+def _projects(vault, *slugs_and_titles):
+    for slug, title in slugs_and_titles:
+        folder = vault / "work" / "acme" / "projects" / slug
+        folder.mkdir(parents=True)
+        (folder / f"{slug}.md").write_text(f"# {title}\nAbout {slug}.\n")
+        (folder / "x.md").write_text("# x\n")
+
+
+def test_project_the_query_names_beats_an_earlier_unrelated_hit(mcp_vault, monkeypatch):
+    # Issue #324: hit order put projects sharing one common word, or none, ahead
+    # of the project the query named.
+    _projects(mcp_vault, ("billing", "Billing"), ("cloud-tagging", "Cloud tagging"),
+              ("cloud-backup", "Cloud backup"), ("remote-desktop", "Remote desktop rollout"))
+    _stub_hits(monkeypatch, [f"work/acme/projects/{s}/x.md"
+                             for s in ("billing", "cloud-tagging", "remote-desktop")])
+
+    projects = _registry().call(
+        "vault_search", query="remote desktop cloud session hosts",
+    )["projects"]
+
+    assert [p["title"] for p in projects] == ["Remote desktop rollout", "Cloud tagging"]
+
+
+def test_project_the_query_names_joins_without_a_hit(mcp_vault, monkeypatch):
+    _projects(mcp_vault, ("billing", "Billing"), ("remote-desktop", "Remote desktop rollout"))
+    _stub_hits(monkeypatch, ["work/acme/projects/billing/x.md"])
+
+    projects = _registry().call("vault_search", query="remote desktop hosts")["projects"]
+
+    assert [p["title"] for p in projects] == ["Remote desktop rollout", "Billing"]
+
+
 def test_project_status_outlives_memories_under_the_default_budget(mcp_vault, monkeypatch):
     from neurostack.budget import estimate_tokens
     from neurostack.tools.search_tools import DEFAULT_TIERED_MAX_TOKENS

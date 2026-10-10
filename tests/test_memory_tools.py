@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) 2024-2026 Raphael Southall
-"""vault_memories reply budget (issue #322)."""
+"""vault_memories reply budget (issue #322) and workspace lean (#324)."""
 
 import pytest
 
@@ -15,10 +15,10 @@ def db(tmp_path, monkeypatch):
     from neurostack.schema import get_db
 
     conn = get_db()
-    # Twenty memories of ~400 chars, about 2,000 tokens with their JSON keys.
+    # Twenty memories of ~600 chars, about 3,000 tokens with their JSON keys.
     conn.executemany(
         "INSERT INTO memories (content, tags) VALUES (?, '[]')",
-        [(f"memory {i} " + "x" * 400,) for i in range(20)],
+        [(f"memory {i} " + "x" * 600,) for i in range(20)],
     )
     conn.commit()
     yield conn
@@ -45,3 +45,37 @@ def test_explicit_max_tokens_wins(db):
     assert "truncated" not in full
     assert len(small["memories"]) < len(vault_memories()["memories"])
     assert small["truncated"] is True
+
+
+def test_default_budget_holds_more_than_1500_tokens(db):
+    # Issue #324: 1,500 tokens cut replies short.
+    from neurostack.tools.memory_tools import vault_memories
+
+    assert len(vault_memories()["memories"]) > len(vault_memories(max_tokens=1500)["memories"])
+
+
+def test_memory_in_the_query_workspace_ranks_first(db, monkeypatch):
+    # Issue #324: an equally relevant memory from another workspace came first.
+    import numpy as np
+
+    import neurostack.embedder as embedder
+    from neurostack.tools.memory_tools import vault_memories
+
+    monkeypatch.setattr(embedder, "get_embedding",
+                        lambda q, base_url=None: np.ones(3, dtype=np.float32))
+    for path in ("work/acme/projects/remote-desktop/hosts.md",
+                 "work/acme/resources/pool.md", "home/notes/misc.md"):
+        db.execute("INSERT INTO notes (path, title, content_hash, updated_at)"
+                   " VALUES (?, 'T', ?, '2026-01-01')", (path, path))
+        db.execute("INSERT INTO chunks (note_path, content)"
+                   " VALUES (?, 'sessionhost pool HOST01')", (path,))
+    # Inserted first, so it wins the tie without the lean.
+    db.execute("INSERT INTO memories (content, workspace, tags)"
+               " VALUES ('sessionhost drained', 'home/projects/tooling', '[]')")
+    db.execute("INSERT INTO memories (content, workspace, tags)"
+               " VALUES ('sessionhost rebooted', 'work/acme', '[]')")
+    db.commit()
+
+    memories = vault_memories(query="sessionhost")["memories"]
+
+    assert [m["workspace"] for m in memories] == ["work/acme", "home/projects/tooling"]

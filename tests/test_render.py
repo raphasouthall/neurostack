@@ -99,6 +99,14 @@ def test_error_reply_is_one_line():
     assert render("vault_summary", {"error": "Note not found"}) == "Error: Note not found"
 
 
+def test_record_usage_is_one_line_with_the_count():
+    # Issue #324: the paths are the caller's own input, so only the count returns.
+    paths = ["projects/remote-desktop/runbook.md", "work/acme/hosts.md"]
+    text = render("vault_record_usage", {"recorded": 2, "paths": paths})
+    assert "\n" not in text and "2" in text
+    assert not any(p in text for p in paths)
+
+
 def test_unknown_shape_falls_back_to_compact_json():
     reply = {"surprise": [1, 2]}
     text = render("vault_search", reply)
