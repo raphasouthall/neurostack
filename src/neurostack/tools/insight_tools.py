@@ -21,7 +21,8 @@ def session_brief(workspace: str | None = None) -> dict:
     """Get a compact ~500 token session brief.
 
     Includes: recent vault changes with summaries, git commits,
-    recent memories, top connected notes, time-of-day context.
+    recent memories, top connected notes, time-of-day context, and
+    ``learn``: how the server's checkpoint and harvest queues are saving.
 
     Args:
         workspace: Optional vault subdirectory prefix to restrict
@@ -30,14 +31,20 @@ def session_brief(workspace: str | None = None) -> dict:
     import json
 
     from ..brief import generate_brief
+    from ..queue import learn_status
+    from ..schema import DB_PATH, get_db
 
     vault_root, _ = _cfg()
     # generate_brief returns a JSON string — parse to dict
     raw = generate_brief(vault_root=vault_root, workspace=workspace)
     try:
-        return json.loads(raw)
+        out = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
-        return {"brief": raw}
+        out = {"brief": raw}
+    # The hook's LEARN banner reads this; its local file no longer sees the
+    # saves, which run on the server's queues now (issue #309).
+    out["learn"] = learn_status(get_db(DB_PATH))
+    return out
 
 
 @registry.tool(tags=["context", "retrieval"], annotations=_READ_ONLY)

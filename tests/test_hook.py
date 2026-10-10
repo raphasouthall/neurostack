@@ -63,11 +63,20 @@ def _triggers(mapping):
     return reply
 
 
+def _reminder(server, call):
+    """Run a tool call, then its successful result; the text the result carried."""
+    run_event("tool-call", call, cfg=_cfg(server))
+    result = {"session": call["session"], "tool": call.get("tool", "")}
+    if "id" in call:
+        result["id"] = call["id"]
+    return run_event("tool-result", result, cfg=_cfg(server)).text
+
+
 # ---------------------------------------------------------------------------
-# Acceptance 1 — blocks once per session, through the real CLI
+# Acceptance 1 — reminds once per session, never blocks, through the real CLI
 # ---------------------------------------------------------------------------
 
-def _run_cli(payload, server_url, home, event="tool-call", extra_env=None):
+def _run_cli(payload, server_url, home, event="tool-call", extra_env=None, args=()):
     env = {
         **os.environ,
         "HOME": str(home),
@@ -76,24 +85,85 @@ def _run_cli(payload, server_url, home, event="tool-call", extra_env=None):
     }
     env.update(extra_env or {})
     return subprocess.run(
-        [sys.executable, "-m", "neurostack", "hook", event],
+        [sys.executable, "-m", "neurostack", "hook", event, *args],
         input=json.dumps(payload), capture_output=True, text=True, env=env, timeout=120,
     )
 
 
-def test_tool_call_blocks_once_then_allows(server, isolated_home):
+def test_a_matching_call_proceeds_and_its_result_carries_the_reminder_once(
+        server, isolated_home):
+    """A held call cost a re-issue, so the reminder rides the result (#309)."""
     server.replies["vault_triggers"] = _triggers(
         {("calling", "vault_write_file"): [TRIGGER_HIT]}
     )
-    payload = {"session": "s1", "tool": "vault_write_file", "paths": [], "input": {}}
+    call = {"session": "s1", "tool": "vault_write_file", "input": {}, "id": "c1"}
+    result = {"session": "s1", "tool": "vault_write_file", "id": "c1"}
 
-    first = _run_cli(payload, server.url, isolated_home)
-    assert first.returncode == 2
-    assert "2164" in first.stdout
+    first = _run_cli(call, server.url, isolated_home)
+    assert first.returncode == 0
+    assert "2164" not in first.stdout
+    delivered = _run_cli(result, server.url, isolated_home, event="tool-result")
+    assert delivered.returncode == 0
+    assert "memory 2164" in delivered.stdout
 
-    second = _run_cli(payload, server.url, isolated_home)
+    second = _run_cli({**call, "id": "c2"}, server.url, isolated_home)
     assert second.returncode == 0
-    assert "2164" not in second.stdout
+    again = _run_cli({**result, "id": "c2"}, server.url, isolated_home, event="tool-result")
+    assert "2164" not in second.stdout + again.stdout
+
+
+def test_a_reminder_goes_to_its_own_call_not_a_parallel_one(server):
+    server.replies["vault_triggers"] = _triggers(
+        {("calling", "vault_write_file"): [TRIGGER_HIT]}
+    )
+    run_event("tool-call", {"session": "s1p", "tool": "vault_write_file", "id": "a"},
+              cfg=_cfg(server))
+    run_event("tool-call", {"session": "s1p", "tool": "read", "id": "b"}, cfg=_cfg(server))
+
+    other = run_event("tool-result", {"session": "s1p", "tool": "read", "id": "b"},
+                      cfg=_cfg(server))
+    own = run_event("tool-result", {"session": "s1p", "tool": "vault_write_file", "id": "a"},
+                    cfg=_cfg(server))
+
+    assert other.text == ""
+    assert "memory 2164" in own.text
+
+
+@pytest.mark.parametrize("later_calls, delivered", [(19, True), (20, False)])
+def test_a_reminder_whose_result_never_came_expires(server, later_calls, delivered):
+    """A call with no result (a denied permission) must not hold its reminder forever."""
+    server.replies["vault_triggers"] = _triggers(
+        {("calling", "vault_write_file"): [TRIGGER_HIT]}
+    )
+    session = f"s1x-{later_calls}"
+    run_event("tool-call", {"session": session, "tool": "vault_write_file", "id": "lost"},
+              cfg=_cfg(server))
+    for i in range(later_calls):
+        run_event("tool-call", {"session": session, "tool": "read", "id": f"r{i}"},
+                  cfg=_cfg(server))
+
+    late = run_event("tool-result", {"session": session, "id": "lost"}, cfg=_cfg(server))
+
+    assert ("memory 2164" in late.text) is delivered
+
+
+def test_claude_code_gets_the_reminder_as_additional_context(server, isolated_home):
+    """Claude Code drops a PostToolUse hook's plain stdout; only JSON reaches it."""
+    server.replies["vault_triggers"] = _triggers(
+        {("calling", "vault_write_file"): [TRIGGER_HIT]}
+    )
+    claude = ("--harness", "claude")
+    _run_cli({"session_id": "s1c", "tool_name": "vault_write_file", "tool_input": {},
+              "tool_use_id": "toolu_1"}, server.url, isolated_home, args=claude)
+    out = _run_cli({"session_id": "s1c", "tool_name": "vault_write_file",
+                    "tool_use_id": "toolu_1", "hook_event_name": "PostToolUseFailure",
+                    "error": "Exit code 1"},
+                   server.url, isolated_home, event="tool-result", args=claude)
+
+    assert out.returncode == 0
+    reply = json.loads(out.stdout)["hookSpecificOutput"]
+    assert reply["hookEventName"] == "PostToolUseFailure"
+    assert "memory 2164" in reply["additionalContext"]
 
 
 def test_state_file_lands_in_the_cache_dir(server, isolated_home):
@@ -119,13 +189,10 @@ def test_xd_device_name_matches_when_calling_tag(server):
     server.replies["vault_triggers"] = _triggers(
         {("calling", "vault_write_file"): [TRIGGER_HIT]}
     )
-    verdict = run_event(
-        "tool-call",
-        {"session": "s2", "tool": "xd://mcp__neurostack_vault_write_file", "input": {}},
-        cfg=_cfg(server),
+    text = _reminder(
+        server, {"session": "s2", "tool": "xd://mcp__neurostack_vault_write_file", "input": {}},
     )
-    assert verdict.block is True
-    assert "memory 2164" in verdict.text
+    assert "memory 2164" in text
     assert [a["value"] for a in _tool_calls(server, "vault_triggers")] == ["vault_write_file"]
 
 
@@ -133,13 +200,12 @@ def test_write_to_an_xd_device_also_matches(server):
     server.replies["vault_triggers"] = _triggers(
         {("calling", "vault_write_file"): [TRIGGER_HIT]}
     )
-    verdict = run_event(
-        "tool-call",
+    text = _reminder(
+        server,
         {"session": "s3", "tool": "write",
          "input": {"path": "xd://mcp__neurostack_vault_write_file", "content": "{}"}},
-        cfg=_cfg(server),
     )
-    assert verdict.block is True
+    assert "memory 2164" in text
     assert [a["value"] for a in _tool_calls(server, "vault_triggers")] == [
         "write", "vault_write_file",
     ]
@@ -149,14 +215,12 @@ def test_edited_paths_come_from_payload_and_edit_body(server):
     hit = {"memory_id": 91, "content": "bump the schema version too",
            "trigger": "when-editing:src/**/*.py"}
     server.replies["vault_triggers"] = _triggers({("editing", "src/neurostack/schema.py"): [hit]})
-    verdict = run_event(
-        "tool-call",
+    text = _reminder(
+        server,
         {"session": "s4", "tool": "edit",
          "input": {"input": "[src/neurostack/schema.py#A1B2]\nPUT 1.=1:\n+x = 1\n"}},
-        cfg=_cfg(server),
     )
-    assert verdict.block is True
-    assert "memory 91" in verdict.text
+    assert "memory 91" in text
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +238,6 @@ def test_error_trigger_then_followed_after_quiet_window(server):
         {"session": "s5", "tool": "bash", "error": error_text},
         cfg=_cfg(server),
     )
-    assert verdict.block is False
     assert "memory 1808" in verdict.text
 
     for i in range(5):
@@ -193,7 +256,7 @@ def test_five_quiet_calls_report_followed(server):
         {("calling", "vault_write_file"): [TRIGGER_HIT]}
     )
     call = {"session": "s6", "tool": "vault_write_file", "input": {"path": "a.md"}}
-    assert run_event("tool-call", call, cfg=_cfg(server)).block is True
+    assert "memory 2164" in _reminder(server, call)
 
     for i in range(5):
         run_event("tool-call", {"session": "s6", "tool": f"read-{i}"}, cfg=_cfg(server))
@@ -210,9 +273,7 @@ def test_a_reissue_with_a_different_path_settles_nothing_yet(server):
         {("calling", "vault_write_file"): [TRIGGER_HIT]}
     )
     session = {"session": "s6b", "tool": "vault_write_file"}
-    assert run_event(
-        "tool-call", {**session, "input": {"path": "a.md"}}, cfg=_cfg(server)
-    ).block is True
+    assert "memory 2164" in _reminder(server, {**session, "input": {"path": "a.md"}})
 
     run_event("tool-call", {**session, "input": {"path": "b.md"}}, cfg=_cfg(server))
 
@@ -226,7 +287,7 @@ def test_a_byte_identical_reissue_settles_nothing_yet(server):
         {("calling", "vault_write_file"): [TRIGGER_HIT]}
     )
     call = {"session": "s6c", "tool": "vault_write_file", "input": {"path": "a.md"}}
-    assert run_event("tool-call", call, cfg=_cfg(server)).block is True
+    assert "memory 2164" in _reminder(server, call)
 
     run_event("tool-call", call, cfg=_cfg(server))
 
@@ -372,12 +433,16 @@ def test_claude_adapter_writes_entries_that_invoke_the_hook(isolated_home):
     hooks = json.loads(path.read_text())["hooks"]
     commands = {
         event: hooks[event][0]["hooks"][0]["command"]
-        for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse")
+        for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+                      "PostToolUseFailure")
     }
     assert commands["SessionStart"] == "/opt/bin/neurostack hook session-start --harness claude"
     assert commands["UserPromptSubmit"].endswith("hook prompt --harness claude")
     assert commands["PreToolUse"].endswith("hook tool-call --harness claude")
     assert commands["PostToolUse"].endswith("hook tool-result --harness claude")
+    # A failed call fires PostToolUseFailure instead, and its reminder still
+    # has to arrive (#309).
+    assert commands["PostToolUseFailure"].endswith("hook tool-result --harness claude")
     assert "SessionEnd" not in hooks
     # Checkpoints are manual now: no Stop entry fires one on its own (#176).
     assert "Stop" not in hooks
@@ -439,7 +504,7 @@ def test_claude_install_is_idempotent(isolated_home):
         install_claude_adapter()
         _status, path = install_claude_adapter()
     hooks = json.loads(path.read_text())["hooks"]
-    assert [len(hooks[event]) for event in hooks] == [1, 1, 1, 1]
+    assert [len(hooks[event]) for event in hooks] == [1, 1, 1, 1, 1]
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +515,6 @@ def test_session_start_prints_the_brief(server):
     server.replies["session_brief"] = {"brief": "## Session Brief\n\n716 notes"}
     verdict = run_event("session-start", {"session": "s11"}, cfg=_cfg(server))
     assert "716 notes" in verdict.text
-    assert verdict.block is False
 
 
 def test_session_start_clears_stale_state(server):
@@ -458,11 +522,11 @@ def test_session_start_clears_stale_state(server):
         {("calling", "vault_write_file"): [TRIGGER_HIT]}
     )
     call = {"session": "s12", "tool": "vault_write_file", "input": {}}
-    assert run_event("tool-call", call, cfg=_cfg(server)).block is True
+    assert "memory 2164" in _reminder(server, call)
     server.replies["session_brief"] = {"brief": "fresh"}
     run_event("session-start", {"session": "s12"}, cfg=_cfg(server))
     # A restarted session re-fires: nothing is remembered from the last run.
-    assert run_event("tool-call", call, cfg=_cfg(server)).block is True
+    assert "memory 2164" in _reminder(server, call)
 
 
 def test_prompt_injects_context_once_per_prompt(server):
@@ -489,8 +553,7 @@ def test_recalled_text_cannot_close_its_fence(server):
     texts = [
         run_event("session-start", {"session": "s30"}, cfg=_cfg(server)).text,
         run_event("prompt", {"session": "s30", "prompt": prompt}, cfg=_cfg(server)).text,
-        run_event("tool-call", {"session": "s30", "tool": "vault_write_file", "input": {}},
-                  cfg=_cfg(server)).text,
+        _reminder(server, {"session": "s30", "tool": "vault_write_file", "input": {}}),
     ]
     for text in texts:
         # One opening and one closing tag per recalled block, never a stray closer.
@@ -575,6 +638,7 @@ def test_client_config_reads_toml_and_env_override(isolated_home, monkeypatch):
         'fallback_url = "http://backup:8001/mcp"\n'
         'token = "secret"\n'
         "timeout_s = 3\n"
+        "context_timeout_s = 20\n"
         "[workspace_map]\n"
         '"~/projects/neurostack" = "home/projects/neurostack"\n'
     )
@@ -582,11 +646,33 @@ def test_client_config_reads_toml_and_env_override(isolated_home, monkeypatch):
     assert cfg.fallback_url == "http://backup:8001/mcp"
     assert cfg.token == "secret"
     assert cfg.timeout_s == 3.0
+    assert cfg.context_timeout_s == 20.0
     assert cfg.workspace_for(str(isolated_home / "projects/neurostack/src")) == (
         "home/projects/neurostack"
     )
     monkeypatch.setenv("NEUROSTACK_URL", "http://override:8001/mcp")
     assert load_client_config(path).url == "http://override:8001/mcp"
+
+
+def test_context_hooks_wait_longer_than_tool_hooks(server):
+    """A brief that takes longer than the tool budget still arrives (#309)."""
+    server.delay_s = 0.5
+    server.replies["session_brief"] = {"brief": "716 notes"}
+    server.replies["vault_context"] = {"text": "some context"}
+    server.replies["vault_triggers"] = _triggers(
+        {("calling", "vault_write_file"): [TRIGGER_HIT]}
+    )
+    cfg = ClientConfig(url=server.url, timeout_s=0.2, context_timeout_s=5.0)
+    prompt = "How does the trigger outcome loop decide a memory was ignored?"
+
+    brief = run_event("session-start", {"session": "s17"}, cfg=cfg)
+    context = run_event("prompt", {"session": "s17", "prompt": prompt}, cfg=cfg)
+    call = run_event("tool-call", {"session": "s17", "tool": "vault_write_file"}, cfg=cfg)
+
+    assert "716 notes" in brief.text
+    assert "some context" in context.text
+    # The tool hook gave up on the same slow server inside its own budget.
+    assert call.text == ""
 
 
 def test_token_is_sent_as_a_bearer_header(server):
