@@ -426,10 +426,6 @@ class TestSuggestTags:
         assert "py" in tags
         assert "auth" in tags
 
-    def test_suggest_entity_type(self, in_memory_db):
-        tags = suggest_tags(in_memory_db, "Use JWT for authentication", entity_type="decision")
-        assert "decision" in tags
-
     def test_suggest_from_existing_memories(self, in_memory_db):
         save_memory(
             in_memory_db, content="Database migration strategy",
@@ -445,6 +441,49 @@ class TestSuggestTags:
     def test_suggest_empty_content(self, in_memory_db):
         tags = suggest_tags(in_memory_db, "hi")
         assert isinstance(tags, list)
+
+    def test_unrelated_tags_of_similar_memories_not_suggested(self, in_memory_db):
+        # Issue #311: tags copied from FTS neighbours that share only words.
+        leaked = [
+            "superseded_by:1839", "strake", "md", "py", "toml", "json",
+            "openssh.com", "session:abc123", "when-calling:az rest", "promoted",
+        ]
+        save_memory(in_memory_db, content="Keycloak realm export pipeline", tags=leaked)
+        content = "Keycloak realm export pipeline failed on the second stage"
+        assert suggest_tags(in_memory_db, content) == []
+        assert save_memory(in_memory_db, content=content).suggested_tags is None
+
+    def test_bookkeeping_tags_never_suggested_even_when_named(self, in_memory_db):
+        save_memory(
+            in_memory_db, content="Keycloak promoted session",
+            tags=["session:abc", "promoted", "keycloak"],
+        )
+        tags = suggest_tags(in_memory_db, "Keycloak promoted session:abc")
+        assert tags == ["keycloak"]
+
+    def test_relevant_tags_in_text_still_suggested(self, in_memory_db):
+        save_memory(
+            in_memory_db, content="Memory drift check on vault notes",
+            tags=["memory-drift", "vault", "md", "strake"],
+        )
+        tags = suggest_tags(
+            in_memory_db, "Memory DRIFT flagged notes/vault/index.md as stale",
+        )
+        assert {"memory-drift", "vault", "md"} <= set(tags)
+        assert "strake" not in tags
+
+    def test_hyphenated_tag_needs_every_word(self, in_memory_db):
+        save_memory(in_memory_db, content="Memory drift check", tags=["memory-drift"])
+        assert "memory-drift" not in suggest_tags(in_memory_db, "Memory check passed")
+
+    def test_tag_inside_longer_word_not_suggested(self, in_memory_db):
+        save_memory(in_memory_db, content="Keycloak authentication flow", tags=["auth"])
+        assert "auth" not in suggest_tags(in_memory_db, "Keycloak authentication flow broke")
+
+    def test_suggestions_capped_at_five(self, in_memory_db):
+        names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"]
+        save_memory(in_memory_db, content=" ".join(names), tags=names)
+        assert len(suggest_tags(in_memory_db, " ".join(names))) == 5
 
     def test_save_returns_suggested_tags(self, in_memory_db):
         save_memory(in_memory_db, content="Auth module configuration", tags=["auth"])

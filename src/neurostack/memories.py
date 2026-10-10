@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -51,37 +52,53 @@ class Memory:
     suggested_tags: list[str] | None = None
 
 
+# Tags the system writes for its own bookkeeping, never a topic (issue #311).
+_BOOKKEEPING_TAG = re.compile(r"^(superseded_by|session|when-[^:]*):|^promoted")
+_FILE_EXTS = frozenset({"py", "ts", "js", "rs", "go", "md", "toml", "yaml", "yml", "json"})
+
+
+def _content_supports(tag: str, content: str) -> bool:
+    """True when ``content`` itself names ``tag``.
+
+    Similar memories share words, not topics, so their tags leaked into
+    unrelated suggestions (issue #311). Each hyphen-separated word of the tag
+    must appear on word boundaries; an extension tag needs a file of that type.
+    """
+    if _BOOKKEEPING_TAG.search(tag):
+        return False
+    if tag.lower() in _FILE_EXTS:
+        return re.search(rf"\w\.{tag}(?!\w)", content, re.IGNORECASE) is not None
+    words = [w for w in tag.split("-") if w]
+    return bool(words) and all(
+        re.search(rf"(?<!\w){re.escape(w)}(?!\w)", content, re.IGNORECASE)
+        for w in words
+    )
+
+
 def suggest_tags(
     conn: sqlite3.Connection,
     content: str,
-    entity_type: str | None = None,
     limit: int = 5,
 ) -> list[str]:
     """Suggest tags for a memory based on FTS5 overlap with existing tagged memories.
 
     Finds memories with similar content via FTS5, collects their tags,
-    and returns the most common ones. No LLM call - pure heuristic.
+    and returns the most common ones the content itself names. No LLM call -
+    pure heuristic.
     """
-    import re
-
     suggestions: dict[str, int] = {}
 
     # Extract file-path tags from content (generalized from harvest._extract_tags)
-    exts = {"py", "ts", "js", "rs", "go", "md", "toml", "yaml", "yml", "json"}
     for m in re.finditer(r"[\w/.-]+\.\w{1,10}", content):
         path = m.group()
         ext = path.rsplit(".", 1)[-1].lower()
-        if ext in exts:
+        if ext in _FILE_EXTS:
             suggestions[ext] = suggestions.get(ext, 0) + 2
         parts = path.split("/")
         if len(parts) > 1:
             dir_name = parts[-2] if parts[-2] else parts[0]
             if len(dir_name) > 2:
                 suggestions[dir_name] = suggestions.get(dir_name, 0) + 1
-
-    # Entity type as implicit tag
-    if entity_type and entity_type != "observation":
-        suggestions[entity_type] = suggestions.get(entity_type, 0) + 1
 
     # FTS5 overlap: find similar memories and collect their tags
     words = re.findall(r"\b\w{4,}\b", content.lower())
@@ -109,20 +126,19 @@ def suggest_tags(
         except Exception:
             pass
 
-    # Sort by frequency, return top N
+    # Sort by frequency, return the top N the content supports
     sorted_tags = sorted(suggestions.items(), key=lambda x: x[1], reverse=True)
-    return [tag for tag, _ in sorted_tags[:limit]]
+    return [tag for tag, _ in sorted_tags if _content_supports(tag, content)][:limit]
 
 
 def _suggest_tags_for_save(
     conn: sqlite3.Connection,
     content: str,
     provided_tags: list[str] | None,
-    entity_type: str | None,
 ) -> list[str] | None:
     """Internal: suggest tags not already in provided_tags."""
     try:
-        suggestions = suggest_tags(conn, content, entity_type=entity_type)
+        suggestions = suggest_tags(conn, content)
         provided = set(provided_tags or [])
         novel = [t for t in suggestions if t not in provided]
         return novel if novel else None
@@ -245,9 +261,7 @@ def save_memory(
         session_id=session_id,
         uuid=memory_uuid,
         near_duplicates=near_duplicates,
-        suggested_tags=_suggest_tags_for_save(
-            conn, content, tags, entity_type
-        ),
+        suggested_tags=_suggest_tags_for_save(conn, content, tags),
     )
 
     # Vault write-back (issue #20): persist as a markdown file when enabled.
