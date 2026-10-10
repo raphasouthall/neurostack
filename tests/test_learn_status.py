@@ -215,6 +215,56 @@ def test_a_success_just_inside_the_window_is_still_ok():
 
 
 # ---------------------------------------------------------------------------
+# Issue #309 — the server reports the saves its queues ran
+# ---------------------------------------------------------------------------
+
+def _stale_local_error():
+    learn_status_path().parent.mkdir(parents=True, exist_ok=True)
+    learn_status_path().write_text(json.dumps({
+        "last_ok_at": "2026-09-22T18:00:00",
+        "last_error_at": "2026-09-23T08:35:00",
+        "last_error": "http://neurostack.test:8001/mcp: ReadTimeout: timed out",
+        "saved_today": 0,
+    }))
+
+
+def _brief_with_learn(server, learn):
+    server.replies["session_brief"] = {"brief": "recent vault changes", "learn": learn}
+    return run_event("session-start", {"session": "s-309"}, cfg=_cfg(server)).text
+
+
+def test_a_later_server_save_outranks_a_stale_local_error(server):
+    _stale_local_error()
+    done = datetime.now().astimezone().replace(microsecond=0)
+
+    text = _brief_with_learn(server, {
+        "last_ok_at": done.isoformat(), "last_error_at": None,
+        "last_error": None, "saved_today": 4,
+    })
+
+    assert text.startswith(f"LEARN: ok, 4 memories today, last {done.strftime('%H:%M')}")
+
+
+def test_a_server_failure_after_the_last_local_save_reads_failing(server):
+    _save_two(server)
+    failed = datetime.now().astimezone() + timedelta(minutes=1)
+
+    text = _brief_with_learn(server, {
+        "last_ok_at": None, "last_error_at": failed.isoformat(),
+        "last_error": "checkpoint\nrunner went stale", "saved_today": 0,
+    })
+
+    assert text.splitlines()[0].startswith("LEARN: FAILING since ")
+    assert "runner went stale" in text.splitlines()[0]
+
+
+def test_a_server_without_the_field_leaves_the_local_line(server):
+    _stale_local_error()
+
+    assert _brief(server).startswith("LEARN: FAILING since 2026-09-23 08:35")
+
+
+# ---------------------------------------------------------------------------
 # Acceptance 5 — a dead server still prints the line, through the real CLI
 # ---------------------------------------------------------------------------
 
@@ -264,6 +314,23 @@ def test_status_prints_the_line_and_a_row_per_source(server, isolated_home):
     assert "harvest/claude-code   4" in proc.stdout
     assert "checkpoint/claude     2" in proc.stdout
     assert "Sessions behind: 0" in proc.stdout
+
+
+def test_status_reads_ok_when_the_server_saved_after_a_stale_local_error(
+        server, isolated_home):
+    """`neurostack status` weighs the queues' saves the same way the brief does (#309)."""
+    _stale_local_error()
+    done = datetime.now().astimezone().replace(microsecond=0)
+    server.replies["vault_stats"] = {
+        "memories": {"by_source_7d": {"checkpoint/omp": 2}},
+        "learn": {"last_ok_at": done.isoformat(), "last_error_at": None,
+                  "last_error": None, "saved_today": 2},
+    }
+
+    proc = _run_status(isolated_home, server.url)
+
+    assert f"LEARN: ok, 2 memories today, last {done.strftime('%H:%M')}" in proc.stdout
+    assert "FAILING" not in proc.stdout
 
 
 def test_concurrent_successes_keep_the_daily_total():

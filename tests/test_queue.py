@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from neurostack.queue import QueueLimits, add, claim, finish, listing, reap
+from neurostack.queue import QueueLimits, add, claim, finish, learn_status, listing, reap
 
 
 def _iso(moment):
@@ -242,3 +242,50 @@ class TestFinish:
     def test_an_unknown_job_raises(self, in_memory_db):
         with pytest.raises(ValueError):
             finish(in_memory_db, 999, ok=True)
+
+
+def _settle(conn, queue, key, ok, minutes_ago, saved=0, output=""):
+    """Run one job to the end, then backdate when it finished."""
+    job = add(conn, queue, key)
+    claim(conn, queue)
+    finish(conn, job["job_id"], ok=ok, saved=saved, output=output)
+    conn.execute(
+        "UPDATE job_queue SET finished_at = ? WHERE job_id = ?",
+        (_iso(datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)), job["job_id"]),
+    )
+    conn.commit()
+
+
+class TestLearnStatus:
+    """What the session brief's LEARN line reads from the queues (issue #309)."""
+
+    def test_a_success_after_a_failure_clears_the_error(self, in_memory_db):
+        _settle(in_memory_db, "checkpoint", "a", ok=False, minutes_ago=10, output="boom")
+        _settle(in_memory_db, "harvest", "b", ok=True, minutes_ago=1, saved=3)
+
+        status = learn_status(in_memory_db)
+
+        assert status["last_error"] is None
+        assert status["last_ok_at"] is not None
+
+    def test_a_failure_after_the_last_success_is_reported(self, in_memory_db):
+        _settle(in_memory_db, "checkpoint", "a", ok=True, minutes_ago=10, saved=2)
+        _settle(in_memory_db, "checkpoint", "b", ok=False, minutes_ago=1, output="boom")
+
+        status = learn_status(in_memory_db)
+
+        assert status["last_error"] == "boom"
+        assert status["last_error_at"] > status["last_ok_at"]
+
+    def test_saved_today_sums_both_queues_and_skips_failures(self, in_memory_db):
+        _settle(in_memory_db, "checkpoint", "a", ok=True, minutes_ago=0, saved=2)
+        _settle(in_memory_db, "harvest", "b", ok=True, minutes_ago=0, saved=3)
+        _settle(in_memory_db, "harvest", "c", ok=False, minutes_ago=0, saved=9)
+        _settle(in_memory_db, "checkpoint", "d", ok=True, minutes_ago=3 * 24 * 60, saved=7)
+
+        assert learn_status(in_memory_db)["saved_today"] == 5
+
+    def test_no_jobs_reports_nothing(self, in_memory_db):
+        assert learn_status(in_memory_db) == {
+            "last_ok_at": None, "last_error_at": None, "last_error": None, "saved_today": 0,
+        }

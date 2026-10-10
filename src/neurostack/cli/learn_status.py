@@ -12,6 +12,10 @@ Four states, in the order they are checked: the last attempt failed
 (`FAILING`), nothing ever ran (`never ran`), the last success is over 48 hours
 old (`stale`), or all is well (`ok`).
 
+Saves moved onto the server's checkpoint and harvest queues, which never touch
+this file, so the session brief also carries the server's own status in the
+same shape and the newer of the two is the one shown (issue #309).
+
 Never raises: a health file that cannot be read or written costs a stderr line
 at worst, never a checkpoint.
 """
@@ -118,6 +122,27 @@ def record_error(session: str, harness: str, error: str) -> dict:
         return status
 
 
+def newer_status(local: dict, server) -> dict:
+    """The server's queue status when it saw a save or failure after ``local``.
+
+    ``server`` is the brief's ``learn`` field, or None from a server that
+    predates issue #309; then the local file is all there is.
+    """
+    if not isinstance(server, dict):
+        return local
+    server_at = _latest(server)
+    local_at = _latest(local)
+    if server_at is None or (local_at is not None and local_at >= server_at):
+        return local
+    error = server.get("last_error")
+    return {**server, "last_error": _one_line(error) if error else None}
+
+
+def _latest(status: dict) -> datetime | None:
+    stamps = [_parse(status.get(key)) for key in ("last_ok_at", "last_error_at")]
+    return max((s for s in stamps if s), default=None)
+
+
 def learn_line(status: dict | None = None, now: datetime | None = None) -> str:
     """The one-line summary that goes first in the brief and in `status`."""
     status = load_learn_status() if status is None else status
@@ -151,7 +176,8 @@ def learn_report(client=None, cfg=None) -> dict:
     in SQL. `vault_memories` returns rows and takes no date filter, so
     counting client-side would mean shipping every memory of the week over
     MCP — a server-side count is the cheap answer (issue #151). The same reply
-    carries the 30-day trigger counts behind the WARN line (issue #159).
+    carries the 30-day trigger counts behind the WARN line (issue #159), and
+    the queues' own save status, which outranks an older local file (#309).
     """
     from ..client import McpClient, load_client_config
     from .hook import sessions_behind
@@ -173,6 +199,7 @@ def learn_report(client=None, cfg=None) -> dict:
     if stats is None:
         report["error"] = client.errors[0] if client.errors else "vault_stats did not answer"
         return report
+    report["line"] = learn_line(newer_status(load_learn_status(), stats.get("learn")))
     report["warn"] = _warn_counts(stats.get("triggers"))
     memories = stats.get("memories")
     counts = memories.get("by_source_7d") if isinstance(memories, dict) else None

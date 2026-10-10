@@ -404,9 +404,9 @@ def test_harvest_scan_fails_when_nothing_reaches_the_server(client, tmp_path, mo
 def test_workers_run_on_the_index_host_and_the_scan_on_any_client(client, tmp_path):
     cfg = SimpleNamespace(jobs=None, db_path=tmp_path / "neurostack.db", checkpoint_command="true")
     cfg.db_path.touch()
-    client.url = "http://192.168.0.65:8001/mcp"
+    client.url = "http://neurostack.test:8001/mcp"
     for name in ("checkpoint-worker", "harvest-worker"):
-        assert blocked(cfg, JOBS[name]) == "index is served by 192.168.0.65"
+        assert blocked(cfg, JOBS[name]) == "index is served by neurostack.test"
     assert blocked(cfg, JOBS["harvest-scan"]) is None
 
     client.url = "http://127.0.0.1:8001/mcp"

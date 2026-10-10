@@ -35,6 +35,11 @@ class ClientConfig:
     fallback_url: str | None = None
     token: str | None = None
     timeout_s: float = 5.0
+    # session-start and prompt fetch the brief and per-prompt context, which a
+    # loaded server can take past 5 s to build. They run once per session or
+    # prompt, so they can wait longer; tool hooks keep `timeout_s` so a down
+    # server cannot stall every tool call (issue #309).
+    context_timeout_s: float = 15.0
     # session-end posts a whole transcript and the server harvests it inline;
     # that is minutes of work, so it gets its own budget instead of the
     # interactive one (which exists to keep tool calls responsive).
@@ -118,7 +123,7 @@ def load_client_config(path: Path | None = None) -> ClientConfig:
         cfg.event_url = raw["event_url"].strip()
     if isinstance(raw.get("checkpoint_command"), str) and raw["checkpoint_command"].strip():
         cfg.checkpoint_command = raw["checkpoint_command"].strip()
-    for key in ("timeout_s", "harvest_timeout_s", "checkpoint_timeout_s"):
+    for key in ("timeout_s", "context_timeout_s", "harvest_timeout_s", "checkpoint_timeout_s"):
         value = raw.get(key)
         if isinstance(value, (int, float)) and value > 0:
             setattr(cfg, key, float(value))

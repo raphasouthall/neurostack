@@ -2,8 +2,8 @@
 # Copyright (c) 2024-2026 Raphael Southall
 """`neurostack hook <event>` — the harness-neutral client hook (issue #141).
 
-One JSON object on stdin, the text to inject on stdout, exit 0 (allow) or
-exit 2 (block, stdout is the reason). Every harness adapter is a thin mapping
+One JSON object on stdin, the text to inject on stdout, exit 0. Nothing here
+blocks a call any more (issue #309). Every harness adapter is a thin mapping
 onto these events, so retrieval, once-per-session suppression, and outcome
 reporting live here instead of once per harness.
 
@@ -45,7 +45,15 @@ from ..memories import VALID_ENTITY_TYPES
 from ..redact import redact_secrets
 from ..triggers import is_broad_trigger, normalise_tool, parse_trigger
 from .events import post_event
-from .learn_status import cache_dir, learn_line, record_busy, record_error, record_ok
+from .learn_status import (
+    cache_dir,
+    learn_line,
+    load_learn_status,
+    newer_status,
+    record_busy,
+    record_error,
+    record_ok,
+)
 from .queue import enqueue as queue_enqueue
 
 _CURSOR_EVENT = "checkpoint-cursor"
@@ -53,11 +61,18 @@ ENQUEUE_EVENT = "enqueue"
 EVENTS = ("session-start", "prompt", "tool-call", "tool-result", "checkpoint",
           _CURSOR_EVENT, "session-end", ENQUEUE_EVENT)
 
-# After a calling/editing trigger fires, watch this many later tool calls: the
-# next call says nothing either way — re-issuing the blocked call unchanged is
-# what a model does when it decides the warning does not apply — so only the
-# window elapsing settles the outcome, as followed (#136, #159).
+# After a calling/editing trigger fires, watch this many later tool calls. The
+# next call says nothing either way, since repeating the call unchanged is what
+# a model does when it decides the warning does not apply, so only the window
+# elapsing settles the outcome, as followed (#136, #159).
 OUTCOME_WINDOW = 5
+# What a tool call prints when a reminder is waiting for its result. omp's
+# adapter reads any text here as "run tool-result for this call even if it
+# succeeds"; Claude Code keeps PreToolUse stdout out of the model's view (#309).
+REMINDER_QUEUED = "NeuroStack: a reminder will follow this call's result."
+# A call whose result never comes (a denied permission, a crash) would keep its
+# reminder forever, so one this many calls old is dropped unshown.
+REMINDER_TTL_CALLS = 20
 # 20 fired on "retry the mcp" and "do it", which carry no retrievable topic.
 MIN_PROMPT_LEN = 40
 PROMPT_TOKEN_BUDGET = 1500
@@ -96,7 +111,6 @@ class Verdict:
     """
 
     text: str = ""
-    block: bool = False
     data: dict | None = None
 
 
@@ -111,6 +125,10 @@ class SessionState:
     pending: dict[int, dict] = field(default_factory=dict)
     prompts: set[str] = field(default_factory=set)
     calls: int = 0
+    # Reminders a tool call matched, keyed by that call's id, waiting for its
+    # result to carry them to the model (issue #309). Each is
+    # {"text", "call"}, the value of `calls` when it was stored.
+    reminders: dict[str, dict] = field(default_factory=dict)
     # Checkpoint bookkeeping (#143). `since_index` is what has been saved and
     # so never re-summarized; `offered_index` is what the model has already
     # been asked about, which stops a Stop hook re-prompting the same window
@@ -139,6 +157,7 @@ class SessionState:
                     self.prompts = current.prompts
                     self.pending = current.pending
                     self.calls = current.calls
+                    self.reminders = current.reminders
                 else:
                     self.since_index = current.since_index
                     self.offered_index = current.offered_index
@@ -154,6 +173,7 @@ class SessionState:
                     "fired": sorted(self.fired), "checked": sorted(self.checked),
                     "pending": {str(k): v for k, v in self.pending.items()},
                     "prompts": sorted(self.prompts), "calls": self.calls,
+                    "reminders": self.reminders,
                     "since_index": self.since_index, "offered_index": self.offered_index,
                     "last_checkpoint_at": self.last_checkpoint_at,
                     "checkpoint_start": self.checkpoint_start,
@@ -261,6 +281,13 @@ def load_state(session: str, fresh: bool = False) -> SessionState:
                 state.pending[int(key)] = value
     if isinstance(raw.get("calls"), int):
         state.calls = raw["calls"]
+    reminders = raw.get("reminders")
+    if isinstance(reminders, dict):
+        state.reminders = {
+            str(k): v for k, v in reminders.items()
+            if isinstance(v, dict) and isinstance(v.get("text"), str)
+            and isinstance(v.get("call"), int)
+        }
     for name in ("since_index", "offered_index", "checkpoint_start", "checkpoint_end"):
         value = raw.get(name)
         if isinstance(value, int) and value >= 0:
@@ -436,8 +463,8 @@ def _fetch_triggers(
     """Trigger hits that have not fired yet in this session.
 
     Each (event, value) pair is looked up once per session and each memory
-    fires once, so the server sees no repeat traffic and a re-issued call
-    always proceeds.
+    fires once, so the server sees no repeat traffic and a repeated call
+    shows nothing new.
     """
     if not value:
         return []
@@ -478,7 +505,7 @@ def _observe_call(client: McpClient, state: SessionState) -> None:
     """Advance the window on every tool call, and settle it when it runs out.
 
     Nothing about the next call marks a calling/editing trigger as ignored: a
-    re-issue of the blocked call, byte-identical or not, is how a model acts on
+    repeat of the matched call, byte-identical or not, is how a model acts on
     a warning it has read and judged (#159). Only the error rule below can
     report an ignore.
     """
@@ -548,32 +575,30 @@ def _workspace(cfg: ClientConfig, payload: dict) -> str | None:
 
 def _event_session_start(client: McpClient, payload: dict, state: SessionState,
                          cfg: ClientConfig) -> Verdict:
-    # The LEARN line comes first so it survives a brief that gets cut short,
-    # and it is the whole verdict when the server never answers (issue #151).
-    line = learn_line()
     workspace = _workspace(cfg, payload)
     harness = _first_str(payload, "harness") or "cli"
     post_event(cfg, "session-start", "ok", state.session, harness, workspace=workspace)
     args: dict = {}
     if workspace:
         args["workspace"] = workspace
-    text = client.call("session_brief", args)
-    if not text:
-        return Verdict(line)
-    # The tool answers {"brief": "<markdown>"}; unwrap it, and take a plain
-    # text reply as the brief itself.
+    text = client.call("session_brief", args, timeout_s=cfg.context_timeout_s)
+    # The tool answers {"brief": "<markdown>", "learn": {...}}; unwrap it, and
+    # take a plain text reply as the brief itself.
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(text) if text else None
     except ValueError:
         parsed = None
-    if isinstance(parsed, dict):
-        brief = parsed.get("brief")
-        if not isinstance(brief, str) or not brief.strip():
-            return Verdict(line)
-        text = brief
+    brief = parsed.get("brief") if isinstance(parsed, dict) else text
+    # The LEARN line comes first so it survives a brief that gets cut short,
+    # and it is the whole verdict when the server never answers (issue #151).
+    # The server reports its own queue saves; the newer report wins (#309).
+    server = parsed.get("learn") if isinstance(parsed, dict) else None
+    line = learn_line(newer_status(load_learn_status(), server))
+    if not isinstance(brief, str) or not brief.strip():
+        return Verdict(line)
     return Verdict(
         line + "\n\nNeuroStack session brief (auto-injected at session start; recent vault "
-        "changes, commits, memories). " + _FENCE_NOTE + "\n\n" + _fence(text)
+        "changes, commits, memories). " + _FENCE_NOTE + "\n\n" + _fence(brief)
     )
 
 
@@ -595,7 +620,7 @@ def _event_prompt(client: McpClient, payload: dict, state: SessionState,
     context = _cwd_context(payload)
     if context:
         args["context"] = context
-    text = client.call("vault_context", args)
+    text = client.call("vault_context", args, timeout_s=cfg.context_timeout_s)
     if not text:
         return Verdict()
     return Verdict(
@@ -621,6 +646,8 @@ def _event_tool_call(client: McpClient, payload: dict, state: SessionState,
     tool = _first_str(payload, "tool", "tool_name")
     tool_input = _tool_input(payload)
     state.calls += 1
+    state.reminders = {key: r for key, r in state.reminders.items()
+                       if state.calls - r["call"] < REMINDER_TTL_CALLS}
     _observe_call(client, state)
     workspace = _workspace(cfg, payload)
     hits: list[dict] = []
@@ -635,36 +662,41 @@ def _event_tool_call(client: McpClient, payload: dict, state: SessionState,
             "kind": "editing" if hit["trigger"].startswith("when-editing:") else "calling",
             "remaining": OUTCOME_WINDOW,
         }
-    return Verdict(
-        _format_hits(
-            hits,
-            "NeuroStack showed these once for this session; the call was held so "
-            "you can re-issue it with them in mind.",
-        ),
-        block=True,
-    )
+    # Never block (#309). A held call only made the model re-issue it unchanged,
+    # so the reminder waits for this call's result, which carries it instead.
+    state.reminders[_call_id(payload)] = {"call": state.calls, "text": _format_hits(
+        hits,
+        "NeuroStack showed these once for this session, with the result of the "
+        "call they matched.",
+    )}
+    return Verdict(REMINDER_QUEUED)
+
+
+def _call_id(payload: dict) -> str:
+    """The id pairing a tool call with its result; "" from an adapter without one."""
+    return _first_str(payload, "id", "tool_use_id")
 
 
 def _event_tool_result(client: McpClient, payload: dict, state: SessionState,
                        cfg: ClientConfig) -> Verdict:
+    reminder = state.reminders.pop(_call_id(payload), {}).get("text", "")
     text = _error_text(payload)
     if not text:
-        return Verdict()
+        return Verdict(reminder)
     _observe_error(client, state, text)
     hits = _fetch_triggers(client, state, "error", text[:500], _workspace(cfg, payload))
     if not hits:
-        return Verdict()
+        return Verdict(reminder)
     key = _error_key(text)
     for hit in hits:
         state.pending[hit["memory_id"]] = {
             "kind": "error", "key": key, "remaining": OUTCOME_WINDOW,
         }
-    return Verdict(
-        _format_hits(
-            hits,
-            "NeuroStack showed these once for this session because the error matched.",
-        )
+    matched = _format_hits(
+        hits,
+        "NeuroStack showed these once for this session because the error matched.",
     )
+    return Verdict(f"{reminder}\n\n{matched}" if reminder else matched)
 
 
 def _transcript_roots() -> dict[str, Path]:
@@ -1527,7 +1559,7 @@ def _cmd_checkpoint_save(args, raw: str) -> None:
 
 
 def cmd_hook(args) -> None:
-    """Read one event from stdin, print the verdict, exit 0 or 2.
+    """Read one event from stdin, print the verdict, exit 0.
 
     Fail open: anything unexpected becomes one stderr line and exit 0.
     """
@@ -1585,15 +1617,16 @@ def cmd_hook(args) -> None:
     # sentence; wording changes then stop breaking it silently.
     if getattr(args, "json", False) and verdict.data is not None:
         print(json.dumps({"text": verdict.text, **verdict.data}, default=str))
-        if verdict.block:
-            sys.exit(2)
         return
 
-    if verdict.block:
-        # Claude Code reads stderr as the block reason on exit 2; every other
-        # harness reads stdout. Both get the same text.
-        stream = sys.stderr if getattr(args, "harness", None) == "claude" else sys.stdout
-        print(verdict.text, file=stream)
-        sys.exit(2)
+    if (event == "tool-result" and verdict.text
+            and getattr(args, "harness", None) == "claude"):
+        # Claude Code keeps a PostToolUse hook's plain stdout out of the model's
+        # context; only `additionalContext` reaches it, beside the result (#309).
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": _first_str(payload, "hook_event_name") or "PostToolUse",
+            "additionalContext": verdict.text,
+        }}))
+        return
     if verdict.text:
         print(verdict.text)
