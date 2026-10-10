@@ -78,7 +78,10 @@ def create_mcp_server(name: str = "neurostack", **server_kwargs) -> MCPServer:
                 open_world_hint=hints.open_world,
             )
 
-        mcp.add_tool(wrapper, annotations=mcp_annotations)
+        # Tools are annotated `-> dict`, so MCPServer would also publish an
+        # output schema and echo every reply as structuredContent next to the
+        # JSON text block, and clients render both copies (issue #310).
+        mcp.add_tool(wrapper, annotations=mcp_annotations, structured_output=False)
 
     log.debug(
         "Registered %d of %d tools on MCP server %r",
