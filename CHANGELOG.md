@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Each MCP tool reply reaches the client once (#310). Tools are typed `-> dict`, so the MCP server also sent every reply as structured content, and clients showed it twice. They now register with `structured_output=False`.
+- `vault_search` at depth `auto` or `summaries` caps the whole reply at 2,000 tokens unless the caller passes `max_tokens` (#310). It drops trailing memories first, then chunks, summaries and triples, and marks the reply `truncated`. Live replies were 1,700 to 3,000 tokens per copy; every note and fact still fits.
 - `vault_remember` suggests only tags the memory's own text names (#311). It copied every tag from memories that shared a few long words, so a memory got `superseded_by:1839`, `strake` or `md` with no mention of any. Bookkeeping tags (`superseded_by:`, `session:`, trigger tags, `promoted`) are never suggested, a file-extension tag needs a file of that type in the text, and the memory's type is no longer offered as a tag.
 
 ### Added
