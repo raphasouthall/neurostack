@@ -78,6 +78,10 @@ def _section(title: str, blocks: list[str]) -> list[str]:
     return [f"## {title}", *blocks] if blocks else []
 
 
+def _project(p: dict) -> str:
+    return f"{_heading(p)} · updated {p['updated']}\n{p['status']}"
+
+
 def _search(r: dict) -> str:
     if "results" in r:
         parts = _section("Results", [_entry(x) for x in r["results"]])
@@ -92,6 +96,8 @@ def _search(r: dict) -> str:
         parts = ["No results."]
     if r.get("reranked"):
         parts.insert(0, "Reranked by the judgement model, best first.")
+    # The project note's own status leads, ahead of older hits (#322).
+    parts[:0] = _section("Project status", [_project(p) for p in r.get("projects") or []])
     if r.get("hint"):
         parts.append(r["hint"])
     if r.get("truncated"):
@@ -100,7 +106,8 @@ def _search(r: dict) -> str:
 
 
 def _memories(r: dict) -> str:
-    return "\n\n".join(_memory(m) for m in r["memories"]) or "No memories."
+    text = "\n\n".join(_memory(m) for m in r["memories"]) or "No memories."
+    return f"{text}\n\n{_TRUNCATED}" if r.get("truncated") else text
 
 
 def _triples_reply(r: dict) -> str:

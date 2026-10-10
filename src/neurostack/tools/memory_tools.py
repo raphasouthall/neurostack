@@ -14,6 +14,12 @@ _WRITE_IDEMPOTENT = Hints(read_only=False, destructive=False, idempotent=True, o
 _WRITE_DESTRUCTIVE = Hints(read_only=False, destructive=True, idempotent=True, open_world=False)
 
 
+# Default reply budget for vault_memories (issue #322). Twenty full memories
+# measured 10.7 kB live, about 2,700 tokens, for a tool most callers scan for
+# one or two facts.
+DEFAULT_MEMORIES_MAX_TOKENS = 1500
+
+
 def _embed_url():
     from ..config import get_config
     return get_config().embed_url
@@ -217,11 +223,13 @@ def vault_memories(
     entity_type: str | None = None,
     workspace: str | None = None,
     limit: int = 20,
+    max_tokens: int | None = None,
 ) -> dict:
     """Search or list agent-written memories.
 
     Without a query, lists recent memories. With a query, searches by
-    content using FTS5 + semantic similarity.
+    content using FTS5 + semantic similarity, newer memories first among
+    equals and superseded ones last.
 
     Args:
         query: Optional search query (FTS5 + semantic). None = list recent.
@@ -229,7 +237,11 @@ def vault_memories(
                      "learning", "context", or "bug". None = all.
         workspace: Optional vault subdirectory to scope results
         limit: Max results (default 20)
+        max_tokens: Reply budget, ~4 chars/token (default 1500). Memories past
+            it are dropped from the tail and the reply carries
+            "truncated": True. Pass a larger value to get the rest.
     """
+    from ..budget import trim_to_budget
     from ..memories import search_memories
     from ..schema import DB_PATH, get_db
 
@@ -263,7 +275,13 @@ def vault_memories(
             entry["score"] = round(m.score, 4)
         output.append(entry)
 
-    return {"memories": output}
+    kept, _, truncated = trim_to_budget(
+        output, DEFAULT_MEMORIES_MAX_TOKENS if max_tokens is None else max_tokens,
+    )
+    result = {"memories": kept}
+    if truncated:
+        result["truncated"] = True
+    return result
 
 
 

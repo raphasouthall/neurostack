@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- `vault_search` puts a `## Project status` block first when its hits fall inside a `projects/<slug>/` folder (#322). It shows the main note's `## Status` section, or else its newest dated section plus its Open/Next list, at most 2 projects and 800 characters each. The reconcile job now adds and maintains a `## Status` section on project notes it corrects.
+
+### Fixed
+
+- Memory search prefers newer memories (#322). The fused rank halves every 90 days of age, counted from the last update, and memories tagged `superseded_by:` sort last. `score` is unchanged. On the live AVD query two superseded and one 186-day-old memory left the top 10.
+- `vault_memories` caps its reply at 1,500 tokens unless `max_tokens` is passed, and says when it cut (#322). A 20-memory reply was 10.7 kB.
+
 ### Fixed
 
 - Memory search fuses keyword and semantic hits by reciprocal rank (#320). Keyword search needs every word, and semantic search only reranked those hits, so "AVD Azure Virtual Desktop session host" returned 1 unrelated memory. It now returns 20, mostly AVD host pool and RemoteApp memories. `score` stays cosine similarity, so the context floor and the 0.35 cut behave as before.
