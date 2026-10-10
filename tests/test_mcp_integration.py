@@ -263,6 +263,139 @@ def test_vault_search_explicit_max_tokens_beats_default(mcp_vault, monkeypatch):
     assert result["memories"] == memories
 
 
+_PROJECT_NOTE = """---
+date: 2026-09-11
+tags: [work]
+type: project
+---
+# AVD migration
+Replace Citrix with AVD.
+## Licensing
+Licensing is still open.
+## Current status
+Licensing bought on 2026-10-01.
+### Prod pool
+HOST01 is live.
+## Open
+Nothing left here.
+"""
+
+
+def _stub_hits(monkeypatch, notes, memories=()):
+    """Every search path answers with chunks from `notes`, best first."""
+    from types import SimpleNamespace
+
+    from neurostack.tools import search_tools
+
+    hits = [
+        SimpleNamespace(note_path=n, title="T", heading_path="S", score=0.5,
+                        snippet="Licensing is still open.", summary="")
+        for n in notes
+    ]
+    chunks = [{"note": h.note_path, "title": "T", "section": "S",
+               "snippet": h.snippet, "score": 0.5} for h in hits]
+    monkeypatch.setattr(
+        "neurostack.search.tiered_search",
+        lambda *a, depth, **k: {"triples": [], "summaries": [], "chunks": list(chunks),
+                                "depth_used": depth},
+    )
+    monkeypatch.setattr("neurostack.search.hybrid_search", lambda *a, **k: list(hits))
+    monkeypatch.setattr(
+        search_tools, "_search_memories_for_results", lambda *a, **k: list(memories)
+    )
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"depth": "auto"}, {"depth": "full"}, {"reference_only": True},
+])
+def test_sibling_hit_brings_the_project_status(mcp_vault, monkeypatch, kwargs):
+    # Issue #322: the agent answered from a sibling runbook and never saw the
+    # project note say licensing was done.
+    folder = mcp_vault / "work" / "projects" / "avd"
+    folder.mkdir(parents=True)
+    (folder / "avd.md").write_text(_PROJECT_NOTE)
+    (folder / "runbook.md").write_text("# Runbook\nLicensing is still open.\n")
+    _stub_hits(monkeypatch, ["work/projects/avd/runbook.md"])
+
+    [project] = _registry().call("vault_search", query="q", **kwargs)["projects"]
+
+    assert project["path"] == "work/projects/avd/avd.md"
+    assert project["title"] == "AVD migration"
+    assert "2026-10-01" in project["status"] and "HOST01" in project["status"]
+    assert "still open" not in project["status"]
+    assert "Nothing left" not in project["status"]
+    assert project["updated"][:4].isdigit()
+
+
+def test_without_a_status_heading_the_newest_dated_and_open_sections_stand_in(
+    mcp_vault, monkeypatch,
+):
+    # Most live project notes have no status heading; their news sits in dated
+    # build sections and an Open list (#322).
+    folder = mcp_vault / "projects" / "avd"
+    folder.mkdir(parents=True)
+    (folder / "avd.md").write_text(
+        "# AVD\nIntro text.\n"
+        "## Non-prod build (2026-09-10)\nOld build.\n"
+        "## Prod pilot build (2026-09-30)\nPilot live.\n"
+        "```bash\n# not a heading\nrun-it\n```\nAfter the fence.\n"
+        "## Open\nRetire NetScaler.\n"
+        "## Related\nLinks.\n"
+    )
+    _stub_hits(monkeypatch, ["projects/avd/avd.md"])
+
+    [project] = _registry().call("vault_search", query="q")["projects"]
+
+    status = project["status"]
+    assert "Pilot live." in status and "After the fence." in status
+    assert "Retire NetScaler." in status
+    assert "Old build." not in status and "Intro text." not in status
+    assert "Links." not in status
+
+
+def test_no_projects_block_without_a_project_folder_hit(mcp_vault, monkeypatch):
+    # A note directly under projects/ belongs to no project folder.
+    (mcp_vault / "home" / "projects").mkdir(parents=True)
+    (mcp_vault / "home" / "projects" / "loose.md").write_text("# Loose\n")
+    _stub_hits(monkeypatch, ["research/predictive-coding.md", "home/projects/loose.md"])
+
+    assert "projects" not in _registry().call("vault_search", query="q")
+
+
+def test_at_most_two_projects_best_hit_first(mcp_vault, monkeypatch):
+    for slug in ("a", "b", "c"):
+        folder = mcp_vault / "projects" / slug
+        folder.mkdir(parents=True)
+        # No status heading, so the status is the note's opening text.
+        (folder / "index.md").write_text(f"# {slug}\nProject {slug} opening.\n")
+        (folder / "x.md").write_text("# x\n")
+    _stub_hits(monkeypatch, ["projects/b/x.md", "projects/b/index.md",
+                             "projects/a/x.md", "projects/c/x.md"])
+
+    projects = _registry().call("vault_search", query="q")["projects"]
+
+    assert [p["path"] for p in projects] == ["projects/b/index.md", "projects/a/index.md"]
+    assert "Project b opening." in projects[0]["status"]
+
+
+def test_project_status_outlives_memories_under_the_default_budget(mcp_vault, monkeypatch):
+    from neurostack.budget import estimate_tokens
+    from neurostack.tools.search_tools import DEFAULT_TIERED_MAX_TOKENS
+
+    folder = mcp_vault / "work" / "projects" / "avd"
+    folder.mkdir(parents=True)
+    (folder / "avd.md").write_text(_PROJECT_NOTE)
+    memories = [{"memory_id": i, "content": "m" * 1500} for i in range(6)]
+    _stub_hits(monkeypatch, ["work/projects/avd/avd.md"], memories)
+
+    result = _registry().call("vault_search", query="q")
+
+    assert result["truncated"] is True
+    assert len(result["memories"]) < len(memories)
+    assert result["projects"][0]["path"] == "work/projects/avd/avd.md"
+    assert estimate_tokens(result) <= DEFAULT_TIERED_MAX_TOKENS
+
+
 
 def test_vault_diff_and_checkpoint(mcp_vault):
     # Issue #11: no baseline → all added; checkpoint → next diff is clean.
