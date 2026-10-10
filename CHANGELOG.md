@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- The prompt hook searches on the question only (#316). Harness `<system-reminder>` blocks and pasted `<neurostack-recall>` briefs are removed first, so the lookup no longer matches the reminder's topic. A prompt with no text of its own left after that is skipped.
+- `vault_context` drops memories and triples that score under 0.9 of the best hit in their list (#316); the top hit always stays and unscored lists are kept. On 5 live prompts triples went from 46 to 19 and the freed budget went to summaries and memories.
+- `vault_context` leaves out bookkeeping tags (`session:`, `when-*:`, `superseded_by:`, `promoted`) and shows dates without the clock time (#316).
+
 
 ### Changed
 
