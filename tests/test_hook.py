@@ -211,6 +211,32 @@ def test_write_to_an_xd_device_also_matches(server):
     ]
 
 
+USAGE_HIT = {"memory_id": 8656, "content": "note_usage gained a tier column",
+             "trigger": "when-calling:vault_record_usage"}
+
+
+@pytest.mark.parametrize("call", [
+    {"tool": "write", "input": {"path": "xd://mcp__neurostack_vault_record_usage"}},
+    {"tool": "xd://mcp__neurostack_vault_record_usage", "input": {}},
+    {"tool_name": "mcp__neurostack__vault_record_usage", "tool_input": {}},
+])
+def test_record_usage_never_looks_up_triggers(server, call):
+    # Issue #324: a reminder on NeuroStack's own bookkeeping call is noise.
+    names = ("write", "vault_record_usage", "xd://mcp__neurostack_vault_record_usage",
+             "mcp__neurostack__vault_record_usage")
+    server.replies["vault_triggers"] = _triggers(
+        {("calling", name): [USAGE_HIT] for name in names}
+    )
+    assert "8656" not in _reminder(server, {"session": "s3u", **call})
+    assert _tool_calls(server, "vault_triggers") == []
+
+
+def test_claude_code_mcp_name_still_matches_other_tools(server):
+    tool = "mcp__neurostack__vault_write_file"
+    server.replies["vault_triggers"] = _triggers({("calling", tool): [TRIGGER_HIT]})
+    assert "memory 2164" in _reminder(server, {"session": "s3c", "tool": tool, "input": {}})
+
+
 def test_edited_paths_come_from_payload_and_edit_body(server):
     hit = {"memory_id": 91, "content": "bump the schema version too",
            "trigger": "when-editing:src/**/*.py"}

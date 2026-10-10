@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- The `vault_search` project status block picks projects by the question, not hit order (#324). A project folder scores on query words shared with its slug or title, rarer words weighing more, and a matching folder can join without a hit. A tagging project ranked first no longer displaces the project the question names.
+- `vault_memories` without a workspace infers one from the query's top note hits (more than half sharing a folder) and boosts memories there (#324). The default cap rises from 1,500 to 2,500 tokens, so one call usually covers a topic.
+- `vault_record_usage` replies in one line over MCP, and calls to it or to `vault_trigger_outcome` no longer look up trigger reminders (#324).
+
 ### Added
 
 - `vault_search` puts a `## Project status` block first when its hits fall inside a `projects/<slug>/` folder (#322). It shows the main note's `## Status` section, or else its newest dated section plus its Open/Next list, at most 2 projects and 800 characters each. The reconcile job now adds and maintains a `## Status` section on project notes it corrects.

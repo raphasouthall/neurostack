@@ -182,6 +182,12 @@ def _read_file(r: dict) -> str:
     return f"{head}\n{r['content']}"
 
 
+def _record_usage(r: dict) -> str:
+    """The caller sent the paths, so the count is all that is new (#324)."""
+    n = r["recorded"]
+    return f"Recorded {n} note{'' if n == 1 else 's'}."
+
+
 RENDERERS: dict[str, Callable[[dict], str]] = {
     "vault_search": _search,
     "vault_memories": _memories,
@@ -193,6 +199,7 @@ RENDERERS: dict[str, Callable[[dict], str]] = {
     "vault_remember": _remember,
     "vault_update_memory": _update,
     "vault_read_file": _read_file,
+    "vault_record_usage": _record_usage,
 }
 
 

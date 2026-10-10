@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 from .registry import ToolAnnotationHints as Hints
 from .registry import registry
 
@@ -16,13 +18,30 @@ _WRITE_DESTRUCTIVE = Hints(read_only=False, destructive=True, idempotent=True, o
 
 # Default reply budget for vault_memories (issue #322). Twenty full memories
 # measured 10.7 kB live, about 2,700 tokens, for a tool most callers scan for
-# one or two facts.
-DEFAULT_MEMORIES_MAX_TOKENS = 1500
+# one or two facts. Raised from 1,500 to 2,500 in #324.
+DEFAULT_MEMORIES_MAX_TOKENS = 2500
 
 
 def _embed_url():
     from ..config import get_config
     return get_config().embed_url
+
+
+def _query_workspace(conn, query: str) -> str | None:
+    """Workspace most of the query's top note hits sit in, e.g. work/acme (#324).
+
+    Without a workspace, a memory from another workspace that names the query's
+    words in passing ranked first. Keyword hits over notes say where the query
+    lives without an embedding call. The first two folders of their paths win
+    when more than half of the ten hits share them.
+    """
+    from ..search import fts_search
+
+    hits = fts_search(conn, query, limit=10)
+    top = Counter(
+        "/".join(r["note_path"].split("/")[:-1][:2]) for r in hits
+    ).most_common(1)
+    return (top[0][0] or None) if top and top[0][1] * 2 > len(hits) else None
 
 
 @registry.tool(tags=["memory", "write"], annotations=_WRITE_ADDITIVE)
@@ -229,7 +248,8 @@ def vault_memories(
 
     Without a query, lists recent memories. With a query, searches by
     content using FTS5 + semantic similarity, newer memories first among
-    equals and superseded ones last.
+    equals and superseded ones last. Without a workspace, memories in the
+    workspace where most of the query's notes sit rank higher.
 
     Args:
         query: Optional search query (FTS5 + semantic). None = list recent.
@@ -237,7 +257,7 @@ def vault_memories(
                      "learning", "context", or "bug". None = all.
         workspace: Optional vault subdirectory to scope results
         limit: Max results (default 20)
-        max_tokens: Reply budget, ~4 chars/token (default 1500). Memories past
+        max_tokens: Reply budget, ~4 chars/token (default 2500). Memories past
             it are dropped from the tail and the reply carries
             "truncated": True. Pass a larger value to get the rest.
     """
@@ -249,6 +269,7 @@ def vault_memories(
     memories = search_memories(
         conn, query=query, entity_type=entity_type,
         workspace=workspace, limit=limit, embed_url=_embed_url(),
+        context=None if workspace or not query else _query_workspace(conn, query),
     )
 
     # Memory drift detection (issue #38): a retrieval is the natural moment to
