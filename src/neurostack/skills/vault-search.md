@@ -42,7 +42,7 @@ NeuroStack has multiple retrieval tools. Pick the right one:
 Every result lands in the caller's context window, so pull only what you need:
 
 - **Scan then fetch.** `vault_search(query, reference_only=True)` returns just `{path, score, snippet}` — no summaries or bodies — plus a fetch hint. Pick the 1-2 relevant paths, then `vault_summary(path)` for the gist or `vault_read_file(path, offset, limit)` for exact text.
-- **Budget a search.** `vault_search(query, max_tokens=N)` stops accumulating once ~N tokens (4 chars/token) are used, always keeps at least one result, and sets `truncated: true` when it clips. Applies across every depth. Use it in tight contexts (session bootstrap, autonomous loops).
+- **Budget a search.** `vault_search(query, max_tokens=N)` stops accumulating once ~N tokens (4 chars/token) are used, always keeps at least one result, and sets `truncated: true` when it clips. Applies across every depth. Use it in tight contexts (session bootstrap, autonomous loops). Depth `auto` and `summaries` default to 2000 tokens and drop memories first; pass a larger `max_tokens` when a reply says `truncated: true` and you need the rest.
 - **Page large notes.** `vault_read_file(path, offset, limit)` reads a slice and reports `size_chars`/`offset`/`truncated`. Read the first `limit` chars, then advance `offset` — don't dump a whole 50 KB note. The no-arg call still returns the full file.
 
 ## After retrieval: record what you used
