@@ -1479,8 +1479,8 @@ def search_triples(
     workspace = _normalize_workspace(workspace)
 
     if mode == "keyword":
-        fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
-        results = _to_triple_results(conn, fts_results[:top_k])
+        fts_results = triple_fts_search(conn, query, limit=top_k * 3, workspace=workspace)
+        results = _to_triple_results(conn, fts_results, top_k)
         if record:
             _record_note_usage(
                 conn, [r.note_path for r in results], tier="primed", source="search"
@@ -1495,8 +1495,8 @@ def search_triples(
             " falling back to FTS5-only triple search: %s",
             exc,
         )
-        fts_results = triple_fts_search(conn, query, limit=top_k, workspace=workspace)
-        results = _to_triple_results(conn, fts_results[:top_k])
+        fts_results = triple_fts_search(conn, query, limit=top_k * 3, workspace=workspace)
+        results = _to_triple_results(conn, fts_results, top_k)
         if record:
             _record_note_usage(
                 conn, [r.note_path for r in results], tier="primed", source="search"
@@ -1505,11 +1505,10 @@ def search_triples(
 
     if mode == "semantic":
         sem_results = triple_semantic_search(
-            conn, query_embedding, limit=top_k * 3 if context else top_k,
-            workspace=workspace,
+            conn, query_embedding, limit=top_k * 3, workspace=workspace,
         )
         _boost_triples_by_context(conn, sem_results, context, embed_url=embed_url)
-        results = _to_triple_results(conn, sem_results[:top_k])
+        results = _to_triple_results(conn, sem_results, top_k)
         if record:
             _record_note_usage(
                 conn, [r.note_path for r in results], tier="primed", source="search"
@@ -1523,11 +1522,10 @@ def search_triples(
 
     if not fts_results:
         sem_results = triple_semantic_search(
-            conn, query_embedding, limit=top_k * 3 if context else top_k,
-            workspace=workspace,
+            conn, query_embedding, limit=top_k * 3, workspace=workspace,
         )
         _boost_triples_by_context(conn, sem_results, context, embed_url=embed_url)
-        results = _to_triple_results(conn, sem_results[:top_k])
+        results = _to_triple_results(conn, sem_results, top_k)
         if record:
             _record_note_usage(
                 conn, [r.note_path for r in results], tier="primed", source="search"
@@ -1542,7 +1540,7 @@ def search_triples(
             valid_results.append(r)
 
     if not valid_results:
-        results = _to_triple_results(conn, fts_results[:top_k])
+        results = _to_triple_results(conn, fts_results, top_k)
         if record:
             _record_note_usage(
                 conn, [r.note_path for r in results], tier="primed", source="search"
@@ -1560,7 +1558,7 @@ def search_triples(
 
     valid_results.sort(key=lambda x: x["score"], reverse=True)
 
-    results = _to_triple_results(conn, valid_results[:top_k])
+    results = _to_triple_results(conn, valid_results, top_k)
     if record:
         _record_note_usage(
             conn, [r.note_path for r in results], tier="primed", source="search"
@@ -1568,10 +1566,19 @@ def search_triples(
     return results
 
 
-def _to_triple_results(conn: sqlite3.Connection, results: list[dict]) -> list[TripleResult]:
-    """Convert raw triple results to TripleResult objects."""
-    triple_results = []
+def _to_triple_results(
+    conn: sqlite3.Connection, results: list[dict], top_k: int,
+) -> list[TripleResult]:
+    """The best ``top_k`` distinct facts in ``results`` as TripleResult objects.
+
+    The index can hold one fact several times for a note (#320), so a repeat
+    gives its slot to the next distinct fact. Callers fetch 3x top_k for that.
+    """
+    unique: dict[tuple, dict] = {}
     for r in results:
+        unique.setdefault((r["note_path"], r["subject"], r["predicate"], r["object"]), r)
+    triple_results = []
+    for r in list(unique.values())[:top_k]:
         note = conn.execute(
             "SELECT title FROM notes WHERE path = ?", (r["note_path"],)
         ).fetchone()

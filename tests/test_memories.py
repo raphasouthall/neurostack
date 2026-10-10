@@ -200,6 +200,44 @@ class TestSearchMemories:
         assert not any("Already expired" in m.content for m in results)
 
 
+class TestHybridMemorySearch:
+    """FTS and semantic channels fused by reciprocal rank (#320)."""
+
+    def _add(self, conn, content, vec):
+        import numpy as np
+        conn.execute(
+            "INSERT INTO memories (content, tags, embedding) VALUES (?, '[]', ?)",
+            (content, np.array(vec, dtype=np.float32).tobytes()),
+        )
+
+    def test_meaning_match_joins_the_keyword_hit(self, in_memory_db, monkeypatch):
+        import numpy as np
+
+        import neurostack.embedder as embedder_mod
+        conn = in_memory_db
+        # Has every query word, but is about licensing.
+        self._add(conn, "Entra licensing note for AVD Azure Virtual Desktop session host",
+                  [0.6, 0.8, 0.0])
+        # Same topic, few shared words, so FTS5 alone never sees it.
+        self._add(conn, "AVD scaling plan drains idle hosts overnight", [1.0, 0.1, 0.0])
+        self._add(conn, "Grafana dashboard colour palette", [0.0, 0.0, 1.0])
+        conn.commit()
+        monkeypatch.setattr(embedder_mod, "get_embedding",
+                            lambda q, base_url=None: np.array([1.0, 0.0, 0.0], dtype=np.float32))
+
+        results = search_memories(conn, query="AVD Azure Virtual Desktop session host",
+                                  embed_url="http://fake")
+
+        contents = [m.content for m in results]
+        assert any("Entra licensing" in c for c in contents)
+        assert any("scaling plan" in c for c in contents)
+        # The semantic channel pads in unrelated memories; their score stays
+        # near zero so callers' score floors still drop them.
+        by_content = {m.content: m.score for m in results}
+        assert by_content.get("Grafana dashboard colour palette", 0.0) < 0.1
+
+
+
 class TestPruneMemories:
     def test_prune_expired(self, in_memory_db):
         save_memory(in_memory_db, content="Active")

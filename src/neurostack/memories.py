@@ -815,7 +815,7 @@ def search_memories(
 ) -> list[Memory]:
     """Search memories by text, type, and/or workspace.
 
-    Uses FTS5 for keyword search, with optional semantic reranking.
+    Fuses FTS5 keyword search with semantic search by reciprocal rank.
     ``context`` applies a soft 1.4x boost (workspace/tag match) on the scored
     semantic paths; the no-query listing path has no score to boost.
     """
@@ -880,50 +880,50 @@ def _hybrid_memory_search(
     embed_url: str | None = None,
     context: str | None = None,
 ) -> list[Memory]:
-    """FTS5 + semantic search over memories."""
-    # FTS5 search
+    """FTS5 and semantic search over memories, fused by reciprocal rank (#320).
+
+    FTS5 needs every query term, so a long query matches few memories. The
+    semantic channel brings in memories that share meaning but not words, as
+    note search does. Results follow the fused rank, but ``score`` is the cosine
+    similarity times the context boost, so callers' absolute and relative
+    floors keep their meaning. Without embeddings the FTS order stands, unscored.
+    """
+    from .search import RRF_K, RRF_POOL
+
+    filters = ["(m.expires_at IS NULL OR m.expires_at > datetime('now'))"]
+    filter_params: list = []
+    if entity_type:
+        filters.append("m.entity_type = ?")
+        filter_params.append(entity_type)
+    if workspace:
+        ws = workspace.strip("/")
+        filters.append("(m.workspace = ? OR m.workspace LIKE ? || '/%')")
+        filter_params.extend([ws, ws])
+    where = " AND ".join(filters)
+    columns = (
+        "m.memory_id, m.content, m.tags, m.entity_type, m.source_agent,"
+        " m.workspace, m.created_at, m.expires_at, m.embedding, m.session_id,"
+        " m.updated_at, m.revision_count, m.merge_count, m.merged_from, m.uuid,"
+        " m.file_path"
+    )
+
     safe_query = " ".join(
         '"' + word.replace('"', '') + '"'
         for word in query.split()
         if word and not word.startswith("-")
     )
-
-    fts_results = []
+    fts_results: list[dict] = []
     if safe_query:
-        where_extra = ""
-        params: list = [safe_query]
+        try:
+            fts_results = [dict(r) for r in conn.execute(
+                f"SELECT {columns} FROM memories_fts"
+                " JOIN memories m ON m.memory_id = memories_fts.rowid"
+                f" WHERE memories_fts MATCH ? AND {where} ORDER BY rank LIMIT ?",
+                [safe_query, *filter_params, RRF_POOL],
+            )]
+        except sqlite3.OperationalError as exc:
+            log.debug("FTS memory query rejected: %s", exc)
 
-        if entity_type:
-            where_extra += " AND m.entity_type = ?"
-            params.append(entity_type)
-        if workspace:
-            ws = workspace.strip("/")
-            where_extra += " AND (m.workspace = ? OR m.workspace LIKE ? || '/%')"
-            params.extend([ws, ws])
-
-        where_extra += " AND (m.expires_at IS NULL OR m.expires_at > datetime('now'))"
-
-        rows = conn.execute(
-            f"""
-            SELECT m.memory_id, m.content, m.tags,
-                   m.entity_type, m.source_agent,
-                   m.workspace, m.created_at,
-                   m.expires_at, m.embedding,
-                   m.session_id, m.updated_at,
-                   m.revision_count, m.merge_count,
-                   m.merged_from, m.uuid,
-                   m.file_path, rank
-            FROM memories_fts
-            JOIN memories m ON m.memory_id = memories_fts.rowid
-            WHERE memories_fts MATCH ?{where_extra}
-            ORDER BY rank
-            LIMIT ?
-            """,
-            params + [limit * 3],
-        ).fetchall()
-        fts_results = [dict(r) for r in rows]
-
-    # Try semantic reranking
     try:
         import numpy as np
 
@@ -934,85 +934,42 @@ def _hybrid_memory_search(
             get_embedding,
         )
 
-        url = embed_url or get_config().embed_url
-        query_emb = get_embedding(query, base_url=url)
-
-        if fts_results:
-            # Rerank FTS results by cosine similarity
-            embeddings = []
-            valid = []
-            for r in fts_results:
-                if r.get("embedding"):
-                    embeddings.append(blob_to_embedding(r["embedding"]))
-                    valid.append(r)
-
-            if valid:
-                matrix = np.stack(embeddings)
-                scores = cosine_similarity_batch(query_emb, matrix)
-                for i, r in enumerate(valid):
-                    fts_score = 1.0 / (1.0 + abs(r.get("rank", 0)))
-                    r["score"] = 0.3 * fts_score + 0.7 * float(scores[i])
-                _boost_memories_by_context(valid, context)
-                valid.sort(key=lambda x: x["score"], reverse=True)
-                return [_row_to_memory(r, score=r["score"]) for r in valid[:limit]]
-
-        # Fallback: pure semantic search if FTS returned nothing
-        if not fts_results:
-            where_parts = [
-                "embedding IS NOT NULL",
-                "(expires_at IS NULL OR expires_at > datetime('now'))",
-            ]
-            sem_params: list = []
-            if entity_type:
-                where_parts.append("entity_type = ?")
-                sem_params.append(entity_type)
-            if workspace:
-                ws = workspace.strip("/")
-                where_parts.append("(workspace = ? OR workspace LIKE ? || '/%')")
-                sem_params.extend([ws, ws])
-
-            rows = conn.execute(
-                f"""
-                SELECT memory_id, content, tags,
-                       entity_type, source_agent,
-                       workspace, created_at,
-                       expires_at, embedding,
-                       session_id, updated_at,
-                       revision_count, merge_count,
-                       merged_from, uuid, file_path
-                FROM memories
-                WHERE {' AND '.join(where_parts)}
-                """,
-                sem_params,
-            ).fetchall()
-
-            if rows:
-                embeddings = []
-                data = []
-                for r in rows:
-                    embeddings.append(blob_to_embedding(r["embedding"]))
-                    data.append(dict(r))
-
-                matrix = np.stack(embeddings)
-                scores = cosine_similarity_batch(query_emb, matrix)
-                scored = []
-                for idx in np.argsort(scores)[::-1][: limit * 3 if context else limit]:
-                    d = data[idx]
-                    d["score"] = float(scores[idx])
-                    scored.append(d)
-                _boost_memories_by_context(scored, context)
-                scored.sort(key=lambda x: x["score"], reverse=True)
-
-                return [
-                    _row_to_memory(d, score=d["score"])
-                    for d in scored[:limit]
-                ]
-
+        query_emb = get_embedding(query, base_url=embed_url or get_config().embed_url)
+        rows = [dict(r) for r in conn.execute(
+            f"SELECT {columns} FROM memories m WHERE m.embedding IS NOT NULL AND {where}",
+            filter_params,
+        )]
+        cosine: dict[int, float] = {}
+        sem_results: list[dict] = []
+        if rows:
+            matrix = np.stack([blob_to_embedding(r["embedding"]) for r in rows])
+            scores = cosine_similarity_batch(query_emb, matrix)
+            cosine = {r["memory_id"]: float(s) for r, s in zip(rows, scores)}
+            # Stable sort, so tied memories keep insertion order.
+            sem_results = [rows[i] for i in np.argsort(-scores, kind="stable")[:RRF_POOL]]
     except Exception as exc:
         log.debug("Semantic memory search unavailable: %s", exc)
+        return [_row_to_memory(r) for r in fts_results[:limit]]
 
-    # Fallback: return FTS results without reranking
-    return [_row_to_memory(r) for r in fts_results[:limit]]
+    fused: dict[int, float] = {}
+    candidates: dict[int, dict] = {}
+    for channel in (fts_results, sem_results):
+        for i, r in enumerate(channel):
+            candidates.setdefault(r["memory_id"], r)
+            fused[r["memory_id"]] = fused.get(r["memory_id"], 0.0) + 1.0 / (RRF_K + i + 1)
+
+    ranked = list(candidates.values())
+    for r in ranked:
+        r["score"] = fused[r["memory_id"]]
+    _boost_memories_by_context(ranked, context)
+    ranked.sort(key=lambda r: r["score"], reverse=True)
+    # Report cosine, scaled by whatever context boost the fused score took.
+    return [
+        _row_to_memory(
+            r, score=cosine.get(r["memory_id"], 0.0) * r["score"] / fused[r["memory_id"]],
+        )
+        for r in ranked[:limit]
+    ]
 
 
 def prune_memories(
