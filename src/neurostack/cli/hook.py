@@ -99,6 +99,10 @@ _HASHLINE_HEADER = re.compile(r"^\[([^\]#]+)#[0-9A-Fa-f]{4}\]", re.MULTILINE)
 _LOCK_SUFFIX = ".checkpoint.lock"
 _STATE_LOCK_SUFFIX = ".state.lock"
 _XD_PREFIX = "xd://"
+# NeuroStack's own bookkeeping calls carry no task context, so a `when-calling:`
+# reminder on them is noise (#324). The memory-editing tools stay matched: their
+# triggers record API gotchas worth seeing before the call.
+_NO_TRIGGER_TOOLS = frozenset({"vault_record_usage", "vault_trigger_outcome"})
 
 
 @dataclass
@@ -663,7 +667,10 @@ def _event_tool_call(client: McpClient, payload: dict, state: SessionState,
     _observe_call(client, state)
     workspace = _workspace(cfg, payload)
     hits: list[dict] = []
-    for name in _tool_names(tool, tool_input):
+    names = _tool_names(tool, tool_input)
+    if any(normalise_tool(name) in _NO_TRIGGER_TOOLS for name in names):
+        return Verdict()
+    for name in names:
         hits += _fetch_triggers(client, state, "calling", name, workspace)
     for path in _edited_paths(payload, tool, tool_input):
         hits += _fetch_triggers(client, state, "editing", path, workspace)

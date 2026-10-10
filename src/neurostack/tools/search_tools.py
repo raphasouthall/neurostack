@@ -5,8 +5,12 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
+from collections import Counter
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 
 from .registry import ToolAnnotationHints as Hints
 from .registry import registry
@@ -37,6 +41,8 @@ _STATUS_HEADING = re.compile(
 )
 _OPEN_HEADING = re.compile(r"(?:open|next|to-?do)\b", re.IGNORECASE)
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# Words too common to tell one project folder from another (#324).
+_STOPWORDS = frozenset({"a", "an", "and", "for", "in", "of", "on", "the", "to", "via", "with"})
 
 
 def _cfg():
@@ -166,49 +172,109 @@ def _status_text(body: str) -> str:
     return "\n\n".join(_clip(f"**{h}**\n{t}", share) for h, t in picks)
 
 
-def _project_status(result: dict) -> list[dict]:
-    """Status of the projects whose folders hold the hits, best hit first (#322).
+def _words(text: str) -> frozenset[str]:
+    return frozenset(re.findall(r"[a-z0-9]+", text.lower())) - _STOPWORDS
+
+
+def _read_project_note(root: Path, folder: str, slug: str) -> tuple[str, str, Path] | None:
+    """(name, text, absolute path) of ``<slug>.md``, else ``index.md``, in `folder`."""
+    from .file_tools import PathSafetyError, _safe_path
+
+    for name in (f"{slug}.md", "index.md"):
+        try:
+            abs_path = _safe_path(f"{folder}/{name}", root)
+            return name, abs_path.read_text(encoding="utf-8"), abs_path
+        except (PathSafetyError, OSError, UnicodeDecodeError):
+            continue
+    return None
+
+
+def _title_and_body(text: str, slug: str) -> tuple[str, str]:
+    """The note's H1, else `slug`, and the body after frontmatter and H1."""
+    from .file_tools import _FRONTMATTER_RE
+
+    fm = _FRONTMATTER_RE.match(text)
+    body = text[fm.end():] if fm else text
+    h1 = re.match(r"\s*# (.+)\n?", body)
+    return (h1.group(1).strip(), body[h1.end():]) if h1 else (slug, body)
+
+
+@lru_cache(maxsize=32)
+def _project_words(root: Path, projects_dir: str, mtime: float) -> dict[str, frozenset[str]]:
+    """Slug and project note title words of every folder in `projects_dir` (#324).
+
+    Keyed on the directory's mtime, so adding or removing a project folder reads
+    the listing afresh. A retitled note keeps its old words until restart.
+    """
+    words = {}
+    for entry in (root / projects_dir).iterdir():
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        note = _read_project_note(root, f"{projects_dir}/{entry.name}", entry.name)
+        title = _title_and_body(note[1], entry.name)[0] if note else ""
+        words[entry.name] = _words(entry.name) | _words(title)
+    return words
+
+
+def _project_status(result: dict, query: str) -> list[dict]:
+    """Status of the projects the query and its hits point at (#322, #324).
+
+    Candidates are the folders of every projects/ directory that holds a hit. A
+    folder ranks by the query words its slug and project note title share, each
+    weighted by how few folders carry it, then by its best hit. A folder without
+    a hit needs one shared word. Hit order alone put a project that shared one
+    common word ahead of the one the query named (#324).
 
     The project note is ``projects/<slug>/<slug>.md``, else ``index.md`` in the
     same folder; `_status_text` picks the part of it to show.
     """
-    from .file_tools import _FRONTMATTER_RE, PathSafetyError, _safe_path, _vault_root
+    from .file_tools import PathSafetyError, _safe_dir, _vault_root
 
     root = _vault_root()
-    projects: list[dict] = []
-    seen: set[str] = set()
-    for path in _hit_paths(result):
+    first_hit: dict[str, int] = {}
+    dirs: set[str] = set()
+    for n, path in enumerate(_hit_paths(result)):
         parts = path.split("/")
         if "projects" not in parts:
             continue
         i = parts.index("projects")
         if len(parts) < i + 3:  # projects/<note>.md sits in no project folder
             continue
-        folder, slug = "/".join(parts[: i + 2]), parts[i + 1]
-        if folder in seen:
-            continue
-        seen.add(folder)
-        for name in (f"{slug}.md", "index.md"):
-            try:
-                abs_path = _safe_path(f"{folder}/{name}", root)
-                text = abs_path.read_text(encoding="utf-8")
-            except (PathSafetyError, OSError, UnicodeDecodeError):
-                continue
-            break
-        else:
-            continue
+        dirs.add("/".join(parts[: i + 1]))
+        first_hit.setdefault("/".join(parts[: i + 2]), n)
 
-        fm = _FRONTMATTER_RE.match(text)
-        body = text[fm.end():] if fm else text
-        h1 = re.match(r"\s*# (.+)\n?", body)
-        title = h1.group(1).strip() if h1 else slug
-        status = _status_text(body[h1.end():] if h1 else body)
+    folders: dict[str, frozenset[str]] = dict.fromkeys(first_hit, frozenset())
+    for d in dirs:
+        try:
+            listing = _project_words(root, d, _safe_dir(d, root).stat().st_mtime)
+        except (PathSafetyError, OSError):
+            continue
+        folders.update((f"{d}/{slug}", words) for slug, words in listing.items())
+    df = Counter(w for words in folders.values() for w in words)
+    query_words = _words(query)
+    match = {
+        f: sum(math.log(1 + len(folders) / df[w]) for w in words & query_words)
+        for f, words in folders.items()
+    }
+    ranked = sorted(
+        (f for f in folders if f in first_hit or match[f] > 0),
+        key=lambda f: (-match[f], first_hit.get(f, math.inf)),
+    )
+
+    projects: list[dict] = []
+    for folder in ranked:
+        slug = folder.rsplit("/", 1)[1]
+        note = _read_project_note(root, folder, slug)
+        if note is None:
+            continue
+        name, text, abs_path = note
+        title, body = _title_and_body(text, slug)
         mtime = abs_path.stat().st_mtime
         projects.append({
             "path": f"{folder}/{name}",
             "title": title,
             "updated": datetime.fromtimestamp(mtime, timezone.utc).date().isoformat(),
-            "status": status,
+            "status": _status_text(body),
         })
         if len(projects) == MAX_PROJECTS:
             break
@@ -274,7 +340,8 @@ def vault_search(
     `results`. "triples", "summaries" and "auto" return `depth_used` plus
     whichever of `triples`, `summaries`, `chunks` was served. When a hit sits
     in a projects/<slug>/ folder, `projects` carries up to two project notes'
-    current status, which outranks older sibling notes and memories.
+    current status, which outranks older sibling notes and memories. Projects
+    whose folder name or title shares the query's words come first.
 
     After reading a result, call vault_record_usage([path]) once with every
     path that actually informed the answer. That is what teaches ranking.
@@ -317,7 +384,7 @@ def vault_search(
             result["reranked"] = True
         if truncated:
             result["truncated"] = True
-        if projects := _project_status(result):
+        if projects := _project_status(result, query):
             result["projects"] = projects
         return result
 
@@ -344,7 +411,7 @@ def vault_search(
 
         # Counted in the budget below but never trimmed, since the project
         # note is the freshest source in the reply (#322).
-        if projects := _project_status(result):
+        if projects := _project_status(result, query):
             result["projects"] = projects
 
         if max_tokens is not None:
@@ -405,7 +472,7 @@ def vault_search(
     memories = _search_memories_for_results(query, workspace, limit=3)
     if memories:
         result["memories"] = memories
-    if projects := _project_status(result):
+    if projects := _project_status(result, query):
         result["projects"] = projects
 
     return result
