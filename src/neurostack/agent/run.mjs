@@ -173,8 +173,17 @@ let code = 0;
 try {
 	await session.prompt(job.prompt);
 	await session.waitForIdle();
-	const last = session.getLastAssistantText() || "";
-	console.log(`[${stamp()}] done\n${last}`);
+	// Pi ends a turn whose model call failed (after its retries) with an
+	// assistant message, not a throw; the timeout ends one as aborted. Either way
+	// the job did not run, and exit 0 would record it as ok (#326).
+	const last = session.messages.findLast((m) => m.role === "assistant");
+	if (!last || last.stopReason === "error" || last.stopReason === "aborted") {
+		const why = last ? `${last.stopReason}: ${last.errorMessage || "no message"}` : "no reply";
+		console.log(`[${stamp()}] failed, model turn ended with ${why}`);
+		code = 1;
+	} else {
+		console.log(`[${stamp()}] done\n${session.getLastAssistantText() || ""}`);
+	}
 } catch (err) {
 	console.error(`agent failed: ${err?.stack || err}`);
 	code = 1;
