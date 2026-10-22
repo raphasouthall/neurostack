@@ -58,6 +58,12 @@ class ClientConfig:
     # agent activity next to the server-side jobs (issue #165). None means
     # no webhook: `post_event` is a no-op.
     event_url: str | None = None
+    # Which trigger events inject reminders, and how many per tool call (#330).
+    # calling/editing triggers matched on loose text and filled 9% of a
+    # session's tool output with off-topic memories, so only errors inject
+    # unless client.toml lists the others.
+    trigger_events: tuple[str, ...] = ("error",)
+    trigger_max_per_call: int = 2
 
     def urls(self) -> list[str]:
         """Primary URL, then the fallback when it is a distinct address."""
@@ -130,6 +136,13 @@ def load_client_config(path: Path | None = None) -> ClientConfig:
     cap = raw.get("checkpoint_max_messages")
     if isinstance(cap, int) and cap > 0:
         cfg.checkpoint_max_messages = cap
+    events = raw.get("trigger_events")
+    if isinstance(events, list):
+        cfg.trigger_events = tuple(
+            e for e in events if e in ("calling", "editing", "error"))
+    per_call = raw.get("trigger_max_per_call")
+    if isinstance(per_call, int) and per_call >= 0:
+        cfg.trigger_max_per_call = per_call
     mapping = raw.get("workspace_map")
     if isinstance(mapping, dict):
         cfg.workspace_map = {
