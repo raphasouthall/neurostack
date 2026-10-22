@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- The daily `health` job refreshes stale summaries (#328). It ran the backfill only when embedding coverage dropped, and the daily reindex skips summaries, so stale summaries grew from 78 to 112 and the job failed every day from 2026-10-11. It now backfills whenever it finds any problem.
 - A Pi agent job whose model calls all fail now exits 1 (#326). The runner exited 0 when its final turn ended in a provider error or the timeout, so `promotion` reported ok with nothing done and `reconcile` moved its cursor past memories no agent reviewed. It now prints the stop reason and the error message.
 - The `vault_search` project status block picks projects by the question, not hit order (#324). A project folder scores on query words shared with its slug or title, rarer words weighing more, and a matching folder can join without a hit. A tagging project ranked first no longer displaces the project the question names.
 - `vault_memories` without a workspace infers one from the query's top note hits (more than half sharing a folder) and boosts memories there (#324). The default cap rises from 1,500 to 2,500 tokens, so one call usually covers a topic.

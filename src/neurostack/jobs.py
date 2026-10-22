@@ -258,7 +258,9 @@ def _health(cfg, conn) -> dict[str, Any]:
     from .tools.search_tools import vault_stats
 
     stats = vault_stats()
-    backfilled = _pct(stats["embedding_coverage"]) < 98
+    # The daily reindex skips summaries, so health is the only job that
+    # refreshes them; without this, stale summaries only ever grow.
+    backfilled = bool(_health_problems(stats))
     if backfilled:
         # The same `neurostack backfill` (target all) the n8n health check ran.
         cmd_backfill(SimpleNamespace(target="all", vault=str(cfg.vault_root),
