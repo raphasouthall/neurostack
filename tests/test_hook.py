@@ -41,7 +41,12 @@ def _throwaway_home(isolated_home):
     return isolated_home
 
 
+# These tests cover calling/editing triggers, which client.toml must opt into (#330).
+ALL_EVENTS = ("calling", "editing", "error")
+
+
 def _cfg(server, **kwargs):
+    kwargs = {"trigger_events": ALL_EVENTS, "trigger_max_per_call": 10, **kwargs}
     return ClientConfig(url=server.url, timeout_s=5.0, **kwargs)
 
 
@@ -84,6 +89,11 @@ def _run_cli(payload, server_url, home, event="tool-call", extra_env=None, args=
         "NEUROSTACK_URL": server_url,
     }
     env.update(extra_env or {})
+    config = home / ".config" / "neurostack" / "client.toml"
+    if not config.exists():
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text('trigger_events = ["calling", "editing", "error"]\n'
+                          "trigger_max_per_call = 10\n")
     return subprocess.run(
         [sys.executable, "-m", "neurostack", "hook", event, *args],
         input=json.dumps(payload), capture_output=True, text=True, env=env, timeout=120,
@@ -364,6 +374,7 @@ def test_both_urls_down_exits_zero_with_one_stderr_line(isolated_home):
         f'url = "http://127.0.0.1:{_dead_port()}/mcp"\n'
         f'fallback_url = "http://127.0.0.1:{_dead_port()}/mcp"\n'
         "timeout_s = 2\n"
+        'trigger_events = ["calling"]\n'
     )
     started = time.monotonic()
     result = _run_cli({"session": "s10", "tool": "vault_write_file"}, "", isolated_home,
@@ -735,3 +746,22 @@ def test_token_is_sent_as_a_bearer_header(server):
     finally:
         handler.do_POST = original
     assert seen["auth"] == "Bearer t0ken"
+
+
+def test_default_config_injects_only_errors_and_at_most_two(server):
+    """A matching call stays silent; a matching error shows its two newest (#330)."""
+    errors = [{"memory_id": 500 + i, "content": f"fix {i}",
+               "trigger": "when-error:path not found"} for i in range(4)]
+    server.replies["vault_triggers"] = lambda args: {
+        "hits": [TRIGGER_HIT] if args["event"] == "calling" else errors}
+    cfg = ClientConfig(url=server.url, timeout_s=5.0)
+    call = {"session": "s330", "tool": "vault_write_file", "id": "c1"}
+    assert run_event("tool-call", call, cfg=cfg).text == ""
+    text = run_event("tool-result", {**call, "error": "path not found"}, cfg=cfg).text
+    assert "memory 2164" not in text
+    assert "memory 500" in text and "memory 501" in text
+    assert "memory 502" not in text
+    # The two unshown memories stay unfired, so a later error can still show them.
+    again = run_event("tool-result", {**call, "id": "c2", "error": "path not found again"},
+                      cfg=cfg).text
+    assert "memory 502" in again and "memory 503" in again

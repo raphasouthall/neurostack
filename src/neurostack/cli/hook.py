@@ -463,6 +463,7 @@ def _fetch_triggers(
     event: str,
     value: str,
     workspace: str | None,
+    room: int,
 ) -> list[dict]:
     """Trigger hits that have not fired yet in this session.
 
@@ -470,7 +471,7 @@ def _fetch_triggers(
     fires once, so the server sees no repeat traffic and a repeated call
     shows nothing new.
     """
-    if not value:
+    if not value or room <= 0:
         return []
     key = f"{event}\x00{value}"
     if key in state.checked:
@@ -484,7 +485,7 @@ def _fetch_triggers(
     fresh = [
         h for h in hits or []
         if _valid_hit(h) and h["memory_id"] not in state.fired
-    ]
+    ][:room]
     for hit in fresh:
         state.fired.add(hit["memory_id"])
     return fresh
@@ -670,10 +671,14 @@ def _event_tool_call(client: McpClient, payload: dict, state: SessionState,
     names = _tool_names(tool, tool_input)
     if any(normalise_tool(name) in _NO_TRIGGER_TOOLS for name in names):
         return Verdict()
-    for name in names:
-        hits += _fetch_triggers(client, state, "calling", name, workspace)
-    for path in _edited_paths(payload, tool, tool_input):
-        hits += _fetch_triggers(client, state, "editing", path, workspace)
+    cap = cfg.trigger_max_per_call
+    if "calling" in cfg.trigger_events:
+        for name in names:
+            hits += _fetch_triggers(client, state, "calling", name, workspace, cap - len(hits))
+    if "editing" in cfg.trigger_events:
+        for path in _edited_paths(payload, tool, tool_input):
+            hits += _fetch_triggers(client, state, "editing", path, workspace,
+                                    cap - len(hits))
     if not hits:
         return Verdict()
     for hit in hits:
@@ -703,7 +708,10 @@ def _event_tool_result(client: McpClient, payload: dict, state: SessionState,
     if not text:
         return Verdict(reminder)
     _observe_error(client, state, text)
-    hits = _fetch_triggers(client, state, "error", text[:500], _workspace(cfg, payload))
+    if "error" not in cfg.trigger_events:
+        return Verdict(reminder)
+    hits = _fetch_triggers(client, state, "error", text[:500], _workspace(cfg, payload),
+                           cfg.trigger_max_per_call)
     if not hits:
         return Verdict(reminder)
     key = _error_key(text)
