@@ -260,7 +260,7 @@ def test_transcript_cwd_reads_the_omp_header_and_claude_records(tmp_path):
     (Verdict("neurostack: checkpoint already running"),
      "no payload: neurostack: checkpoint already running"),
 ])
-def test_a_failed_or_busy_checkpoint_finishes_failed_and_fails_the_run(
+def test_a_failed_or_busy_checkpoint_is_retried_later_and_fails_the_run(
         in_memory_db, client, runs, tmp_path, reply, output):
     runs.reply = reply
     job_id = add(in_memory_db, "checkpoint", "s1", {"session": "s1", "harness": "omp"},
@@ -270,7 +270,7 @@ def test_a_failed_or_busy_checkpoint_finishes_failed_and_fails_the_run(
         JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
 
     assert (_row(in_memory_db, job_id)["status"], _row(in_memory_db, job_id)["output"]) == (
-        "failed", output)
+        "queued", f"attempt 1 failed: {output}")
     assert list((tmp_path / "tmp").iterdir()) == []
 
 
@@ -349,8 +349,9 @@ def test_worker_reaps_a_stale_run_before_claiming(in_memory_db, client, runs, tm
     result = JOBS["checkpoint-worker"].run(_server(tmp_path), in_memory_db)
 
     assert result["reaped"] == 1 and result["claimed"] == 0
-    assert _row(in_memory_db, stale)["status"] == "failed"
-    assert _row(in_memory_db, stale)["transcript"] is None
+    # Reaped runs go back to the queue with their transcript, behind a backoff (#332).
+    assert _row(in_memory_db, stale)["status"] == "queued"
+    assert _row(in_memory_db, stale)["transcript"] == "x\n"
 
 
 def test_checkpoint_worker_stops_at_fifty_a_day(in_memory_db, client, runs, tmp_path):
