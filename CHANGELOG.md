@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- A failed harvest or checkpoint job is retried (#332). The server dropped its transcript and the client had already moved past it, so 14 transcript parts were lost in the 2026-10-21 proxy outage. A failed or stale job now goes back to the queue with its transcript after 1, 2, 4 and 8 hours, and fails for good on the fifth attempt.
 - Trigger reminders no longer flood the context (#330). In one session they were 9% of all tool output, about 140k tokens, much of it off-topic. By default only errors inject reminders now, at most 2 per tool call. Set `trigger_events = ["calling", "editing", "error"]` and `trigger_max_per_call` in `client.toml` to change that.
 - The daily `health` job refreshes stale summaries (#328). It ran the backfill only when embedding coverage dropped, and the daily reindex skips summaries, so stale summaries grew from 78 to 112 and the job failed every day from 2026-10-11. It now backfills whenever it finds any problem.
 - A Pi agent job whose model calls all fail now exits 1 (#326). The runner exited 0 when its final turn ended in a provider error or the timeout, so `promotion` reported ok with nothing done and `reconcile` moved its cursor past memories no agent reviewed. It now prints the stop reason and the error message.

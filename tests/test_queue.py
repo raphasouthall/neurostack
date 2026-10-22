@@ -28,6 +28,23 @@ def _age(conn, job_id, minutes):
     conn.commit()
 
 
+def test_a_failed_job_waits_out_its_backoff_then_gives_up_after_five(in_memory_db):
+    """#332: the client moved past the part, so the server must retry it."""
+    job = add(in_memory_db, "harvest", "t@1#0", {"path": "t"}, transcript="body")["job_id"]
+    for attempt in range(1, 6):
+        assert claim(in_memory_db, "harvest")["job"]["transcript"] == "body"
+        row = finish(in_memory_db, job, ok=False, output="proxy 503")
+        if attempt < 5:
+            assert row["status"] == "queued"
+            # Not claimable until retry_at passes.
+            assert claim(in_memory_db, "harvest")["claimed"] is False
+            in_memory_db.execute(
+                "UPDATE job_queue SET payload = json_set(payload, '$.retry_at', '') "
+                "WHERE job_id = ?", (job,))
+    assert row["status"] == "failed" and row["payload"]["attempts"] == 5
+    assert row["transcript_chars"] == 0
+
+
 class TestAdd:
     def test_second_request_for_a_live_key_is_a_duplicate(self, in_memory_db):
         first = add(in_memory_db, "checkpoint", "sess-1")

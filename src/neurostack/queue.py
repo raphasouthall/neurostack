@@ -12,6 +12,8 @@ Everything a scheduler needs is here instead:
 - ``claim`` hands out at most ``concurrency`` jobs, atomically.
 - ``finish`` records the outcome.
 - ``reap`` fails jobs whose runner went away.
+- A failed job is queued again with its transcript, after a backoff, until
+  ``MAX_ATTEMPTS`` (#332): the client has already moved past it.
 
 A scheduler then only calls ``neurostack queue …`` and reads JSON. Clients on
 another machine reach the same functions through the ``queue_*`` MCP tools and
@@ -30,6 +32,10 @@ LIVE = ("queued", "running")
 # Largest transcript a job may carry, decompressed. A client trims a longer
 # one to its newest records before uploading it (issue #232).
 TRANSCRIPT_CAP_BYTES = 10 * 1024 * 1024
+# Attempts per job, and the wait before retry n (1h, 2h, 4h, 8h). 15 hours in
+# all outlasts an overnight provider outage (#332).
+MAX_ATTEMPTS = 5
+RETRY_BASE = timedelta(hours=1)
 
 
 @dataclass
@@ -131,12 +137,7 @@ def reap(conn: sqlite3.Connection, queue: str,
     # to count as stale rather than sort itself out of the comparison.
     stale = [r for r in rows if not r["started_at"] or r["started_at"] < cutoff]
     for r in stale:
-        conn.execute(
-            "UPDATE job_queue SET status = 'failed', finished_at = ?, output = ?,"
-            " transcript = NULL WHERE job_id = ?",
-            (_iso(_now()), f"runner went stale after {limits.stale_minutes} minutes",
-             r["job_id"]),
-        )
+        _fail(conn, r, f"runner went stale after {limits.stale_minutes} minutes")
     if stale:
         conn.commit()
     return [_row(r) for r in stale]
@@ -188,15 +189,17 @@ def claim(conn: sqlite3.Connection, queue: str,
         " WHERE job_id = (SELECT j.job_id FROM job_queue j,"
         "   (SELECT job_id, json_extract(payload, '$.path') AS path FROM job_queue"
         "    WHERE queue = ? AND status = 'queued'"
+        "    AND COALESCE(json_extract(payload, '$.retry_at'), '') <= ?"
         "    ORDER BY (json_extract(payload, '$.mtime') IS NULL) ASC,"
         "             json_extract(payload, '$.mtime') DESC,"
         "             job_id DESC LIMIT 1) AS fresh"
         "   WHERE j.queue = ? AND j.status = 'queued'"
+        "   AND COALESCE(json_extract(j.payload, '$.retry_at'), '') <= ?"
         "   AND (j.job_id = fresh.job_id OR (fresh.path IS NOT NULL"
         "        AND json_extract(j.payload, '$.path') = fresh.path))"
         "   ORDER BY COALESCE(json_extract(j.payload, '$.part_start'), 0) ASC,"
         "            j.job_id ASC LIMIT 1)",
-        (started, queue, queue),
+        (started, queue, started, queue, started),
     )
     conn.commit()
     if not cur.rowcount:
@@ -218,15 +221,41 @@ def finish(conn: sqlite3.Connection, job_id: int, ok: bool,
     ).fetchone()
     if row is None:
         raise ValueError(f"no job {job_id}")
-    conn.execute(
-        "UPDATE job_queue SET status = ?, saved = ?, output = ?, finished_at = ?,"
-        " transcript = NULL WHERE job_id = ?",
-        ("done" if ok else "failed", int(saved), output[:2000],
-         _iso(_now()), job_id),
-    )
+    if ok:
+        conn.execute(
+            "UPDATE job_queue SET status = 'done', saved = ?, output = ?, finished_at = ?,"
+            " transcript = NULL WHERE job_id = ?",
+            (int(saved), output[:2000], _iso(_now()), job_id),
+        )
+    else:
+        _fail(conn, row, output)
     conn.commit()
     return _row(conn.execute(
         "SELECT * FROM job_queue WHERE job_id = ?", (job_id,)).fetchone())
+
+
+def _fail(conn: sqlite3.Connection, row: sqlite3.Row, output: str) -> None:
+    """Queue a failed job again after a backoff, or fail it for good (#332)."""
+    try:
+        payload = json.loads(row["payload"] or "{}")
+    except ValueError:
+        payload = {}
+    attempts = int(payload.get("attempts", 0)) + 1
+    payload["attempts"] = attempts
+    if attempts < MAX_ATTEMPTS and row["transcript"] is not None:
+        payload["retry_at"] = _iso(_now() + RETRY_BASE * 2 ** (attempts - 1))
+        conn.execute(
+            "UPDATE job_queue SET status = 'queued', started_at = NULL, payload = ?,"
+            " output = ? WHERE job_id = ?",
+            (json.dumps(payload), f"attempt {attempts} failed: {output}"[:2000],
+             row["job_id"]),
+        )
+        return
+    conn.execute(
+        "UPDATE job_queue SET status = 'failed', payload = ?, output = ?, finished_at = ?,"
+        " transcript = NULL WHERE job_id = ?",
+        (json.dumps(payload), output[:2000], _iso(_now()), row["job_id"]),
+    )
 
 
 def listing(conn: sqlite3.Connection, queue: str | None = None,
