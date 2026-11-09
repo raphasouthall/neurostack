@@ -269,3 +269,7 @@ uv run pytest                            # run tests
 uv run ruff check src/ tests/            # lint
 uv run neurostack doctor                 # validate subsystems
 ```
+
+### Public repository
+
+This repo is public. Never name private projects, clients, employers, hosts or real paths from the maintainer's machine in code, tests, fixtures, commit messages, or PR and issue text. Use neutral placeholders (`acme`, `example`, `/home/user`). CI's `private-names` job fails on a match.

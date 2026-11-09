@@ -16,6 +16,28 @@ jobs:
       - run: uv sync --extra dev
       - run: uv run ruff check src/ tests/
 
+  private-names:
+    # Fails when a private project/client name (regex in the PRIVATE_NAMES
+    # secret) appears in files, new commit messages or PR text. Matches are
+    # never printed: the logs are public.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No private names in files, commits or PR text
+        env:
+          NAMES: ${{ secrets.PRIVATE_NAMES }}
+          PR_TEXT: ${{ github.event.pull_request.title }} ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          [ -n "$NAMES" ] || { echo "PRIVATE_NAMES secret is not set"; exit 1; }
+          bad=0
+          if git grep -q -i -E "$NAMES" -- .; then echo "files: match in $(git grep -l -i -E "$NAMES" -- . | wc -l) file(s)"; bad=1; fi
+          if git log --format=%B "$BASE..HEAD" 2>/dev/null | grep -q -i -E "$NAMES"; then echo "commit messages: match"; bad=1; fi
+          if printf '%s' "$PR_TEXT" | grep -q -i -E "$NAMES"; then echo "PR title/body: match"; bad=1; fi
+          exit $bad
+
   version-check:
     runs-on: ubuntu-latest
     steps:
