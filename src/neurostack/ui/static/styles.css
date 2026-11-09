@@ -138,7 +138,7 @@ a:active { color: color-mix(in srgb, var(--primary), #000 15%); }
 :focus-visible, .input:focus { outline: 2px solid var(--ring); outline-offset: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-/* Shell (issue #284, after the Acme console's example frame). One box the height
+/* Shell (issue #284). One box the height
    of the viewport holds the sidebar and the page panel side by side, 8px apart.
    The panels scroll, the window does not. No shadows: the frame is one step off. */
 .frame {
